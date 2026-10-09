@@ -46,7 +46,7 @@
         id: pid++, fullName, defaultPositionId: posId, eligibleSlots: slots,
         proTeamId: pick([...Array(30).keys()].map((i) => i + 1).concat([33, 34])),
         base: lo + rand() * (hi - lo),
-        injuryStatus: rand() < 0.06 ? pick(["QUESTIONABLE", "QUESTIONABLE", "OUT", "DOUBTFUL"]) : "ACTIVE",
+        injuryStatus: rand() < 0.08 ? pick(["QUESTIONABLE", "QUESTIONABLE", "OUT", "DOUBTFUL", "DAY_TO_DAY", "INJURY_RESERVE"]) : "ACTIVE",
         weeks: {},
       };
     });
@@ -82,7 +82,8 @@
     }
   }
 
-  function entry(p, wk, slot) {
+  // Like ESPN, box-score entries omit injury status; roster entries include it.
+  function entry(p, wk, slot, withInjury) {
     const w = p.weeks[wk];
     const stats = [{ scoringPeriodId: wk, statSourceId: 1, statSplitTypeId: 1, appliedTotal: w.proj, stats: statsFor(p.defaultPositionId, w.proj) }];
     if (w.actual !== null) stats.push({ scoringPeriodId: wk, statSourceId: 0, statSplitTypeId: 1, appliedTotal: w.actual, stats: statsFor(p.defaultPositionId, w.actual) });
@@ -90,11 +91,12 @@
       lineupSlotId: slot, playerId: p.id,
       playerPoolEntry: {
         appliedStatTotal: w.actual ?? 0,
-        player: { id: p.id, fullName: p.fullName, defaultPositionId: p.defaultPositionId, proTeamId: p.proTeamId, eligibleSlots: p.eligibleSlots, injuryStatus: p.injuryStatus, injured: p.injuryStatus !== "ACTIVE", stats },
+        player: { id: p.id, fullName: p.fullName, defaultPositionId: p.defaultPositionId, proTeamId: p.proTeamId, eligibleSlots: p.eligibleSlots, stats,
+          ...(withInjury ? { injuryStatus: p.injuryStatus, injured: p.injuryStatus !== "ACTIVE" } : {}) },
       },
     };
   }
-  const entries = (t, wk) => t.players.map((p) => entry(p, wk, t["lineup" + wk][p.id]));
+  const entries = (t, wk, withInjury) => t.players.map((p) => entry(p, wk, t["lineup" + wk][p.id], withInjury));
   const teamScore = (t, wk) => round(t.players.reduce((s, p) => {
     const slot = t["lineup" + wk][p.id];
     return slot === 20 || slot === 21 ? s : s + (p.weeks[wk].actual ?? 0);
@@ -151,7 +153,7 @@
         id: t.id, name: t.name, abbrev: t.abbrev, owners: [t.owner], primaryOwner: t.owner,
         playoffSeed: seeds.indexOf(t.id) + 1,
         record: { overall: { ...rec[t.id], pointsFor: round(rec[t.id].pointsFor), pointsAgainst: round(rec[t.id].pointsAgainst) } },
-        ...(views.includes("mRoster") ? { roster: { entries: entries(t, wk) } } : {}),
+        ...(views.includes("mRoster") ? { roster: { entries: entries(t, wk, true) } } : {}),
       })),
       schedule: schedule
         .filter((m) => !withRoster || m.matchupPeriodId === wk)

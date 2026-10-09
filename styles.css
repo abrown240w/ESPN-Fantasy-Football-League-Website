@@ -159,6 +159,7 @@ table.data tr:last-child td { border-bottom: 0; }
 .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
 .seg button { border: 0; background: var(--surface); padding: 7px 12px; cursor: pointer; color: var(--ink-2); }
 .seg button.active { background: var(--accent); color: #fff; }
+.inj-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: -4px 0 12px; }
 .bar-cell { display: flex; align-items: center; gap: 8px; min-width: 120px; }
 .bar-cell .track { flex: 1; height: 6px; background: var(--surface-2); border-radius: 3px; overflow: hidden; }
 .bar-cell .fill { height: 100%; background: var(--accent); border-radius: 3px; }

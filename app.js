@@ -122,7 +122,7 @@ function statLine(posId, s) {
   return parts.join(", ");
 }
 
-function parsePlayer(entry, sp, teamId) {
+function parsePlayer(entry, sp, teamId, injuries = {}) {
   const pl = entry.playerPoolEntry?.player || entry.player || {};
   const stats = pl.stats || [];
   const forPeriod = (src) => stats.find((s) => s.scoringPeriodId === sp && s.statSourceId === src && (s.statSplitTypeId ?? 1) === 1);
@@ -130,7 +130,9 @@ function parsePlayer(entry, sp, teamId) {
   const actual = act ? act.appliedTotal : null;
   const proj = prj ? prj.appliedTotal : 0;
   const slotId = entry.lineupSlotId;
-  const inj = pl.injuryStatus && pl.injuryStatus !== "ACTIVE" && pl.injuryStatus !== "NORMAL" ? pl.injuryStatus : "";
+  // Box scores omit injury status, so fall back to the roster's copy.
+  const status = pl.injuryStatus ?? injuries[pl.id ?? entry.playerId];
+  const inj = status && status !== "ACTIVE" && status !== "NORMAL" ? status : "";
   return {
     id: pl.id ?? entry.playerId,
     name: pl.fullName || "Unknown",
@@ -164,10 +166,10 @@ function optimalLineup(players, slotCounts) {
   return { points: sum(lineup, (x) => x.p.actual), lineup };
 }
 
-function buildSide(side, sp, rosterByTeam, slotCounts) {
+function buildSide(side, sp, rosterByTeam, slotCounts, injuries) {
   if (!side) return null;
   const entries = side.rosterForCurrentScoringPeriod?.entries || rosterByTeam[side.teamId] || [];
-  const players = entries.map((e) => parsePlayer(e, sp, side.teamId));
+  const players = entries.map((e) => parsePlayer(e, sp, side.teamId, injuries));
   const starters = players.filter((p) => p.starter)
     .sort((a, b) => SLOT_DISPLAY.indexOf(a.slotId) - SLOT_DISPLAY.indexOf(b.slotId));
   const bench = players.filter((p) => !p.starter).sort((a, b) => b.actual - a.actual || b.proj - a.proj);
@@ -194,13 +196,21 @@ function buildWeek(raw, week) {
   const base = state.base;
   const sp = base.scoringPeriodFor(week);
   const rosterByTeam = Object.fromEntries((raw.teams || []).map((t) => [t.id, t.roster?.entries || []]));
+  // Roster injury status is today's status, so only apply it to the current and upcoming weeks.
+  const injuries = {};
+  if (week >= base.current) {
+    for (const e of Object.values(rosterByTeam).flat()) {
+      const p = e.playerPoolEntry?.player;
+      if (p?.injuryStatus) injuries[p.id] = p.injuryStatus;
+    }
+  }
   const matchups = (raw.schedule || []).filter((m) => m.matchupPeriodId === week).map((m) => ({
     id: m.id,
     winner: m.winner || "UNDECIDED",
     playoff: m.playoffTierType && m.playoffTierType !== "NONE",
     tier: m.playoffTierType,
-    home: buildSide(m.home, sp, rosterByTeam, base.slotCounts),
-    away: buildSide(m.away, sp, rosterByTeam, base.slotCounts),
+    home: buildSide(m.home, sp, rosterByTeam, base.slotCounts, injuries),
+    away: buildSide(m.away, sp, rosterByTeam, base.slotCounts, injuries),
   }));
   const sides = matchups.flatMap((m) => [m.home, m.away]).filter(Boolean);
   const anyPlayed = sides.some((s) => s.playedCount > 0 || s.score > 0);
@@ -319,7 +329,22 @@ function sortableTable(cols, rows, sortState, onSort) {
 // ---------- Rendering helpers ----------
 const team = (id) => state.base.teams[id] || { name: `Team ${id}`, owner: "", wins: 0, losses: 0, ties: 0 };
 const recordStr = (t) => `${t.wins}-${t.losses}${t.ties ? "-" + t.ties : ""}`;
-const injBadge = (p) => (p.injury ? ` <span class="badge ${p.injury === "OUT" || p.injury === "INJURY_RESERVE" ? "out" : "inj"}" title="${esc(p.injury)}">${esc(p.injury === "INJURY_RESERVE" ? "IR" : p.injury.slice(0, 1))}</span>` : "");
+// ESPN injury designations: [short label, full name, severe?]
+const INJURY = {
+  QUESTIONABLE: ["Q", "Questionable", false],
+  DOUBTFUL: ["D", "Doubtful", true],
+  OUT: ["O", "Out", true],
+  INJURY_RESERVE: ["IR", "Injured reserve", true],
+  DAY_TO_DAY: ["DTD", "Day-to-day", false],
+  PROBABLE: ["P", "Probable", false],
+  SUSPENSION: ["SSPD", "Suspended", true],
+};
+const injuryInfo = (s) => INJURY[s] || [s.slice(0, 3), s.replace(/_/g, " ").toLowerCase().replace(/^./, (c) => c.toUpperCase()), false];
+const injBadge = (p) => {
+  if (!p.injury) return "";
+  const [short, full, severe] = injuryInfo(p.injury);
+  return ` <span class="badge ${severe ? "out" : "inj"}" title="${esc(full)}" data-tip="${esc(full)}">${esc(short)}</span>`;
+};
 const statusBadge = (s) => (s === "final" ? `<span class="badge final">FINAL</span>` : s === "live" ? `<span class="badge live">LIVE</span>` : `<span class="badge">UPCOMING</span>`);
 const ptsCell = (p, status) => (p.played || status === "final" ? f1(p.actual) : `<span class="muted">–</span>`);
 
@@ -416,7 +441,7 @@ function matchupInsights(m) {
       const top = [...s.starters].sort((a, b) => b.proj - a.proj)[0];
       if (top) out.push(`${nm(s)}'s top projected starter: ${esc(top.name)} (${f1(top.proj)}).`);
       const hurt = s.starters.filter((p) => p.injury);
-      if (hurt.length) out.push(`⚠️ ${nm(s)} is starting ${hurt.length} injury-listed player${hurt.length > 1 ? "s" : ""}: ${hurt.map((p) => `${esc(p.name)} (${esc(p.injury.toLowerCase())})`).join(", ")}.`);
+      if (hurt.length) out.push(`⚠️ ${nm(s)} is starting ${hurt.length} injury-listed player${hurt.length > 1 ? "s" : ""}: ${hurt.map((p) => `${esc(p.name)} (${esc(injuryInfo(p.injury)[1].toLowerCase())})`).join(", ")}.`);
     }
     return out;
   }
@@ -451,6 +476,7 @@ function renderPlayers() {
   el.innerHTML = `<div class="section-head"><h2>Week ${w.week} ${showPts ? "top scorers" : "top projections"} by position</h2></div>
     <div class="grid grid-awards">${leaders.map(({ pos, p }) => `<div class="card award"><div class="label">${pos}</div><div class="value">${f1(showPts ? p.actual : p.proj)}</div><div class="who">${esc(p.name)}${injBadge(p)}</div><div class="why">${esc(team(p.teamId).name)} · ${p.starter ? "started" : "on bench"}${p.diff != null ? ` · ${signed(p.diff)} vs proj` : ""}</div></div>`).join("")}</div>
     <div class="section-head"><h2>All rostered players</h2><span class="muted small">Click a column to sort</span></div>
+    <div class="inj-legend small muted">${Object.entries(INJURY).filter(([k]) => k !== "PROBABLE").map(([, [s, f, sev]]) => `<span><span class="badge ${sev ? "out" : "inj"}">${s}</span> ${f}</span>`).join("")}</div>
     <div class="filters">
       <input id="pf-q" type="search" placeholder="Search players…" value="${esc(f.q)}">
       <select id="pf-pos" aria-label="Position">${posOpts}</select>
