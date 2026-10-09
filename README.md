@@ -12,12 +12,13 @@ A website that connects to an ESPN fantasy football league and breaks down every
 ```
 netlify.toml                 Netlify config
 netlify/functions/espn.mjs   Server-side proxy to ESPN (browsers can't call ESPN directly)
-public/                      The website (index.html, styles.css, app.js, demo.js)
+index.html, styles.css, app.js, demo.js   The website
 ```
 
 ## Deploy to Netlify
 
-> Netlify's drag-and-drop upload does **not** deploy the `netlify/functions` folder, and the site needs it to reach ESPN. Use option A or B.
+This site deploys from GitHub: any change pushed to the `main` branch is published automatically.
+When uploading files through GitHub's website, upload from a short path (like `Documents`) so file names aren't shortened. `netlify.toml` must keep its exact name.
 
 **Option A: GitHub (easiest to keep updated)**
 1. Put this folder in a GitHub repository.
