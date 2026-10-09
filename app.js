@@ -72,6 +72,13 @@ async function api(views, scoringPeriodId) {
 }
 
 // ---------- Data model ----------
+function logoUrl(url) {
+  if (!/^https:\/\//.test(url || "")) return "";
+  // Custom uploads need an ESPN sign-in, so they go through our /api/logo proxy.
+  const custom = url.match(/^https:\/\/mystique-api\.fantasy\.espn\.com\/apis\/v1\/domains\/lm\/images\/([0-9a-f-]{36})$/i);
+  return custom && !state.demo ? `/api/logo?id=${custom[1]}` : url;
+}
+
 function buildBase(raw) {
   const members = Object.fromEntries((raw.members || []).map((m) => [m.id, m]));
   const teams = {};
@@ -83,7 +90,7 @@ function buildBase(raw) {
       id: t.id,
       name: (t.name || [t.location, t.nickname].filter(Boolean).join(" ")).trim() || `Team ${t.id}`,
       abbrev: t.abbrev || "",
-      logo: /^https:\/\//.test(t.logo || "") ? t.logo : "",
+      logo: logoUrl(t.logo),
       owner,
       seed: t.playoffSeed || 99,
       wins: rec.wins || 0, losses: rec.losses || 0, ties: rec.ties || 0,
@@ -169,8 +176,10 @@ function buildSide(side, sp, rosterByTeam, slotCounts) {
   const liveProj = side.totalProjectedPointsLive ?? sum(starters, (p) => (p.played ? p.actual : p.proj));
   const hasRoster = players.length > 0;
   const opt = hasRoster ? optimalLineup(players, slotCounts) : { points: score, lineup: [] };
+  const wp = side.winProbability;
   return {
     teamId: side.teamId, players, starters, bench, score, proj, liveProj,
+    espnWp: typeof wp === "number" ? (wp > 1 ? wp / 100 : wp) : null,
     optimal: Math.max(opt.points, score),
     benchLeft: Math.max(0, opt.points - score),
     efficiency: opt.points > 0 ? Math.min(1, score / opt.points) : null,
@@ -202,13 +211,16 @@ function buildWeek(raw, week) {
     const { home, away } = m;
     if (!away) { m.wp = null; continue; }
     if (status === "final") m.wp = m.winner === "HOME" ? 1 : m.winner === "AWAY" ? 0 : 0.5;
-    else if (status === "live") {
-      // Uncertainty shrinks as more starters finish their games.
+    else if (home.espnWp != null && away.espnWp != null && home.espnWp + away.espnWp > 0) {
+      // ESPN's own win probability, so the site matches the ESPN app.
+      m.wp = home.espnWp / (home.espnWp + away.espnWp);
+    } else if (status === "live") {
+      // Fallback estimate; uncertainty shrinks as more starters finish their games.
       const total = home.starters.length + away.starters.length || 1;
       const remaining = 1 - (home.playedCount + away.playedCount) / total;
-      m.wp = normCdf((home.liveProj - away.liveProj) / (22 * Math.sqrt(remaining) + 2));
+      m.wp = normCdf((home.liveProj - away.liveProj) / (45 * Math.sqrt(remaining) + 3));
     }
-    else m.wp = normCdf((home.proj - away.proj) / 22);
+    else m.wp = normCdf((home.proj - away.proj) / 45);
     for (const [me, opp] of [[home, away], [away, home]]) {
       me.opp = opp;
       me.won = status === "final" ? me.score > opp.score : null;
@@ -320,7 +332,7 @@ function showView(name) {
 function renderMatchups() {
   const w = state.week, el = $("view-matchups");
   if (!w.matchups.length) { el.innerHTML = `<p class="muted">No matchups scheduled for week ${w.week}.</p>`; return; }
-  const label = w.status === "final" ? "Final scores" : w.status === "live" ? "Live scores · win chance updates as games finish" : "Projected · win chance from ESPN projections";
+  const label = w.status === "final" ? "Final scores" : w.status === "live" ? "Live scores · win chance from ESPN" : "Projected · win chance from ESPN";
   el.innerHTML = `<div class="section-head"><h2>Week ${w.week} matchups ${statusBadge(w.status)}</h2><span class="muted small">${label}. Tap a matchup for the full breakdown.</span></div>
     <div class="grid grid-2" id="mu-grid">${w.matchups.map(matchupCard).join("")}</div>
     <div id="mu-detail"></div>`;
@@ -477,7 +489,9 @@ function renderPlayers() {
 
 // ---------- Logos & award icons ----------
 function logoImg(t, size = 28) {
-  const initials = (t.abbrev || t.name || "?").replace(/[^A-Za-z0-9]/g, "").slice(0, 3).toUpperCase();
+  const clean = (s) => (s || "").replace(/[^A-Za-z0-9]/g, "");
+  const initials = (clean(t.abbrev).slice(0, 3) ||
+    (t.name || "").split(/\s+/).map((w) => clean(w)[0] || "").join("").slice(0, 3) || "?").toUpperCase();
   if (!t.logo) return `<span class="logo logo-fb" style="--s:${size}px">${esc(initials)}</span>`;
   return `<img class="logo" style="--s:${size}px" src="${esc(t.logo)}" width="${size}" height="${size}" alt="" loading="lazy" referrerpolicy="no-referrer" data-fb="${esc(initials)}">`;
 }

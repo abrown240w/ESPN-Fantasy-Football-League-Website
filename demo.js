@@ -158,6 +158,12 @@
         .map((m) => {
           const done = m.matchupPeriodId < CURRENT_WEEK;
           const home = side(m.homeId, m.matchupPeriodId, withRoster), away = side(m.awayId, m.matchupPeriodId, withRoster);
+          if (!done) {
+            // ESPN reports win probability per side as a 0–1 fraction.
+            const hp = teamProj(teams[m.homeId - 1], m.matchupPeriodId), ap = teamProj(teams[m.awayId - 1], m.matchupPeriodId);
+            home.winProbability = round(1 / (1 + Math.exp(-(hp - ap) / 40)));
+            away.winProbability = round(1 - home.winProbability);
+          }
           return {
             id: m.id, matchupPeriodId: m.matchupPeriodId, home, away, playoffTierType: "NONE",
             winner: !done ? "UNDECIDED" : home.totalPoints > away.totalPoints ? "HOME" : away.totalPoints > home.totalPoints ? "AWAY" : "TIE",
