@@ -81,8 +81,9 @@ function buildBase(raw) {
     const rec = t.record?.overall || {};
     teams[t.id] = {
       id: t.id,
-      name: t.name || [t.location, t.nickname].filter(Boolean).join(" ") || `Team ${t.id}`,
+      name: (t.name || [t.location, t.nickname].filter(Boolean).join(" ")).trim() || `Team ${t.id}`,
       abbrev: t.abbrev || "",
+      logo: /^https:\/\//.test(t.logo || "") ? t.logo : "",
       owner,
       seed: t.playoffSeed || 99,
       wins: rec.wins || 0, losses: rec.losses || 0, ties: rec.ties || 0,
@@ -338,7 +339,7 @@ function sideRow(s, color, status, isWinner) {
   const big = status === "upcoming" ? f1(s.proj) : f2(s.score);
   return `<div class="mu-row ${isWinner === true ? "winner" : isWinner === false ? "loser" : ""}">
     <span class="swatch" style="background:${color}"></span>
-    <div class="mu-team"><strong>${esc(t.name)}</strong><span>${esc(t.owner)} · ${recordStr(t)}</span></div>
+    <div class="mu-id">${logoImg(t, 34)}<div class="mu-team"><strong>${esc(t.name)}</strong><span>${esc(t.owner)} · ${recordStr(t)}</span></div></div>
     <div class="mu-score">${big}<small>${sub}</small></div></div>`;
 }
 
@@ -380,7 +381,7 @@ function matchupDetail(m) {
   const benchRow = ([h, slot, a]) => `<tr class="muted">${h ? cellL(h) : `<td></td><td class="hide-sm"></td><td></td>`}<td class="slot">${slot || ""}</td>${a ? cellR(a) : `<td></td><td class="hide-sm"></td><td></td>`}</tr>`;
 
   return `<div class="card detail">
-    <div class="detail-head"><h3><span style="color:var(--home)">■</span> ${esc(H.name)} <span class="muted">vs</span> <span style="color:var(--away)">■</span> ${esc(A.name)}</h3>${statusBadge(st)}</div>
+    <div class="detail-head"><h3 class="vs-head"><span style="color:var(--home)">■</span>${teamName(home.teamId, 26)}<span class="muted">vs</span><span style="color:var(--away)">■</span>${teamName(away.teamId, 26)}</h3>${statusBadge(st)}</div>
     <div style="overflow-x:auto"><table class="h2h">
       <thead><tr><th>${esc(H.abbrev || "Home")}</th><th class="num hide-sm">Proj</th><th class="num">Pts</th><th class="slot">Slot</th><th class="num">Pts</th><th class="num hide-sm">Proj</th><th class="right">${esc(A.abbrev || "Away")}</th></tr></thead>
       <tbody>${rows.map(row).join("")}
@@ -474,6 +475,106 @@ function renderPlayers() {
   draw();
 }
 
+// ---------- Logos & award icons ----------
+function logoImg(t, size = 28) {
+  const initials = (t.abbrev || t.name || "?").replace(/[^A-Za-z0-9]/g, "").slice(0, 3).toUpperCase();
+  if (!t.logo) return `<span class="logo logo-fb" style="--s:${size}px">${esc(initials)}</span>`;
+  return `<img class="logo" style="--s:${size}px" src="${esc(t.logo)}" width="${size}" height="${size}" alt="" loading="lazy" referrerpolicy="no-referrer" data-fb="${esc(initials)}">`;
+}
+const teamName = (id, size = 22) => `<span class="tname">${logoImg(team(id), size)}<span>${esc(team(id).name)}</span></span>`;
+
+// Swap a logo that fails to load for the team's initials.
+document.addEventListener("error", (e) => {
+  const img = e.target;
+  if (!(img instanceof HTMLImageElement) || !img.classList.contains("logo")) return;
+  const span = document.createElement("span");
+  span.className = "logo logo-fb";
+  span.style.cssText = img.style.cssText;
+  span.textContent = img.dataset.fb || "?";
+  img.replaceWith(span);
+}, true);
+
+const AWARD_ICONS = {
+  top: `<path d="M6 4h12v4.5a6 6 0 0 1-12 0z" fill="#f2b705"/><path d="M6 5.5H3.5V7a3.5 3.5 0 0 0 3.2 3.5M18 5.5h2.5V7a3.5 3.5 0 0 1-3.2 3.5" fill="none" stroke="#f2b705" stroke-width="1.6"/><path d="M10.8 14h2.4v3.6h-2.4z" fill="#d49a00"/><rect x="7.5" y="17.5" width="9" height="3.5" rx="1" fill="#a87600"/><path d="M9 6v2.5a3 3 0 0 0 1.5 2.6" stroke="#fff6c9" stroke-width="1.2" fill="none" stroke-linecap="round" opacity=".8"/>`,
+  low: `<path d="M4 8.5c-1-1 1-2 0-3.5M20 8.5c1-1-1-2 0-3.5M12 4.2c-1-1 1-1.6 0-3" stroke="#8bb33a" stroke-width="1.3" fill="none" stroke-linecap="round"/><path class="edge" d="M9.2 9.5C5.5 11 4.5 14.5 4.8 17.2c.4 3.2 3.2 4.3 7.2 4.3s6.8-1.1 7.2-4.3c.3-2.7-.7-6.2-4.4-7.7l-1.2-2h-3.2z" fill="#2f3b2f"/><path d="M10.2 7.4c-1.2-.4-2.2-1.3-2.1-2.4M13.8 7.4c1.2-.4 2.2-1.3 2.1-2.4" stroke="#2f3b2f" stroke-width="1.4" fill="none" stroke-linecap="round"/><path d="M8.6 13c-.8 1.5-1 3-.6 4.5" stroke="#6b7b6b" stroke-width="1.1" fill="none" stroke-linecap="round"/>`,
+  bench: `<rect x="2" y="10.5" width="20" height="1.8" rx=".9" fill="#8a5a2b"/><circle cx="6" cy="6.3" r="2" fill="#e0a77a"/><rect x="3.5" y="8.8" width="5" height="6.6" rx="2.2" fill="#2a78d6"/><circle cx="12" cy="6.3" r="2" fill="#c68a5e"/><rect x="9.5" y="8.8" width="5" height="6.6" rx="2.2" fill="#eb6834"/><circle cx="18" cy="6.3" r="2" fill="#8d5a3b"/><rect x="15.5" y="8.8" width="5" height="6.6" rx="2.2" fill="#1baf7a"/><rect x="2" y="15" width="20" height="2.2" rx="1" fill="#8a5a2b"/><rect x="3.5" y="17" width="1.8" height="4" fill="#6b4420"/><rect x="18.7" y="17" width="1.8" height="4" fill="#6b4420"/>`,
+  lineup: `<rect x="4" y="8.8" width="1.4" height="6.5" fill="#6b4420"/><rect x="18.6" y="8.8" width="1.4" height="6.5" fill="#6b4420"/><rect x="2" y="7" width="20" height="1.8" rx=".9" fill="#a06a35"/><rect x="2" y="10.3" width="20" height="1.8" rx=".9" fill="#a06a35"/><rect x="2" y="15" width="20" height="2.2" rx="1" fill="#8a5a2b"/><rect x="3.5" y="17" width="1.8" height="4" fill="#6b4420"/><rect x="18.7" y="17" width="1.8" height="4" fill="#6b4420"/>`,
+  blowout: `<path d="M6 17.5a4 4 0 0 1-.6-7.95A5.5 5.5 0 0 1 15.6 8.8a4.3 4.3 0 0 1-.6 8.7z" fill="#dfe6ee" stroke="#7d8da1" stroke-width="1"/><circle cx="8" cy="12.3" r=".8" fill="#44505e"/><circle cx="11" cy="12.3" r=".8" fill="#44505e"/><circle cx="14.4" cy="14" r="1" fill="none" stroke="#44505e" stroke-width=".9"/><path d="M17 13h5M17.5 15.8h3.5a1.5 1.5 0 1 1-1.5 1.5M17 10.3h2.5a1.5 1.5 0 1 0-1.5-1.5" stroke="#5f86b5" stroke-width="1.4" fill="none" stroke-linecap="round"/>`,
+  lucky: `<path d="M12 13.5c0 3 1 5.5 3.2 7.5" stroke="#17802e" stroke-width="1.6" fill="none" stroke-linecap="round"/><path d="M12 10C10 7.5 8.5 6.6 8.5 5a1.9 1.9 0 0 1 3.5-1 1.9 1.9 0 0 1 3.5 1c0 1.6-1.5 2.5-3.5 5z" fill="#1f9d3a"/><path d="M12 10c-2.5 2-3.4 3.5-5 3.5a1.9 1.9 0 0 1-1-3.5 1.9 1.9 0 0 1 1-3.5c1.6 0 2.5 1.5 5 3.5z" fill="#1f9d3a"/><path d="M12 10c2.5 2 3.4 3.5 5 3.5a1.9 1.9 0 0 0 1-3.5 1.9 1.9 0 0 0-1-3.5c-1.6 0-2.5 1.5-5 3.5z" fill="#1f9d3a"/><path d="M12 10c-2 2.5-3.5 3.4-3.5 5a1.9 1.9 0 0 0 3.5 1 1.9 1.9 0 0 0 3.5-1c0-1.6-1.5-2.5-3.5-5z" fill="#1f9d3a"/><circle cx="12" cy="10" r="1" fill="#17802e"/>`,
+  unlucky: `<path d="M16.4 20.6c2.6 0 4.1-1.6 3.5-4.3" stroke="#151515" stroke-width="1.8" fill="none" stroke-linecap="round" class="edge-stroke"/><path class="edge" d="M7 21c-.6-3 .2-6.2 2.2-8.2-1-1.2-1.4-2.6-1.2-4l-.7-3.6 2.6 1.9a5 5 0 0 1 2.8 0l2.6-1.9-.7 3.6c.2 1.4-.2 2.8-1.2 4 2 2 2.8 5.2 2.2 8.2z" fill="#151515"/><circle cx="10" cy="9.8" r=".75" fill="#f2d33a"/><circle cx="12.6" cy="9.8" r=".75" fill="#f2d33a"/>`,
+};
+const AWARD_ORDER = ["top", "low", "bench", "lineup", "blowout", "lucky", "unlucky"];
+const AWARD_NAMES = { top: "Top score", low: "Lowest score", bench: "Most bench points wasted", lineup: "Best lineup", blowout: "Biggest blowout", lucky: "Luckiest win", unlucky: "Unluckiest loss" };
+const awardIcon = (key, size = 16) => `<svg class="aw-icon" viewBox="0 0 24 24" width="${size}" height="${size}" aria-hidden="true">${AWARD_ICONS[key]}</svg>`;
+
+// Weekly awards; shared by the Managers tab and the season tally.
+function weekAwards(w) {
+  const sides = w.sides, out = [];
+  if (!sides.length || w.status === "upcoming") return out;
+  const final = w.status === "final";
+  const best = (fn) => [...sides].sort((a, b) => fn(b) - fn(a))[0];
+  const games = w.matchups.filter((m) => m.away);
+  const margin = (m) => Math.abs(m.home.score - m.away.score);
+  const lead = (m) => (m.home.score >= m.away.score ? m.home : m.away);
+  const add = (key, label, value, side, why) => side && out.push({ key, label, value, side, why });
+
+  const top = best((s) => s.score), low = best((s) => -s.score);
+  add("top", "Top score", f2(top.score), top, `${top.allPlayW}-${top.allPlayL} vs the whole league`);
+  add("low", "Lowest score", f2(low.score), low, "Better luck next week");
+  const lazy = best((s) => s.benchLeft);
+  add("bench", "Most bench points wasted", f1(lazy.benchLeft), lazy, lazy.bestBench ? `${esc(lazy.bestBench.name)} scored ${f1(lazy.bestBench.actual)} on the bench` : "");
+  // Lineup, margin and luck awards only mean something once the week is over.
+  if (final) {
+    const eff = best((s) => s.efficiency ?? 0);
+    add("lineup", "Best lineup", pct(eff.efficiency ?? 0), eff, `Only ${f1(eff.benchLeft)} pts left on the bench`);
+    if (games.length) {
+      const blow = [...games].sort((a, b) => margin(b) - margin(a))[0];
+      const close = [...games].sort((a, b) => margin(a) - margin(b))[0];
+      add("blowout", "Biggest blowout", f1(margin(blow)), lead(blow), `over ${esc(team(lead(blow).opp.teamId).name)}`);
+      add("close", "Closest game", f2(margin(close)), lead(close), `edging ${esc(team(lead(close).opp.teamId).name)}`);
+    }
+    const losers = sides.filter((s) => s.won === false), winners = sides.filter((s) => s.won === true);
+    const u = [...losers].sort((a, b) => b.score - a.score)[0];
+    if (u) add("unlucky", "Unluckiest loss", f2(u.score), u, `Would've beaten ${u.allPlayW} of ${sides.length - 1} teams`);
+    const l = [...winners].sort((a, b) => a.score - b.score)[0];
+    if (l) add("lucky", "Luckiest win", f2(l.score), l, `Would've lost to ${l.allPlayL} of ${sides.length - 1} teams`);
+  }
+  const mvp = sides.filter((s) => s.mvp).sort((a, b) => b.mvp.actual - a.mvp.actual)[0];
+  if (mvp) add("potw", "Player of the week", f1(mvp.mvp.actual), mvp, `${esc(mvp.mvp.name)} (${mvp.mvp.pos})`);
+  return out;
+}
+
+// Fetch every finished regular-season week and count awards per team.
+async function loadAwardTally() {
+  const b = state.base;
+  const weeks = [...new Set(b.schedule.map((m) => m.matchupPeriodId))]
+    .filter((wk) => wk <= b.regWeeks && b.schedule.filter((m) => m.matchupPeriodId === wk).every((m) => m.winner && m.winner !== "UNDECIDED"))
+    .sort((a, c) => a - c);
+  await Promise.all(weeks.filter((wk) => state.weekCache[wk]?.status !== "final").map(async (wk) => {
+    const raw = await api(["mBoxscore", "mMatchupScore", "mRoster"], b.scoringPeriodFor(wk));
+    state.weekCache[wk] = buildWeek(raw, wk);
+  }));
+  const tally = {};
+  for (const wk of weeks) {
+    for (const a of weekAwards(state.weekCache[wk])) {
+      if (!AWARD_ICONS[a.key]) continue;
+      ((tally[a.side.teamId] ||= {})[a.key] ||= []).push(wk);
+    }
+  }
+  return tally;
+}
+
+function awardChips(teamId) {
+  const t = state.awardTally?.[teamId];
+  if (!t) return "";
+  const chips = AWARD_ORDER.filter((k) => t[k]).map((k) => {
+    const wks = t[k];
+    const tip = `<b>${AWARD_NAMES[k]}</b>${wks.length} time${wks.length > 1 ? "s" : ""} · week${wks.length > 1 ? "s" : ""} ${wks.join(", ")}`;
+    return `<span class="aw-chip" data-tip="${esc(tip)}" aria-label="${AWARD_NAMES[k]}: ${wks.length}">${awardIcon(k)}${wks.length}</span>`;
+  });
+  return chips.length ? `<div class="aw-chips">${chips.join("")}</div>` : "";
+}
+
 // ---------- Managers ----------
 function renderManagers() {
   const w = state.week, el = $("view-managers");
@@ -483,42 +584,14 @@ function renderManagers() {
     return;
   }
   const so = w.status === "final" ? "" : " (so far)";
-  const best = (fn) => [...sides].sort((a, b) => fn(b) - fn(a))[0];
-  const worst = (fn) => [...sides].sort((a, b) => fn(a) - fn(b))[0];
-  const games = w.matchups.filter((m) => m.away);
-  const margin = (m) => Math.abs(m.home.score - m.away.score);
-  const awards = [];
-  const top = best((s) => s.score), low = worst((s) => s.score);
-  awards.push(["Top score", f2(top.score), top, `${top.allPlayW}-${top.allPlayL} vs the whole league`]);
-  awards.push(["Lowest score", f2(low.score), low, "Better luck next week"]);
-  const lazy = best((s) => s.benchLeft);
-  awards.push(["Most bench points wasted", f1(lazy.benchLeft), lazy, lazy.bestBench ? `${esc(lazy.bestBench.name)} scored ${f1(lazy.bestBench.actual)} on the bench` : ""]);
-  // Lineup and margin awards only mean something once the week is over.
-  if (w.status === "final") {
-    const eff = best((s) => s.efficiency ?? 0);
-    awards.push(["Best lineup", pct(eff.efficiency ?? 0), eff, `Only ${f1(eff.benchLeft)} pts left on the bench`]);
-  }
-  if (games.length && w.status === "final") {
-    const blow = [...games].sort((a, b) => margin(b) - margin(a))[0];
-    const close = [...games].sort((a, b) => margin(a) - margin(b))[0];
-    const lead = (m) => (m.home.score >= m.away.score ? m.home : m.away);
-    awards.push(["Biggest blowout", f1(margin(blow)), lead(blow), `over ${esc(team(lead(blow).opp.teamId).name)}`]);
-    awards.push(["Closest game", f2(margin(close)), lead(close), `edging ${esc(team(lead(close).opp.teamId).name)}`]);
-  }
-  if (w.status === "final") {
-    const losers = sides.filter((s) => s.won === false), winners = sides.filter((s) => s.won === true);
-    if (losers.length) { const u = [...losers].sort((a, b) => b.score - a.score)[0]; awards.push(["Unluckiest loss", f2(u.score), u, `Would've beaten ${u.allPlayW} of ${sides.length - 1} teams`]); }
-    if (winners.length) { const l = [...winners].sort((a, b) => a.score - b.score)[0]; awards.push(["Luckiest win", f2(l.score), l, `Would've lost to ${l.allPlayL} of ${sides.length - 1} teams`]); }
-  }
-  const mvp = [...sides].filter((s) => s.mvp).sort((a, b) => b.mvp.actual - a.mvp.actual)[0];
-  if (mvp) awards.push(["Player of the week", f1(mvp.mvp.actual), mvp, `${esc(mvp.mvp.name)} (${mvp.mvp.pos})`]);
+  const awards = weekAwards(w);
 
   el.innerHTML = `<div class="section-head"><h2>Week ${w.week} awards${so} ${statusBadge(w.status)}</h2></div>
-    <div class="grid grid-awards">${awards.map(([label, value, s, why]) => `<div class="card award"><div class="label">${label}</div><div class="value">${value}</div><div class="who">${esc(team(s.teamId).name)}</div><div class="why">${esc(team(s.teamId).owner)}${why ? " · " + why : ""}</div></div>`).join("")}</div>
+    <div class="grid grid-awards">${awards.map((a) => `<div class="card award"><div class="label">${AWARD_ICONS[a.key] ? awardIcon(a.key) + " " : ""}${a.label}</div><div class="value">${a.value}</div><div class="who">${teamName(a.side.teamId, 20)}</div><div class="why">${esc(team(a.side.teamId).owner)}${a.why ? " · " + a.why : ""}</div></div>`).join("")}</div>
     <div class="section-head"><h2>Manager report card</h2><span class="muted small">Optimal = best lineup possible from that roster this week</span></div>
     <div id="mg-table"></div>`;
   const cols = [
-    { key: "name", label: "Team", sort: (s) => team(s.teamId).name, render: (s) => `<strong>${esc(team(s.teamId).name)}</strong><div class="small muted">${esc(team(s.teamId).owner)}</div>` },
+    { key: "name", label: "Team", sort: (s) => team(s.teamId).name, render: (s) => `<div class="team-cell">${logoImg(team(s.teamId), 30)}<div><strong>${esc(team(s.teamId).name)}</strong><div class="small muted">${esc(team(s.teamId).owner)}</div></div></div>` },
     { key: "score", label: "Score", num: true, render: (s) => `${f2(s.score)}${s.won === true ? ` <span class="badge">W</span>` : s.won === false ? ` <span class="badge">L</span>` : ""}` },
     { key: "vsProj", label: "vs Proj", num: true, sort: (s) => s.score - s.proj, render: (s) => `<span class="${clsSign(s.score - s.proj)}">${signed(s.score - s.proj)}</span>` },
     { key: "optimal", label: "Optimal", num: true, render: (s) => f1(s.optimal) },
@@ -541,6 +614,8 @@ function renderSeason() {
     return;
   }
   el.innerHTML = `<div class="section-head"><h2>Standings & power rankings</h2><span class="muted small">Through week ${season.weeks[season.weeks.length - 1]}</span></div>
+    <div class="award-legend">${AWARD_ORDER.map((k) => `<span>${awardIcon(k, 18)}${AWARD_NAMES[k]}</span>`).join("")}
+      <span class="muted small" id="tally-note">${state.awardTally === "loading" ? "Counting weekly awards…" : state.awardTally ? "Weekly award counts, regular season" : ""}</span></div>
     <div id="st-table"></div>
     <div class="section-head"><h2>Luck meter</h2><span class="muted small">Actual wins minus expected wins (based on weekly scores vs. the whole league)</span></div>
     <div class="card chart-card" id="luck-chart"></div>
@@ -548,7 +623,7 @@ function renderSeason() {
     <div class="card chart-card" id="heatmap"></div>`;
   const cols = [
     { key: "rank", label: "#", num: true },
-    { key: "name", label: "Team", render: (r) => `<strong>${esc(r.name)}</strong><div class="small muted">${esc(r.owner)}</div>` },
+    { key: "name", label: "Team", render: (r) => `<div class="team-cell">${logoImg(r, 34)}<div><strong>${esc(r.name)}</strong><div class="small muted">${esc(r.owner)}</div>${awardChips(r.id)}</div></div>` },
     { key: "wins", label: "Record", sort: (r) => r.winPct * 1000 + r.pf / 1e4, render: (r) => recordStr(r) },
     { key: "pf", label: "PF", num: true, render: (r) => f1(r.pf) },
     { key: "pa", label: "PA", num: true, cls: "hide-sm", render: (r) => f1(r.pa) },
@@ -561,6 +636,14 @@ function renderSeason() {
   ];
   const draw = () => $("st-table").replaceChildren(sortableTable(cols, season.rows, state.standings.sort, draw));
   draw();
+  if (!state.awardTally) {
+    state.awardTally = "loading";
+    $("tally-note").textContent = "Counting weekly awards…";
+    loadAwardTally()
+      .then((t) => { state.awardTally = t; })
+      .catch(() => { state.awardTally = {}; })
+      .finally(() => { if (state.tab === "season" && state.week) renderSeason(); });
+  }
   $("luck-chart").innerHTML = luckChart(season.rows);
   $("heatmap").innerHTML = heatmap(season);
 }
@@ -713,6 +796,7 @@ function bindUi() {
   $("refresh").addEventListener("click", async () => {
     const wk = state.week?.week;
     state.weekCache = {};
+    state.awardTally = null;
     await loadLeague();
     if (wk && state.week?.week !== wk) await loadWeek(wk);
   });
@@ -723,6 +807,7 @@ function bindUi() {
     state.season = $("season-input").value.trim();
     state.demo = false;
     state.weekCache = {};
+    state.awardTally = null;
     store.set("ffb.league", state.leagueId || null);
     store.set("ffb.season", state.season || null);
     await loadLeague();
