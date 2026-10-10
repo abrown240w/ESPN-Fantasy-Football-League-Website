@@ -249,6 +249,21 @@ table.data tr:last-child td { border-bottom: 0; }
   .g-status strong { display: block; margin-top: 2px; }
 }
 
+/* League switcher */
+.brand-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.league-select { padding: 4px 8px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface-2); font-size: .85rem; font-weight: 600; cursor: pointer; }
+.league-select:hover { border-color: var(--accent); }
+
+/* History */
+.hist-seg { margin-bottom: 4px; flex-wrap: wrap; }
+.champ { display: flex; flex-direction: column; gap: 6px; }
+.champ-year { font-size: .78rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: #8a6400; display: flex; align-items: center; gap: 6px; }
+.champ-team { font-size: 1.15rem; font-weight: 700; }
+.champ .why { font-size: .85rem; color: var(--ink-2); }
+.champ-banner { margin-top: 16px; background: linear-gradient(135deg, #fff8e1, var(--surface) 60%); border-color: #f2d27a; }
+.champ-banner .champ-team { font-size: 1.4rem; }
+.titles { display: inline-flex; align-items: center; gap: 4px; font-weight: 700; }
+
 /* Transactions */
 .tx-week { margin: 20px 0 8px; font-size: .85rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
 .tx-list { display: grid; gap: 8px; }

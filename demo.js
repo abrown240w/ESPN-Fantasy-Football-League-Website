@@ -154,12 +154,53 @@
     return s;
   }
 
-  function response(views, scoringPeriodId) {
+  // A finished past season: 14 regular-season weeks, then a 4-team playoff.
+  function pastSeason(year) {
+    let s = year * 977;
+    const r = () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296);
+    const strength = Object.fromEntries(teams.map((t) => [t.id, 95 + r() * 40]));
+    const score = (id) => round(strength[id] + (r() - 0.5) * 50);
+    const rec = Object.fromEntries(teams.map((t) => [t.id, { wins: 0, losses: 0, ties: 0, pointsFor: 0, pointsAgainst: 0 }]));
+    const sched = [];
+    let id = 1;
+    for (const m of schedule) {
+      const h = score(m.homeId), a = score(m.awayId);
+      rec[m.homeId].pointsFor += h; rec[m.homeId].pointsAgainst += a; rec[m.awayId].pointsFor += a; rec[m.awayId].pointsAgainst += h;
+      if (h > a) { rec[m.homeId].wins++; rec[m.awayId].losses++; } else { rec[m.awayId].wins++; rec[m.homeId].losses++; }
+      sched.push({ id: id++, matchupPeriodId: m.matchupPeriodId, playoffTierType: "NONE", winner: h > a ? "HOME" : "AWAY", home: { teamId: m.homeId, totalPoints: h }, away: { teamId: m.awayId, totalPoints: a } });
+    }
+    const seeds = [...teams].sort((x, y) => rec[y.id].wins - rec[x.id].wins || rec[y.id].pointsFor - rec[x.id].pointsFor).map((t) => t.id);
+    const game = (wk, x, y) => {
+      const h = score(x), a = score(y);
+      sched.push({ id: id++, matchupPeriodId: wk, playoffTierType: "WINNERS_BRACKET", winner: h > a ? "HOME" : "AWAY", home: { teamId: x, totalPoints: h }, away: { teamId: y, totalPoints: a } });
+      return h > a ? [x, y] : [y, x];
+    };
+    const [w1, l1] = game(15, seeds[0], seeds[3]), [w2, l2] = game(15, seeds[1], seeds[2]);
+    const [champ, runner] = game(16, w1, w2);
+    const finishOrder = [champ, runner, ...[l1, l2].sort((x, y) => seeds.indexOf(x) - seeds.indexOf(y)), ...seeds.slice(4)];
+    const draftOrder = [...teams].sort(() => r() - 0.5).map((t) => t.id);
+    return {
+      id: 424242, seasonId: year,
+      status: { currentMatchupPeriod: 16, isActive: false },
+      settings: { name: "Demo League (sample data)", scheduleSettings: { matchupPeriodCount: REG_WEEKS, playoffTeamCount: 4 } },
+      members: teams.map((t) => ({ id: t.owner, displayName: t.ownerName, firstName: t.ownerName.split(" ")[0], lastName: t.ownerName.split(" ")[1] })),
+      teams: teams.map((t) => ({
+        id: t.id, name: year === 2024 && t.id % 3 === 0 ? `${t.name} Classic` : t.name, abbrev: t.abbrev, owners: [t.owner], primaryOwner: t.owner,
+        playoffSeed: seeds.indexOf(t.id) + 1, rankCalculatedFinal: finishOrder.indexOf(t.id) + 1, draftDayProjectedRank: draftOrder.indexOf(t.id) + 1,
+        record: { overall: { ...rec[t.id], pointsFor: round(rec[t.id].pointsFor), pointsAgainst: round(rec[t.id].pointsAgainst) } },
+        transactionCounter: { acquisitions: Math.round(r() * 40), trades: Math.round(r() * 5) },
+      })),
+      schedule: sched,
+    };
+  }
+
+  function response(views, scoringPeriodId, season) {
+    if (season && Number(season) !== SEASON) return pastSeason(Number(season));
     const wk = scoringPeriodId || CURRENT_WEEK;
     const withRoster = views.includes("mBoxscore");
     const out = {
       id: 424242, seasonId: SEASON, scoringPeriodId: CURRENT_WEEK,
-      status: { currentMatchupPeriod: CURRENT_WEEK, latestScoringPeriod: CURRENT_WEEK, finalScoringPeriod: TOTAL_WEEKS, isActive: true },
+      status: { currentMatchupPeriod: CURRENT_WEEK, latestScoringPeriod: CURRENT_WEEK, finalScoringPeriod: TOTAL_WEEKS, isActive: true, previousSeasons: [2024, 2025] },
       settings: {
         name: "Demo League (sample data)",
         rosterSettings: { lineupSlotCounts: SLOT_COUNTS },

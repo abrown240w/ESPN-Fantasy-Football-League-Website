@@ -11,6 +11,13 @@ const FLEX_SLOTS = new Set([3, 5, 23, 7, 11, 14, 15]);
 const BENCH = 20, IR = 21;
 const POS_ORDER = ["QB", "RB", "WR", "TE", "K", "D/ST"];
 
+// Leagues in the header dropdown. The first one is the default.
+const LEAGUES = [
+  { id: "489824289", label: "Brown League" },
+  { id: "253026401", label: "Church League" },
+  { id: "1001176763", label: "Work League" },
+];
+
 // ---------- State ----------
 const params = new URLSearchParams(location.search);
 const store = {
@@ -36,6 +43,10 @@ const state = {
   livePrev: {},
   liveBumps: {},
   liveTimer: null,
+  history: null,
+  historySel: "all",
+  historySort: { key: "titles", dir: -1 },
+  seasonSort: { key: "finish", dir: 1 },
 };
 const $ = (id) => document.getElementById(id);
 
@@ -60,13 +71,13 @@ class ApiError extends Error {
   constructor(code, message) { super(message); this.code = code; }
 }
 
-async function api(views, scoringPeriodId) {
-  if (state.demo) return window.DemoLeague.response(views, scoringPeriodId);
+async function api(views, scoringPeriodId, season = state.season) {
+  if (state.demo) return window.DemoLeague.response(views, scoringPeriodId, season);
   const q = new URLSearchParams();
   views.forEach((v) => q.append("view", v));
   if (scoringPeriodId) q.set("scoringPeriodId", scoringPeriodId);
   if (state.leagueId) q.set("leagueId", state.leagueId);
-  if (state.season) q.set("season", state.season);
+  if (season) q.set("season", season);
   let res, body;
   try {
     res = await fetch(`/api/espn?${q}`);
@@ -128,6 +139,7 @@ function buildBase(raw) {
     raw, teams, schedule, weeks, current, regWeeks: regWeeks || weeks,
     name: settings.name || "ESPN League",
     season: raw.seasonId,
+    previousSeasons: [...(raw.status?.previousSeasons || [])].sort((a, b) => b - a),
     slotCounts: settings.rosterSettings?.lineupSlotCounts || {},
     scoringPeriodFor: (wk) => { const p = periods[wk]; return p && p.length ? p[p.length - 1] : wk; },
   };
@@ -404,7 +416,7 @@ const statusBadge = (s) => (s === "final" ? `<span class="badge final">FINAL</sp
 const ptsCell = (p, status) => (p.played || status === "final" ? f1(p.actual) : `<span class="muted">–</span>`);
 
 function showView(name) {
-  for (const v of ["matchups", "live", "players", "managers", "season", "transactions"]) $(`view-${v}`).hidden = v !== name;
+  for (const v of ["matchups", "live", "players", "managers", "season", "history", "transactions"]) $(`view-${v}`).hidden = v !== name;
   document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
 }
 
@@ -814,7 +826,9 @@ async function fetchLive() {
 async function refreshLive() {
   clearTimeout(state.liveTimer);
   try {
+    const base = state.base;
     const data = await fetchLive();
+    if (state.base !== base) return; // league changed while loading
     const prev = state.livePrev;
     state.liveBumps = {};
     for (const p of data.players) {
@@ -924,6 +938,214 @@ function renderLive() {
   $("lv-team").addEventListener("change", (e) => { f.team = e.target.value; renderLive(); });
   // Only flash a score change once.
   state.liveBumps = {};
+}
+
+// ---------- League history ----------
+// One completed season: final standings, playoff results and weekly extremes.
+function buildSeasonHistory(raw, year) {
+  const members = Object.fromEntries((raw.members || []).map((m) => [m.id, m]));
+  const s = raw.settings?.scheduleSettings || {};
+  const regWeeks = s.matchupPeriodCount || 0, playoffTeams = s.playoffTeamCount || 0;
+  const teams = {};
+  for (const t of raw.teams || []) {
+    const ownerId = t.primaryOwner || (t.owners || [])[0] || `team-${t.id}`;
+    const m = members[ownerId];
+    const rec = t.record?.overall || {};
+    teams[t.id] = {
+      id: t.id, year, ownerId,
+      owner: m ? ([m.firstName, m.lastName].filter(Boolean).join(" ") || m.displayName) : "Unknown manager",
+      name: (t.name || [t.location, t.nickname].filter(Boolean).join(" ")).trim() || `Team ${t.id}`,
+      abbrev: t.abbrev || "", logo: logoUrl(t.logo),
+      wins: rec.wins || 0, losses: rec.losses || 0, ties: rec.ties || 0,
+      pf: rec.pointsFor || 0, pa: rec.pointsAgainst || 0,
+      seed: t.playoffSeed || null,
+      finish: t.rankCalculatedFinal || t.rankFinal || null,
+      draftRank: t.draftDayProjectedRank || null,
+      moves: t.transactionCounter?.acquisitions ?? null,
+      trades: t.transactionCounter?.trades ?? null,
+      poW: 0, poL: 0,
+    };
+    teams[t.id].madePlayoffs = !!(playoffTeams && teams[t.id].seed && teams[t.id].seed <= playoffTeams);
+  }
+  const games = (raw.schedule || []).filter((g) => g.winner && g.winner !== "UNDECIDED" && g.away);
+  const weekly = [];
+  let final = null;
+  for (const g of games) {
+    const h = g.home, a = g.away;
+    const bracket = g.playoffTierType === "WINNERS_BRACKET";
+    if (bracket) {
+      const [w, l] = h.totalPoints >= a.totalPoints ? [h, a] : [a, h];
+      if (teams[w.teamId]) teams[w.teamId].poW++;
+      if (teams[l.teamId]) teams[l.teamId].poL++;
+      if (!final || g.matchupPeriodId > final.week) final = { week: g.matchupPeriodId, winner: w, loser: l };
+    }
+    if (g.matchupPeriodId <= regWeeks) {
+      for (const [me, opp] of [[h, a], [a, h]]) weekly.push({ teamId: me.teamId, score: me.totalPoints, opp: opp.teamId, oppScore: opp.totalPoints, week: g.matchupPeriodId, year });
+    }
+  }
+  const list = Object.values(teams);
+  const champ = list.find((t) => t.finish === 1) || (final && teams[final.winner.teamId]);
+  return {
+    year, name: raw.settings?.name || "", teams, list, weekly, regWeeks, playoffTeams, champ,
+    final: final && { winner: teams[final.winner.teamId], loser: teams[final.loser.teamId], wScore: final.winner.totalPoints, lScore: final.loser.totalPoints },
+  };
+}
+
+// Returns the seasons ESPN shared plus the years it refused, so the page can say so.
+async function loadHistory() {
+  const years = state.base.previousSeasons;
+  const failed = [];
+  const seasons = await Promise.all(years.map(async (y) => {
+    try {
+      return buildSeasonHistory(await api(["mTeam", "mSettings", "mStandings", "mMatchupScore"], null, String(y)), y);
+    } catch {
+      failed.push(y); // a season ESPN can't return shouldn't hide the others
+      return null;
+    }
+  }));
+  const list = seasons.filter(Boolean);
+  list.failed = failed.sort((a, b) => b - a);
+  return list;
+}
+
+// Totals per manager across every completed season.
+function allTimeManagers(seasons) {
+  const byOwner = {};
+  for (const s of [...seasons].sort((a, b) => a.year - b.year)) {
+    for (const t of s.list) {
+      const m = (byOwner[t.ownerId] ||= { ownerId: t.ownerId, seasons: 0, titles: [], runnerUps: 0, playoffs: 0, wins: 0, losses: 0, ties: 0, pf: 0, poW: 0, poL: 0, finishes: [] });
+      Object.assign(m, { owner: t.owner, latest: t }); // newest season wins for name and logo
+      m.seasons++;
+      if (t.finish === 1) m.titles.push(s.year);
+      if (t.finish === 2) m.runnerUps++;
+      if (t.madePlayoffs) m.playoffs++;
+      m.wins += t.wins; m.losses += t.losses; m.ties += t.ties; m.pf += t.pf; m.poW += t.poW; m.poL += t.poL;
+      if (t.finish) m.finishes.push(t.finish);
+    }
+  }
+  return Object.values(byOwner).map((m) => {
+    const gp = m.wins + m.losses + m.ties;
+    return { ...m, winPct: gp ? (m.wins + m.ties / 2) / gp : 0, best: m.finishes.length ? Math.min(...m.finishes) : null, avgFinish: m.finishes.length ? sum(m.finishes) / m.finishes.length : null, avgPf: m.seasons ? m.pf / m.seasons : 0 };
+  });
+}
+
+function renderHistory() {
+  const el = $("view-history");
+  const H = state.history;
+  if (!H || H === "loading") {
+    el.innerHTML = `<div class="loading"><span class="spinner"></span> Loading past seasons…</div>`;
+    if (!H) {
+      state.history = "loading";
+      const base = state.base;
+      loadHistory()
+        .then((d) => { if (state.base === base) state.history = d; })
+        .catch(() => { if (state.base === base) state.history = Object.assign([], { failed: base.previousSeasons }); })
+        .finally(() => { if (state.tab === "history" && state.base === base) renderHistory(); });
+    }
+    return;
+  }
+  const refused = H.failed?.length
+    ? `<p class="muted small">ESPN wouldn't share the ${H.failed.join(" and ")} season${H.failed.length > 1 ? "s" : ""} for this league. Past seasons can be private even when the current one isn't, and are only visible to people who were in the league that year.</p>`
+    : "";
+  if (!H.length) {
+    el.innerHTML = `<div class="section-head"><h2>League history</h2></div>${refused || `<p class="muted">No completed seasons yet. History appears here once a season finishes.</p>`}`;
+    return;
+  }
+  const seasons = [...H].sort((a, b) => b.year - a.year);
+  if (state.historySel !== "all" && !seasons.some((s) => String(s.year) === String(state.historySel))) state.historySel = "all";
+  const sel = state.historySel;
+  const span = seasons.length > 1 ? `${seasons[seasons.length - 1].year}–${seasons[0].year}` : `${seasons[0].year}`;
+  const trophy = awardIcon("top", 18);
+  const medal = (n) => (n === 1 ? "🥇" : n === 2 ? "🥈" : n === 3 ? "🥉" : "");
+  const who = (t, size = 22) => `<span class="tname">${logoImg(t, size)}<span>${esc(t.name)}</span></span>`;
+  const rec = (t) => `${t.wins}-${t.losses}${t.ties ? "-" + t.ties : ""}`;
+  const card = (label, value, t, why) => `<div class="card award"><div class="label">${label}</div><div class="value">${value}</div><div class="who">${who(t, 20)}</div><div class="why">${esc(t.owner)}${why ? " · " + why : ""}</div></div>`;
+
+  const extremes = (ss) => {
+    const weekly = ss.flatMap((s) => s.weekly.map((w) => ({ ...w, team: s.teams[w.teamId], oppTeam: s.teams[w.opp] })));
+    const all = ss.flatMap((s) => s.list);
+    if (!weekly.length) return [];
+    const hi = weekly.reduce((a, b) => (b.score > a.score ? b : a));
+    const lo = weekly.reduce((a, b) => (b.score < a.score ? b : a));
+    const blow = weekly.reduce((a, b) => (b.score - b.oppScore > a.score - a.oppScore ? b : a));
+    const mostPf = all.reduce((a, b) => (b.pf > a.pf ? b : a));
+    const bestRec = all.reduce((a, b) => ((b.wins - b.losses) > (a.wins - a.losses) || ((b.wins - b.losses) === (a.wins - a.losses) && b.pf > a.pf) ? b : a));
+    const multi = ss.length > 1;
+    const when = (w) => `week ${w.week}${multi ? ", " + w.year : ""}`;
+    return [
+      card("Highest weekly score", f2(hi.score), hi.team, when(hi)),
+      card("Lowest weekly score", f2(lo.score), lo.team, when(lo)),
+      card("Biggest blowout", f2(blow.score - blow.oppScore), blow.team, `over ${esc(blow.oppTeam?.name || "")}, ${when(blow)}`),
+      card("Most points in a season", f1(mostPf.pf), mostPf, multi ? String(mostPf.year) : ""),
+      card("Best record", rec(bestRec), bestRec, multi ? String(bestRec.year) : ""),
+    ];
+  };
+
+  let body;
+  if (sel === "all") {
+    const champs = seasons.map((s) => {
+      const c = s.champ;
+      if (!c) return `<div class="card champ"><div class="champ-year">${s.year}</div><p class="muted">Champion not recorded</p></div>`;
+      const fin = s.final && s.final.winner === c ? `Beat ${esc(s.final.loser.name)} ${f2(s.final.wScore)}–${f2(s.final.lScore)} in the final` : "";
+      return `<div class="card champ"><div class="champ-year">${trophy} ${s.year} champion</div><div class="champ-team">${who(c, 40)}</div><div class="why">${esc(c.owner)} · ${rec(c)} · ${f1(c.pf)} PF</div>${fin ? `<div class="why">${fin}</div>` : ""}</div>`;
+    }).join("");
+    body = `<div class="section-head"><h2>Champions</h2></div><div class="grid grid-2">${champs}</div>
+      <div class="section-head"><h2>League records</h2><span class="muted small">Regular season, ${span}</span></div>
+      <div class="grid grid-awards">${extremes(seasons).join("")}</div>
+      <div class="section-head"><h2>All-time managers</h2><span class="muted small">Completed seasons only · click a column to sort</span></div>
+      <div id="hist-table"></div>`;
+  } else {
+    const s = seasons.find((x) => String(x.year) === String(sel));
+    const c = s.champ;
+    body = `${c ? `<div class="card champ champ-banner"><div class="champ-year">${trophy} ${s.year} champion</div><div class="champ-team">${who(c, 48)}</div>
+        <div class="why">${esc(c.owner)} · ${rec(c)} · ${f1(c.pf)} PF${c.seed ? ` · ${ordinal(c.seed)} seed` : ""}</div>
+        ${s.final && s.final.winner === c ? `<div class="why">Beat ${esc(s.final.loser.name)} ${f2(s.final.wScore)}–${f2(s.final.lScore)} in the final</div>` : ""}</div>` : ""}
+      <div class="section-head"><h2>${s.year} highlights</h2><span class="muted small">Regular season</span></div>
+      <div class="grid grid-awards">${extremes([s]).join("")}</div>
+      <div class="section-head"><h2>${s.year} final standings</h2><span class="muted small">${s.playoffTeams ? `${s.playoffTeams} teams made the playoffs` : ""}</span></div>
+      <div id="hist-table"></div>`;
+  }
+
+  el.innerHTML = `<div class="section-head"><h2>League history</h2><span class="muted small">${seasons.length} completed season${seasons.length > 1 ? "s" : ""}</span></div>
+    ${refused}
+    <div class="seg hist-seg" id="hist-seg"><button data-y="all" class="${sel === "all" ? "active" : ""}">All-time</button>${seasons.map((s) => `<button data-y="${s.year}" class="${String(sel) === String(s.year) ? "active" : ""}">${s.year}</button>`).join("")}</div>
+    ${body}`;
+  $("hist-seg").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => { state.historySel = b.dataset.y; renderHistory(); }));
+
+  if (sel === "all") {
+    const rows = allTimeManagers(seasons);
+    const cols = [
+      { key: "owner", label: "Manager", render: (m) => `<div class="team-cell">${logoImg(m.latest, 30)}<div><strong>${esc(m.owner)}</strong><div class="small muted">${esc(m.latest.name)}</div></div></div>` },
+      { key: "titles", label: "Titles", num: true, sort: (m) => m.titles.length * 100 + m.runnerUps, render: (m) => (m.titles.length ? `<span class="titles" data-tip="${esc(`<b>Champion</b>${m.titles.join(", ")}`)}">${awardIcon("top", 16)} ${m.titles.length}</span>` : "0") },
+      { key: "runnerUps", label: "Runner-up", num: true },
+      { key: "playoffs", label: "Playoffs", num: true, title: "Playoff appearances", render: (m) => `${m.playoffs}/${m.seasons}` },
+      { key: "winPct", label: "Record", num: true, render: (m) => `${m.wins}-${m.losses}${m.ties ? "-" + m.ties : ""} <span class="muted small">${pct(m.winPct)}</span>` },
+      { key: "poW", label: "Playoff W-L", num: true, cls: "hide-sm", render: (m) => `${m.poW}-${m.poL}` },
+      { key: "pf", label: "Total PF", num: true, render: (m) => f1(m.pf) },
+      { key: "avgPf", label: "PF / season", num: true, cls: "hide-sm", render: (m) => f1(m.avgPf) },
+      { key: "best", label: "Best finish", num: true, sort: (m) => (m.best == null ? null : -m.best), render: (m) => (m.best ? `${medal(m.best)} ${ordinal(m.best)}` : "–") },
+      { key: "avgFinish", label: "Avg finish", num: true, cls: "hide-sm", sort: (m) => (m.avgFinish == null ? null : -m.avgFinish), render: (m) => (m.avgFinish ? f1(m.avgFinish) : "–") },
+    ];
+    const draw = () => $("hist-table").replaceChildren(sortableTable(cols, rows, state.historySort, draw));
+    draw();
+  } else {
+    const s = seasons.find((x) => String(x.year) === String(sel));
+    const cols = [
+      { key: "finish", label: "Finish", num: true, sort: (t) => t.finish, render: (t) => (t.finish ? `${medal(t.finish)} ${ordinal(t.finish)}` : "–") },
+      { key: "name", label: "Team", render: (t) => `<div class="team-cell">${logoImg(t, 30)}<div><strong>${esc(t.name)}</strong><div class="small muted">${esc(t.owner)}</div></div></div>` },
+      { key: "wins", label: "Record", num: true, sort: (t) => t.wins - t.losses + t.pf / 1e5, render: rec },
+      { key: "pf", label: "PF", num: true, render: (t) => f1(t.pf) },
+      { key: "pa", label: "PA", num: true, cls: "hide-sm", render: (t) => f1(t.pa) },
+      { key: "seed", label: "Seed", num: true, sort: (t) => t.seed, render: (t) => (t.seed ? `${t.seed}${t.madePlayoffs ? "" : ` <span class="muted small">(missed)</span>`}` : "–") },
+      { key: "poW", label: "Playoff W-L", num: true, cls: "hide-sm", render: (t) => (t.madePlayoffs ? `${t.poW}-${t.poL}` : "–") },
+      { key: "draftRank", label: "vs draft proj.", num: true, title: "ESPN's draft-day projected finish, and how the final finish compared", sort: (t) => (t.draftRank && t.finish ? t.draftRank - t.finish : null),
+        render: (t) => (t.draftRank && t.finish ? `<span class="muted small">proj ${ordinal(t.draftRank)}</span> <span class="${clsSign(t.draftRank - t.finish)}">${signed(t.draftRank - t.finish, 0)}</span>` : "–") },
+      { key: "moves", label: "Pickups", num: true, cls: "hide-sm", render: (t) => t.moves ?? "–" },
+      { key: "trades", label: "Trades", num: true, cls: "hide-sm", render: (t) => t.trades ?? "–" },
+    ];
+    const draw = () => $("hist-table").replaceChildren(sortableTable(cols, s.list, state.seasonSort, draw));
+    draw();
+  }
 }
 
 // ---------- Transactions ----------
@@ -1038,17 +1260,19 @@ function banner(msg) { $("banner").hidden = !msg; $("banner").innerHTML = msg ||
 function render() {
   if (!state.week) return;
   showView(state.tab);
-  ({ matchups: renderMatchups, live: renderLive, players: renderPlayers, managers: renderManagers, season: renderSeason, transactions: renderTransactions })[state.tab]();
+  ({ matchups: renderMatchups, live: renderLive, players: renderPlayers, managers: renderManagers, season: renderSeason, history: renderHistory, transactions: renderTransactions })[state.tab]();
 }
 
 async function loadWeek(week, force) {
   state.week = null;
   showView(null);
   setLoading(true);
+  const base = state.base;
   try {
     if (force || !state.weekCache[week]?.nfl) {
-      const sp = state.base.scoringPeriodFor(week);
+      const sp = base.scoringPeriodFor(week);
       const [raw, nfl] = await Promise.all([api(["mBoxscore", "mMatchupScore", "mRoster"], sp), loadNfl(sp)]);
+      if (state.base !== base) return; // league changed while loading
       state.weekCache[week] = buildWeek(raw, week, nfl);
       state.weekCache[week].nfl = nfl || {};
     }
@@ -1065,7 +1289,37 @@ async function loadWeek(week, force) {
   render();
 }
 
-async function loadLeague() {
+// Switch to another league: forget everything loaded for the previous one.
+async function switchLeague(leagueId, season) {
+  state.leagueId = leagueId;
+  state.season = season;
+  state.demo = false;
+  store.set("ffb.league", leagueId || null);
+  store.set("ffb.season", season || null);
+  clearTimeout(state.liveTimer);
+  Object.assign(state, {
+    base: null, week: null, weekCache: {}, awardTally: null, activity: null, history: null,
+    live: null, livePrev: {}, liveBumps: {}, openMatchup: null,
+  });
+  state.players.team = state.txFilter.team = state.liveFilter.team = "ALL";
+  state.historySel = "all";
+  await loadLeague();
+  setUrl();
+}
+
+function renderLeagueSelect() {
+  const sel = $("league-select");
+  const current = state.leagueId || LEAGUES[0].id;
+  const known = LEAGUES.some((l) => l.id === current);
+  sel.innerHTML = LEAGUES.map((l) => `<option value="${l.id}" ${l.id === current ? "selected" : ""}>${esc(l.label)}</option>`).join("")
+    + (known ? "" : `<option value="${esc(current)}" selected>League ${esc(current)}</option>`);
+  sel.hidden = state.demo;
+}
+
+let pendingWeek = parseInt(params.get("week")) || null;
+
+async function loadLeague(week) {
+  renderLeagueSelect();
   $("setup").hidden = true;
   setLoading(true);
   try {
@@ -1084,7 +1338,9 @@ async function loadLeague() {
     .map((w) => `<option value="${w}">Week ${w}${w > b.regWeeks ? " (playoffs)" : ""}${w === b.current ? " · current" : ""}</option>`).join("");
   $("week-nav").hidden = false;
   $("tabs").hidden = false;
-  const wk = Math.min(Math.max(parseInt(params.get("week")) || b.current, 1), b.weeks);
+  // A ?week= link applies to the first load only.
+  const wk = Math.min(Math.max(week || pendingWeek || b.current, 1), b.weeks);
+  pendingWeek = null;
   await loadWeek(wk);
 }
 
@@ -1123,23 +1379,15 @@ function bindUi() {
     state.weekCache = {};
     state.awardTally = null;
     state.activity = null;
-    await loadLeague();
-    if (wk && state.week?.week !== wk) await loadWeek(wk);
+    state.history = null;
+    await loadLeague(wk);
   });
   $("settings-btn").addEventListener("click", () => { $("week-nav").hidden = true; showSetup(""); });
   $("setup-form").addEventListener("submit", async (e) => {
     e.preventDefault();
-    state.leagueId = $("league-input").value.trim();
-    state.season = $("season-input").value.trim();
-    state.demo = false;
-    state.weekCache = {};
-    state.awardTally = null;
-    state.activity = null;
-    store.set("ffb.league", state.leagueId || null);
-    store.set("ffb.season", state.season || null);
-    await loadLeague();
-    setUrl();
+    await switchLeague($("league-input").value.trim(), $("season-input").value.trim());
   });
+  $("league-select").addEventListener("change", (e) => switchLeague(e.target.value, ""));
   // Catch up on live games when the page comes back into view.
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible" && state.tab === "live" && state.liveStale) renderLive();
