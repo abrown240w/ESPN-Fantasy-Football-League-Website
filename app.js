@@ -29,6 +29,8 @@ const state = {
   players: { q: "", pos: "ALL", team: "ALL", role: "starters", sort: { key: "actual", dir: -1 } },
   managers: { sort: { key: "score", dir: -1 } },
   standings: { sort: { key: "rank", dir: 1 } },
+  activity: null,
+  txFilter: { team: "ALL", kind: "all" },
 };
 const $ = (id) => document.getElementById(id);
 
@@ -69,6 +71,20 @@ async function api(views, scoringPeriodId) {
   }
   if (!res.ok) throw new ApiError(body.error, body.message || `Request failed (${res.status})`);
   return body;
+}
+
+// NFL opponents and opponent ranks for a scoring period. Optional: the site works without it.
+async function loadNfl(sp) {
+  if (state.demo) return window.DemoLeague.nfl(sp);
+  const q = new URLSearchParams({ scoringPeriodId: sp });
+  if (state.leagueId) q.set("leagueId", state.leagueId);
+  if (state.season) q.set("season", state.season);
+  try {
+    const res = await fetch(`/api/nfl?${q}`);
+    return res.ok ? await res.json() : null;
+  } catch {
+    return null;
+  }
 }
 
 // ---------- Data model ----------
@@ -122,7 +138,7 @@ function statLine(posId, s) {
   return parts.join(", ");
 }
 
-function parsePlayer(entry, sp, teamId, injuries = {}) {
+function parsePlayer(entry, sp, teamId, rosterInfo = {}, nfl = null) {
   const pl = entry.playerPoolEntry?.player || entry.player || {};
   const stats = pl.stats || [];
   const forPeriod = (src) => stats.find((s) => s.scoringPeriodId === sp && s.statSourceId === src && (s.statSplitTypeId ?? 1) === 1);
@@ -130,9 +146,21 @@ function parsePlayer(entry, sp, teamId, injuries = {}) {
   const actual = act ? act.appliedTotal : null;
   const proj = prj ? prj.appliedTotal : 0;
   const slotId = entry.lineupSlotId;
-  // Box scores omit injury status, so fall back to the roster's copy.
-  const status = pl.injuryStatus ?? injuries[pl.id ?? entry.playerId];
+  // Box scores omit injury status and rankings, so fall back to the roster's copy.
+  const info = rosterInfo[pl.id ?? entry.playerId] || {};
+  const status = pl.injuryStatus ?? info.injury;
   const inj = status && status !== "ACTIVE" && status !== "NORMAL" ? status : "";
+  // This week's NFL opponent and how tough that defense is against the player's position.
+  let opp = null;
+  if (nfl && pl.proTeamId) {
+    const g = nfl.games[pl.proTeamId];
+    if (g) {
+      const [rank, avg] = nfl.oprk[pl.defaultPositionId]?.[g[0]] || [];
+      opp = { team: PRO[g[0]] || "", home: g[1], rank, avg };
+    } else if (nfl.byes[pl.proTeamId] === sp) {
+      opp = { bye: true };
+    }
+  }
   return {
     id: pl.id ?? entry.playerId,
     name: pl.fullName || "Unknown",
@@ -148,6 +176,9 @@ function parsePlayer(entry, sp, teamId, injuries = {}) {
     injury: inj,
     eligible: pl.eligibleSlots || [],
     line: statLine(pl.defaultPositionId, act?.stats),
+    opp,
+    pprRank: info.pprRank ?? null,
+    posRank: info.posRank ?? null,
     teamId,
   };
 }
@@ -166,10 +197,10 @@ function optimalLineup(players, slotCounts) {
   return { points: sum(lineup, (x) => x.p.actual), lineup };
 }
 
-function buildSide(side, sp, rosterByTeam, slotCounts, injuries) {
+function buildSide(side, sp, rosterByTeam, slotCounts, rosterInfo, nfl) {
   if (!side) return null;
   const entries = side.rosterForCurrentScoringPeriod?.entries || rosterByTeam[side.teamId] || [];
-  const players = entries.map((e) => parsePlayer(e, sp, side.teamId, injuries));
+  const players = entries.map((e) => parsePlayer(e, sp, side.teamId, rosterInfo, nfl));
   const starters = players.filter((p) => p.starter)
     .sort((a, b) => SLOT_DISPLAY.indexOf(a.slotId) - SLOT_DISPLAY.indexOf(b.slotId));
   const bench = players.filter((p) => !p.starter).sort((a, b) => b.actual - a.actual || b.proj - a.proj);
@@ -192,25 +223,30 @@ function buildSide(side, sp, rosterByTeam, slotCounts, injuries) {
   };
 }
 
-function buildWeek(raw, week) {
+function buildWeek(raw, week, nfl = null) {
   const base = state.base;
   const sp = base.scoringPeriodFor(week);
   const rosterByTeam = Object.fromEntries((raw.teams || []).map((t) => [t.id, t.roster?.entries || []]));
-  // Roster injury status is today's status, so only apply it to the current and upcoming weeks.
-  const injuries = {};
-  if (week >= base.current) {
-    for (const e of Object.values(rosterByTeam).flat()) {
-      const p = e.playerPoolEntry?.player;
-      if (p?.injuryStatus) injuries[p.id] = p.injuryStatus;
-    }
+  const rosterInfo = {};
+  for (const e of Object.values(rosterByTeam).flat()) {
+    const p = e.playerPoolEntry?.player;
+    if (!p) continue;
+    rosterInfo[p.id] = {
+      // Roster injury status is today's status, so only apply it to the current and upcoming weeks.
+      injury: week >= base.current ? p.injuryStatus : undefined,
+      // ESPN experts' average PPR rank for this week, within the player's position.
+      pprRank: (p.rankings?.[sp] || []).find((r) => r.rankType === "PPR" && r.rankSourceId === 0)?.averageRank ?? null,
+      // Season rank by fantasy points, within the player's position.
+      posRank: e.playerPoolEntry.ratings?.["0"]?.positionalRanking || null,
+    };
   }
   const matchups = (raw.schedule || []).filter((m) => m.matchupPeriodId === week).map((m) => ({
     id: m.id,
     winner: m.winner || "UNDECIDED",
     playoff: m.playoffTierType && m.playoffTierType !== "NONE",
     tier: m.playoffTierType,
-    home: buildSide(m.home, sp, rosterByTeam, base.slotCounts, injuries),
-    away: buildSide(m.away, sp, rosterByTeam, base.slotCounts, injuries),
+    home: buildSide(m.home, sp, rosterByTeam, base.slotCounts, rosterInfo, nfl),
+    away: buildSide(m.away, sp, rosterByTeam, base.slotCounts, rosterInfo, nfl),
   }));
   const sides = matchups.flatMap((m) => [m.home, m.away]).filter(Boolean);
   const anyPlayed = sides.some((s) => s.playedCount > 0 || s.score > 0);
@@ -340,6 +376,20 @@ const INJURY = {
   SUSPENSION: ["SSPD", "Suspended", true],
 };
 const injuryInfo = (s) => INJURY[s] || [s.slice(0, 3), s.replace(/_/g, " ").toLowerCase().replace(/^./, (c) => c.toUpperCase()), false];
+const ordinal = (n) => `${n}${["th", "st", "nd", "rd"][(n % 100 >= 11 && n % 100 <= 13) ? 0 : Math.min(n % 10, 4) % 4] || "th"}`;
+// "@ DEN 29th": opponent plus ESPN's opponent rank (1 = toughest defense vs. this position, 32 = easiest).
+function oppHtml(p) {
+  const o = p.opp;
+  if (!o) return `<span class="muted">–</span>`;
+  if (o.bye) return `<span class="muted">BYE</span>`;
+  const label = `${o.home ? "vs" : "@"} ${esc(o.team)}`;
+  if (!o.rank) return label;
+  const cls = o.rank <= 10 ? "tough" : o.rank >= 23 ? "easy" : "";
+  const tip = `<b>${esc(o.team)} vs ${esc(p.pos)}s: ${ordinal(o.rank)}</b>Allows ${f1(o.avg)} fantasy pts per game to ${esc(p.pos)}s. 1st = toughest matchup, 32nd = easiest.`;
+  return `<span class="opp">${label} <span class="oprk ${cls}" data-tip="${esc(tip)}">${ordinal(o.rank)}</span></span>`;
+}
+const posRankHtml = (p, rank) => (rank ? `${esc(p.pos)}${Math.round(rank)}` : `<span class="muted">–</span>`);
+
 const injBadge = (p) => {
   if (!p.injury) return "";
   const [short, full, severe] = injuryInfo(p.injury);
@@ -349,7 +399,7 @@ const statusBadge = (s) => (s === "final" ? `<span class="badge final">FINAL</sp
 const ptsCell = (p, status) => (p.played || status === "final" ? f1(p.actual) : `<span class="muted">–</span>`);
 
 function showView(name) {
-  for (const v of ["matchups", "players", "managers", "season"]) $(`view-${v}`).hidden = v !== name;
+  for (const v of ["matchups", "players", "managers", "season", "transactions"]) $(`view-${v}`).hidden = v !== name;
   document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
 }
 
@@ -406,8 +456,8 @@ function matchupDetail(m) {
     const h = home.starters.filter((p) => p.slotId === slot), a = away.starters.filter((p) => p.slotId === slot);
     for (let i = 0; i < Math.max(h.length, a.length); i++) rows.push([h[i], SLOT[slot], a[i]]);
   }
-  const cellL = (p, win) => p ? `<td class="pl ${win ? "edge-win" : ""}"><span class="nm">${esc(p.name)}${injBadge(p)}</span><span class="sub">${p.pos} · ${p.nfl}${p.line ? " · " + esc(p.line) : ""}</span></td><td class="num hide-sm muted">${f1(p.proj)}</td><td class="num edge">${ptsCell(p, st)}</td>` : `<td class="pl muted">Empty</td><td class="hide-sm"></td><td></td>`;
-  const cellR = (p, win) => p ? `<td class="num edge">${ptsCell(p, st)}</td><td class="num hide-sm muted">${f1(p.proj)}</td><td class="pl right ${win ? "edge-win" : ""}"><span class="nm">${injBadge(p)} ${esc(p.name)}</span><span class="sub">${p.line ? esc(p.line) + " · " : ""}${p.pos} · ${p.nfl}</span></td>` : `<td></td><td class="hide-sm"></td><td class="pl right muted">Empty</td>`;
+  const cellL = (p, win) => p ? `<td class="pl ${win ? "edge-win" : ""}"><span class="nm">${esc(p.name)}${injBadge(p)}</span><span class="sub">${p.pos} · ${p.nfl}${p.line ? " · " + esc(p.line) : ""}</span>${p.opp ? `<span class="opp-sub">${oppHtml(p)}</span>` : ""}</td><td class="num hide-sm muted">${f1(p.proj)}</td><td class="num edge">${ptsCell(p, st)}</td>` : `<td class="pl muted">Empty</td><td class="hide-sm"></td><td></td>`;
+  const cellR = (p, win) => p ? `<td class="num edge">${ptsCell(p, st)}</td><td class="num hide-sm muted">${f1(p.proj)}</td><td class="pl right ${win ? "edge-win" : ""}"><span class="nm">${injBadge(p)} ${esc(p.name)}</span><span class="sub">${p.line ? esc(p.line) + " · " : ""}${p.pos} · ${p.nfl}</span>${p.opp ? `<span class="opp-sub">${oppHtml(p)}</span>` : ""}</td>` : `<td></td><td class="hide-sm"></td><td class="pl right muted">Empty</td>`;
   const scoreOf = (p) => (p ? (st === "upcoming" ? p.proj : p.actual) : -Infinity);
   const row = ([h, slot, a]) => {
     const hs = scoreOf(h), as = scoreOf(a);
@@ -492,6 +542,9 @@ function renderPlayers() {
       { key: "name", label: "Player", render: (p) => `<strong>${esc(p.name)}</strong>${injBadge(p)}${p.line ? `<div class="small muted">${esc(p.line)}</div>` : ""}` },
       { key: "pos", label: "Pos", sort: (p) => POS_ORDER.indexOf(p.pos) },
       { key: "nfl", label: "NFL", cls: "hide-sm" },
+      { key: "opp", label: "Opp", title: "This week's opponent and ESPN's opponent rank vs. the player's position (1st = toughest, 32nd = easiest)", sort: (p) => p.opp?.rank ?? null, render: oppHtml },
+      { key: "pprRank", label: "PPR rank", num: true, title: "ESPN experts' average PPR rank for this week, within the position", sort: (p) => p.pprRank, render: (p) => posRankHtml(p, p.pprRank) },
+      { key: "posRank", label: "Scoring rank", num: true, title: "Season rank by fantasy points, within the position", sort: (p) => p.posRank, render: (p) => posRankHtml(p, p.posRank) },
       { key: "teamId", label: "Manager", sort: (p) => team(p.teamId).name, render: (p) => esc(team(p.teamId).name) },
       { key: "slot", label: "Slot", sort: (p) => SLOT_DISPLAY.indexOf(p.slotId) + (p.starter ? 0 : 100) },
       { key: "actual", label: "Pts", num: true, sort: (p) => (p.played ? p.actual : null), render: (p) => p.played ? `<div class="bar-cell"><span class="track"><span class="fill" style="display:block;width:${Math.max(0, (p.actual / maxPts) * 100)}%"></span></span>${f1(p.actual)}</div>` : `<span class="muted">–</span>` },
@@ -732,6 +785,95 @@ function heatmap(season) {
     <div class="legend">Low<span class="ramp">${[0, 1, 2, 3, 4, 5, 6].map((i) => `<i style="background:var(--seq-${i})"></i>`).join("")}</span>High · numbers are each week's score</div>`;
 }
 
+// ---------- Transactions ----------
+async function loadActivity() {
+  if (state.demo) return window.DemoLeague.activity();
+  const q = new URLSearchParams();
+  if (state.leagueId) q.set("leagueId", state.leagueId);
+  if (state.season) q.set("season", state.season);
+  let res, body;
+  try {
+    res = await fetch(`/api/activity?${q}`);
+    body = await res.json();
+  } catch {
+    throw new ApiError("no_function", "Couldn't reach the transactions function. Make sure netlify/functions/activity.mjs is uploaded.");
+  }
+  if (!res.ok) throw new ApiError(body.error, body.message || `Request failed (${res.status})`);
+  return body;
+}
+
+function renderTransactions() {
+  const el = $("view-transactions");
+  const a = state.activity;
+  if (!a || a === "loading") {
+    el.innerHTML = `<div class="loading"><span class="spinner"></span> Loading transactions…</div>`;
+    if (!a) {
+      state.activity = "loading";
+      loadActivity()
+        .then((d) => { state.activity = d; })
+        .catch((e) => { state.activity = { error: e.message }; })
+        .finally(() => { if (state.tab === "transactions") renderTransactions(); });
+    }
+    return;
+  }
+  if (a.error) { el.innerHTML = `<div class="banner">${esc(a.error)}</div>`; return; }
+
+  const player = (id) => {
+    const p = a.players[id];
+    if (!p) return `<span class="tx-player">Unknown player</span>`;
+    const [name, posId, proId] = p;
+    return `<span class="tx-player">${esc(name)} <span class="muted small">${POS[posId] || ""}${PRO[proId] && proId ? " · " + PRO[proId] : ""}</span></span>`;
+  };
+  const fmtDate = (ms) => new Date(ms).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  const weekLabel = (w) => (w ? `Week ${w}` : "Preseason");
+  const tradeSidesHtml = (sides) => sides.map((s) => `<div class="trade-side">
+      <div class="trade-team">${teamName(s.teamId, 26)}</div>
+      <div class="small muted">receives</div>
+      ${s.gets.map((id) => `<div class="tx-line add">+ ${player(id)}</div>`).join("") || `<div class="muted small">Nothing</div>`}
+      ${s.drops.map((id) => `<div class="tx-line drop">− ${player(id)} <span class="muted small">(dropped)</span></div>`).join("")}
+    </div>`).join(`<div class="trade-swap" aria-hidden="true">⇄</div>`);
+
+  // Pending trades
+  const pending = a.pendingTrades.length
+    ? `<div class="grid">${a.pendingTrades.map((t) => `<div class="card trade-card">
+        <div class="trade-meta"><span class="badge inj">PENDING</span> <span class="muted small">Accepted ${fmtDate(t.acceptedDate)} · awaiting league review</span></div>
+        <div class="trade-sides">${tradeSidesHtml(t.sides)}</div></div>`).join("")}</div>`
+    : `<p class="muted">No pending trades right now.${a.signedIn || state.demo ? "" : " (ESPN only shows trades to signed-in members: add the ESPN_S2 and SWID settings in Netlify.)"}</p>`;
+
+  // Completed moves
+  const f = state.txFilter;
+  const involves = (m, teamId) => m.teamId === teamId || (m.sides || []).some((s) => s.teamId === teamId);
+  const moves = a.moves.filter((m) => (f.kind === "all" || m.kind === f.kind) && (f.team === "ALL" || involves(m, +f.team)));
+  const kindLabel = { waiver: "Waiver", freeagent: "Free agent", trade: "Trade" };
+  const row = (m) => {
+    const when = `<div class="tx-when">${fmtDate(m.date)}</div>`;
+    if (m.kind === "trade") {
+      return `<div class="card tx tx-trade">${when}<div class="tx-main"><span class="tx-kind trade">Trade</span><div class="trade-sides">${tradeSidesHtml(m.sides)}</div></div></div>`;
+    }
+    const lines = [...m.adds.map((id) => `<div class="tx-line add">+ ${player(id)}</div>`), ...m.drops.map((id) => `<div class="tx-line drop">− ${player(id)}</div>`)].join("");
+    const bid = m.bid != null && m.kind === "waiver" ? `<div class="tx-bid">$${m.bid}</div>` : "";
+    return `<div class="card tx">${when}<div class="tx-main"><div class="tx-head">${teamName(m.teamId, 26)}<span class="tx-kind ${m.kind}">${kindLabel[m.kind]}</span></div>${lines}</div>${bid}</div>`;
+  };
+  const groups = [];
+  for (const m of moves) {
+    const g = groups[groups.length - 1];
+    if (g && g.week === m.week) g.items.push(m); else groups.push({ week: m.week, items: [m] });
+  }
+  const teamOpts = Object.values(state.base.teams).sort((x, y) => x.name.localeCompare(y.name))
+    .map((t) => `<option value="${t.id}" ${String(f.team) === String(t.id) ? "selected" : ""}>${esc(t.name)}</option>`).join("");
+
+  el.innerHTML = `<div class="section-head"><h2>Pending trades</h2><span class="muted small">Trades both teams accepted that haven't gone through yet</span></div>
+    ${pending}
+    <div class="section-head"><h2>Transactions</h2><span class="muted small">Waiver claims, free-agent moves and completed trades, newest first</span></div>
+    <div class="filters">
+      <select id="tx-team" aria-label="Team"><option value="ALL">All teams</option>${teamOpts}</select>
+      <div class="seg" id="tx-kind">${[["all", "All"], ["waiver", "Waivers"], ["freeagent", "Free agents"], ["trade", "Trades"]].map(([k, l]) => `<button data-k="${k}" class="${f.kind === k ? "active" : ""}">${l}</button>`).join("")}</div>
+    </div>
+    ${groups.length ? groups.map((g) => `<h3 class="tx-week">${weekLabel(g.week)}</h3><div class="tx-list">${g.items.map(row).join("")}</div>`).join("") : `<p class="muted">No transactions match.</p>`}`;
+  $("tx-team").addEventListener("change", (e) => { f.team = e.target.value; renderTransactions(); });
+  $("tx-kind").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => { f.kind = b.dataset.k; renderTransactions(); }));
+}
+
 // ---------- Tooltip ----------
 function initTooltip() {
   const tip = $("tooltip");
@@ -755,7 +897,7 @@ function banner(msg) { $("banner").hidden = !msg; $("banner").innerHTML = msg ||
 function render() {
   if (!state.week) return;
   showView(state.tab);
-  ({ matchups: renderMatchups, players: renderPlayers, managers: renderManagers, season: renderSeason })[state.tab]();
+  ({ matchups: renderMatchups, players: renderPlayers, managers: renderManagers, season: renderSeason, transactions: renderTransactions })[state.tab]();
 }
 
 async function loadWeek(week, force) {
@@ -763,9 +905,11 @@ async function loadWeek(week, force) {
   showView(null);
   setLoading(true);
   try {
-    if (force || !state.weekCache[week]) {
-      const raw = await api(["mBoxscore", "mMatchupScore", "mRoster"], state.base.scoringPeriodFor(week));
-      state.weekCache[week] = buildWeek(raw, week);
+    if (force || !state.weekCache[week]?.nfl) {
+      const sp = state.base.scoringPeriodFor(week);
+      const [raw, nfl] = await Promise.all([api(["mBoxscore", "mMatchupScore", "mRoster"], sp), loadNfl(sp)]);
+      state.weekCache[week] = buildWeek(raw, week, nfl);
+      state.weekCache[week].nfl = nfl || {};
     }
     state.week = state.weekCache[week];
     $("week-select").value = week;
@@ -837,6 +981,7 @@ function bindUi() {
     const wk = state.week?.week;
     state.weekCache = {};
     state.awardTally = null;
+    state.activity = null;
     await loadLeague();
     if (wk && state.week?.week !== wk) await loadWeek(wk);
   });
@@ -848,6 +993,7 @@ function bindUi() {
     state.demo = false;
     state.weekCache = {};
     state.awardTally = null;
+    state.activity = null;
     store.set("ffb.league", state.leagueId || null);
     store.set("ffb.season", state.season || null);
     await loadLeague();

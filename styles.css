@@ -201,6 +201,41 @@ table.data tr:last-child td { border-bottom: 0; }
 .award-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; font-size: .8rem; color: var(--ink-2); margin: -4px 0 12px; }
 .award-legend > span { display: inline-flex; align-items: center; gap: 5px; }
 
+/* Opponent rank (OPRK) */
+.opp { white-space: nowrap; }
+.oprk { display: inline-block; font-size: .72rem; font-weight: 700; padding: 0 6px; border-radius: 999px; background: var(--surface-2); color: var(--ink-2); font-variant-numeric: tabular-nums; cursor: default; }
+.oprk.tough { background: #fde6e6; color: #a32020; }
+.oprk.easy { background: #e0f3e6; color: #0b6b2c; }
+.h2h .pl .opp-sub { display: block; font-size: .75rem; color: var(--ink-2); margin-top: 1px; }
+
+/* Transactions */
+.tx-week { margin: 20px 0 8px; font-size: .85rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+.tx-list { display: grid; gap: 8px; }
+.tx { display: grid; grid-template-columns: 120px 1fr auto; gap: 14px; align-items: start; padding: 12px 16px; }
+.tx-when { font-size: .8rem; color: var(--muted); padding-top: 4px; }
+.tx-main { min-width: 0; }
+.tx-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; font-weight: 600; }
+.tx-kind { font-size: .7rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; padding: 2px 8px; border-radius: 999px; background: var(--surface-2); color: var(--ink-2); }
+.tx-kind.waiver { background: #e3eefc; color: #1c5cab; }
+.tx-kind.freeagent { background: #e2f5ec; color: #0d6b47; }
+.tx-kind.trade { background: #fdeee6; color: #a3431b; }
+.tx-line { margin: 2px 0; }
+.tx-line.add { color: var(--good); }
+.tx-line.drop { color: var(--bad); }
+.tx-player { color: var(--ink); font-weight: 600; }
+.tx-bid { font-weight: 700; font-variant-numeric: tabular-nums; padding-top: 4px; }
+.tx-trade .tx-kind { display: inline-block; margin-bottom: 8px; }
+.trade-card { padding: 16px; }
+.trade-meta { margin-bottom: 10px; }
+.trade-sides { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; }
+.trade-side { flex: 1 1 220px; min-width: 0; }
+.trade-team { font-weight: 600; margin-bottom: 4px; }
+.trade-swap { font-size: 1.4rem; color: var(--muted); align-self: center; }
+@media (max-width: 640px) {
+  .tx { grid-template-columns: 1fr auto; }
+  .tx-when { grid-column: 1 / -1; padding-top: 0; }
+}
+
 .tooltip { position: fixed; z-index: 50; pointer-events: none; background: var(--surface); color: var(--ink); border: 1px solid var(--border); box-shadow: 0 6px 20px rgba(0,0,0,.18); border-radius: 8px; padding: 8px 10px; font-size: .82rem; max-width: 260px; }
 .tooltip b { display: block; margin-bottom: 2px; }
 

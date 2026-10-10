@@ -82,7 +82,20 @@
     }
   }
 
-  // Like ESPN, box-score entries omit injury status; roster entries include it.
+  // Position ranks: season scoring rank from base strength, weekly PPR rank from projections.
+  const allPlayers = teams.flatMap((t) => t.players);
+  const rankWithin = (score) => {
+    const ranks = {};
+    for (const posId of new Set(allPlayers.map((p) => p.defaultPositionId))) {
+      allPlayers.filter((p) => p.defaultPositionId === posId).sort((a, b) => score(b) - score(a)).forEach((p, i) => (ranks[p.id] = i + 1));
+    }
+    return ranks;
+  };
+  const seasonRank = rankWithin((p) => p.base);
+  const weekRank = {};
+  const pprRank = (p, wk) => (weekRank[wk] ||= rankWithin((x) => x.weeks[wk].proj))[p.id];
+
+  // Like ESPN, box-score entries omit injury status and rankings; roster entries include them.
   function entry(p, wk, slot, withInjury) {
     const w = p.weeks[wk];
     const stats = [{ scoringPeriodId: wk, statSourceId: 1, statSplitTypeId: 1, appliedTotal: w.proj, stats: statsFor(p.defaultPositionId, w.proj) }];
@@ -91,8 +104,12 @@
       lineupSlotId: slot, playerId: p.id,
       playerPoolEntry: {
         appliedStatTotal: w.actual ?? 0,
+        ...(withInjury ? { ratings: { 0: { positionalRanking: seasonRank[p.id] } } } : {}),
         player: { id: p.id, fullName: p.fullName, defaultPositionId: p.defaultPositionId, proTeamId: p.proTeamId, eligibleSlots: p.eligibleSlots, stats,
-          ...(withInjury ? { injuryStatus: p.injuryStatus, injured: p.injuryStatus !== "ACTIVE" } : {}) },
+          ...(withInjury ? {
+            injuryStatus: p.injuryStatus, injured: p.injuryStatus !== "ACTIVE",
+            rankings: { [wk]: [{ rankType: "PPR", rankSourceId: 0, averageRank: pprRank(p, wk) + Math.round(rand() * 4) / 2 }] },
+          } : {}) },
       },
     };
   }
@@ -175,5 +192,62 @@
     return out;
   }
 
-  window.DemoLeague = { response };
+  // Same shape as /api/activity.
+  function activity() {
+    const players = {};
+    const add = (p) => { players[p.id] = [p.fullName, p.defaultPositionId, p.proTeamId]; return p.id; };
+    let fa = 9000;
+    const freeAgent = (posName) => {
+      const posId = POS[posName][0];
+      const id = fa++;
+      players[id] = [`${pick(FIRST)} ${pick(LAST)}`, posId, pick([1, 4, 9, 12, 18, 25, 33])];
+      return id;
+    };
+    const day = 24 * 60 * 60 * 1000, start = Date.UTC(SEASON, 8, 9, 12);
+    const moves = [];
+    for (let wk = 1; wk < CURRENT_WEEK; wk++) {
+      for (let n = 0; n < 4; n++) {
+        const t = pick(teams), p = pick(t.players.filter((x) => x.defaultPositionId !== 16));
+        const pos = Object.keys(POS).find((k) => POS[k][0] === p.defaultPositionId);
+        const kind = n % 2 ? "freeagent" : "waiver";
+        moves.push({ id: `d${wk}-${n}`, kind, date: start + (wk - 1) * 7 * day + (kind === "waiver" ? 1 : 3) * day + n * 3600e3, week: wk, teamId: t.id, bid: null, adds: [freeAgent(pos)], drops: [add(p)] });
+      }
+    }
+    const [a, b] = [teams[1], teams[6]];
+    moves.push({ id: "dtrade", kind: "trade", date: start + 17 * day, week: 3, sides: [
+      { teamId: a.id, gets: [add(b.players[3])], drops: [] },
+      { teamId: b.id, gets: [add(a.players[8]), add(a.players[12])], drops: [add(b.players[13])] },
+    ] });
+    moves.sort((x, y) => y.date - x.date);
+    const [c, d] = [teams[2], teams[8]];
+    const pendingTrades = [{ id: "dpending", proposedDate: start + 33 * day, acceptedDate: start + 34 * day, sides: [
+      { teamId: c.id, gets: [add(d.players[2]), add(d.players[9])], drops: [] },
+      { teamId: d.id, gets: [add(c.players[7])], drops: [] },
+    ] }];
+    return { usesBudget: false, moves, pendingTrades, players, signedIn: true, tradeDebug: {} };
+  }
+
+  // Same shape as /api/nfl: pro-team pairings and opponent ranks for a week.
+  function nfl(sp) {
+    let s = 7919 * sp;
+    const r = () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296);
+    const shuffle = (arr) => { const a = [...arr]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(r() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+    const ids = [...Array(30).keys()].map((i) => i + 1).concat([33, 34]);
+    const order = shuffle(ids), games = {}, byes = {};
+    // Two teams sit out each week to mimic byes.
+    for (const id of order.slice(0, 2)) byes[id] = sp;
+    for (let i = 2; i < order.length; i += 2) {
+      const [h, a] = [order[i], order[i + 1]], date = Date.UTC(SEASON, 8, 6 + sp * 7, 17);
+      games[h] = [a, true, date];
+      games[a] = [h, false, date];
+    }
+    const oprk = {};
+    for (const posId of [1, 2, 3, 4, 5, 16]) {
+      oprk[posId] = {};
+      shuffle(ids).forEach((id, i) => (oprk[posId][id] = [i + 1, Math.round((8 + i * 0.6 + r() * 2) * 10) / 10]));
+    }
+    return { games, byes, oprk };
+  }
+
+  window.DemoLeague = { response, activity, nfl };
 })();

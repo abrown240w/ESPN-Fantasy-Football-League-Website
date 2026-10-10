@@ -3,26 +3,29 @@
 A website that connects to an ESPN fantasy football league and breaks down every week:
 
 - **Matchups**: every game with score, projection and win chance. Tap one for a position-by-position head-to-head, bench comparison and key takeaways.
-- **Players**: top scorer at each position, plus a searchable, sortable table of every rostered player (points, projection, over/under, stat line, injury status).
+- **Players**: top scorer at each position, plus a searchable, sortable table of every rostered player (points, projection, over/under, stat line, injury status, opponent and opponent rank, ESPN PPR rank, season scoring rank).
 - **Managers**: weekly awards (top score, best lineup, most bench points wasted, unluckiest loss, …) and a report card with each team's optimal lineup and lineup efficiency.
 - **Season**: standings with all-play record, luck rating, streaks and power rankings, a luck chart, and a weekly score heatmap.
+- **Transactions**: accepted trades awaiting league review, plus every waiver claim, free-agent move and completed trade, filterable by team and type.
 
 ## Files
 
 ```
-netlify.toml                 Netlify config
 netlify/functions/espn.mjs   Server-side proxy to ESPN (browsers can't call ESPN directly)
+netlify/functions/logo.mjs   Loads custom-uploaded team logos (needs ESPN_S2 and SWID)
+netlify/functions/activity.mjs   League transactions and pending trades
+netlify/functions/nfl.mjs   NFL opponents and opponent ranks (OPRK) for each week
 index.html, styles.css, app.js, demo.js   The website
 ```
 
 ## Deploy to Netlify
 
 This site deploys from GitHub: any change pushed to the `main` branch is published automatically.
-When uploading files through GitHub's website, upload from a short path (like `Documents`) so file names aren't shortened. `netlify.toml` must keep its exact name.
+When uploading files through GitHub's website, upload from a short path (like `Documents`) so file names aren't shortened. `index.html` must keep its exact name.
 
 **Option A: GitHub (easiest to keep updated)**
 1. Put this folder in a GitHub repository.
-2. In Netlify: **Add new site → Import an existing project → GitHub**, then pick the repo. No build command is needed; Netlify reads `netlify.toml`.
+2. In Netlify: **Add new site → Import an existing project → GitHub**, then pick the repo. No build command or publish directory is needed; the defaults work.
 3. Go to **Site configuration → Environment variables** and add `LEAGUE_ID` = your league ID.
 4. Under **Deploys**, choose **Trigger deploy**.
 
