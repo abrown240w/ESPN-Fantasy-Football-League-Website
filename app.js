@@ -31,6 +31,11 @@ const state = {
   standings: { sort: { key: "rank", dir: 1 } },
   activity: null,
   txFilter: { team: "ALL", kind: "all" },
+  live: null,
+  liveFilter: { show: "rostered", team: "ALL" },
+  livePrev: {},
+  liveBumps: {},
+  liveTimer: null,
 };
 const $ = (id) => document.getElementById(id);
 
@@ -399,7 +404,7 @@ const statusBadge = (s) => (s === "final" ? `<span class="badge final">FINAL</sp
 const ptsCell = (p, status) => (p.played || status === "final" ? f1(p.actual) : `<span class="muted">–</span>`);
 
 function showView(name) {
-  for (const v of ["matchups", "players", "managers", "season", "transactions"]) $(`view-${v}`).hidden = v !== name;
+  for (const v of ["matchups", "live", "players", "managers", "season", "transactions"]) $(`view-${v}`).hidden = v !== name;
   document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
 }
 
@@ -785,6 +790,142 @@ function heatmap(season) {
     <div class="legend">Low<span class="ramp">${[0, 1, 2, 3, 4, 5, 6].map((i) => `<i style="background:var(--seq-${i})"></i>`).join("")}</span>High · numbers are each week's score</div>`;
 }
 
+// ---------- Live games ----------
+const LIVE_POLL_MS = 30000, IDLE_POLL_MS = 120000;
+
+async function fetchLive() {
+  const sp = state.base.scoringPeriodFor(state.base.current);
+  if (state.demo) return window.DemoLeague.live(sp);
+  const q = new URLSearchParams({ scoringPeriodId: sp });
+  if (state.leagueId) q.set("leagueId", state.leagueId);
+  if (state.season) q.set("season", state.season);
+  let res, body;
+  try {
+    res = await fetch(`/api/live?${q}`);
+    body = await res.json();
+  } catch {
+    throw new ApiError("no_function", "Couldn't reach the live games function. Make sure netlify/functions/live.mjs is uploaded.");
+  }
+  if (!res.ok) throw new ApiError(body.error, body.message || `Request failed (${res.status})`);
+  return body;
+}
+
+// Refresh live data, note which players just scored, and schedule the next refresh.
+async function refreshLive() {
+  clearTimeout(state.liveTimer);
+  try {
+    const data = await fetchLive();
+    const prev = state.livePrev;
+    state.liveBumps = {};
+    for (const p of data.players) {
+      if (p.pts != null && prev[p.id] != null && p.pts !== prev[p.id]) state.liveBumps[p.id] = p.pts - prev[p.id];
+      prev[p.id] = p.pts;
+    }
+    state.live = data;
+  } catch (e) {
+    if (!state.live || state.live.error) state.live = { error: e.message };
+  }
+  if (state.tab === "live") renderLive();
+  const anyLive = state.live?.games?.some((g) => g.state === "in");
+  state.liveTimer = setTimeout(() => {
+    if (state.tab === "live" && document.visibilityState === "visible") refreshLive();
+    else state.liveStale = true;
+  }, anyLive ? LIVE_POLL_MS : IDLE_POLL_MS);
+}
+
+function renderLive() {
+  const el = $("view-live");
+  const L = state.live;
+  if (!L || state.liveStale) {
+    state.liveStale = false;
+    if (!L) el.innerHTML = `<div class="loading"><span class="spinner"></span> Loading NFL games…</div>`;
+    refreshLive();
+    if (!L) return;
+  }
+  if (L.error) { el.innerHTML = `<div class="banner">${esc(L.error)}</div>`; return; }
+
+  const f = state.liveFilter;
+  const order = { in: 0, pre: 1, post: 2 };
+  const games = [...L.games].sort((a, b) => order[a.state] - order[b.state] || new Date(a.date) - new Date(b.date));
+  const counts = { in: 0, pre: 0, post: 0 };
+  for (const g of games) counts[g.state]++;
+  const byPro = {};
+  for (const p of L.players) (byPro[p.proId] ||= []).push(p);
+
+  const kickoff = (g) => new Date(g.date).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" });
+  const role = (p) => {
+    if (!p.teamId) return `<span class="role fa">Free agent</span>`;
+    const slot = p.slotId === BENCH ? `<span class="role bench">Bench</span>` : p.slotId === IR ? `<span class="role bench">IR</span>`
+      : p.slotId != null ? `<span class="role start">Starting · ${esc(SLOT[p.slotId] || "")}</span>` : "";
+    return `${teamName(p.teamId, 18)} ${slot}`;
+  };
+  const playerRow = (p, g) => {
+    const pos = POS[p.posId] || "";
+    const bump = state.liveBumps[p.id];
+    const pts = g.state === "pre" ? `<span class="muted">–</span>` : f2(p.pts ?? 0);
+    const line = statLine(p.posId, p.stats);
+    return `<div class="lp ${bump ? "bump" : ""} ${p.teamId && p.slotId !== BENCH && p.slotId !== IR ? "is-starter" : ""}">
+      <div class="lp-main">
+        <div><span class="lp-name">${esc(p.name)}</span> <span class="muted small">${pos}</span>${injBadge({ injury: p.injury })}</div>
+        ${line ? `<div class="small muted">${esc(line)}</div>` : ""}
+        <div class="lp-owner">${role(p)}</div>
+      </div>
+      <div class="lp-pts">${pts}${bump ? `<span class="lp-delta ${bump > 0 ? "pos" : "neg"}">${signed(bump)}</span>` : ""}<small>proj ${f1(p.proj)}</small></div>
+    </div>`;
+  };
+  const teamPlayers = (proId, g) => {
+    let list = byPro[proId] || [];
+    if (f.show === "rostered") list = list.filter((p) => p.teamId);
+    if (f.team !== "ALL") list = list.filter((p) => String(p.teamId) === String(f.team));
+    list = [...list].sort((a, b) => (g.state === "pre" ? b.proj - a.proj : (b.pts ?? 0) - (a.pts ?? 0) || b.proj - a.proj));
+    return list.length ? list.map((p) => playerRow(p, g)).join("") : `<p class="muted small">No ${f.show === "rostered" ? "rostered " : ""}players${f.team !== "ALL" ? " for this team" : ""}.</p>`;
+  };
+  const scoreSide = (s, g, right) => {
+    const won = g.state === "post" && s.score > (s === g.home ? g.away.score : g.home.score);
+    return `<div class="g-team ${right ? "right" : ""} ${won ? "won" : ""}">
+      <img class="g-logo" src="${esc(s.logo)}" alt="" width="36" height="36" loading="lazy">
+      <div class="g-name"><strong>${esc(s.abbr)}</strong>${g.possession === s.proId ? ` <span class="poss" title="Has the ball">🏈</span>` : ""}<span class="muted small">${esc(s.record)}</span></div>
+      <div class="g-score">${g.state === "pre" ? "" : s.score ?? ""}</div>
+    </div>`;
+  };
+  const gameCard = (g) => {
+    const status = g.state === "in" ? `<span class="badge live">LIVE</span> <strong>${esc(g.detail)}</strong>`
+      : g.state === "post" ? `<span class="badge final">FINAL</span>` : `<strong>${esc(kickoff(g))}</strong>`;
+    const sit = g.state === "in" && (g.downDistance || g.redZone)
+      ? `<div class="g-sit">${g.downDistance ? esc(g.downDistance) : ""}${g.redZone ? ` <span class="badge out">RED ZONE</span>` : ""}</div>` : "";
+    return `<div class="card game state-${g.state}">
+      <div class="g-head">
+        ${scoreSide(g.away, g, false)}
+        <div class="g-status">${status}${g.broadcast ? `<div class="muted small">${esc(g.broadcast)}</div>` : ""}</div>
+        ${scoreSide(g.home, g, true)}
+      </div>
+      ${sit}${g.state === "in" && g.lastPlay ? `<div class="g-last small muted">Last play: ${esc(g.lastPlay)}</div>` : ""}
+      <div class="g-players">
+        <div class="g-col"><div class="g-col-head">${esc(g.away.name || g.away.abbr)}</div>${teamPlayers(g.away.proId, g)}</div>
+        <div class="g-col"><div class="g-col-head">${esc(g.home.name || g.home.abbr)}</div>${teamPlayers(g.home.proId, g)}</div>
+      </div>
+    </div>`;
+  };
+
+  const teamOpts = Object.values(state.base.teams).sort((a, b) => a.name.localeCompare(b.name))
+    .map((t) => `<option value="${t.id}" ${String(f.team) === String(t.id) ? "selected" : ""}>${esc(t.name)}</option>`).join("");
+  const summary = [counts.in && `${counts.in} live`, counts.pre && `${counts.pre} upcoming`, counts.post && `${counts.post} final`].filter(Boolean).join(" · ");
+  const updated = new Date(L.updated).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit", second: "2-digit" });
+
+  el.innerHTML = `<div class="section-head"><h2>NFL week ${L.sp} ${counts.in ? `<span class="badge live">LIVE</span>` : ""}</h2>
+      <span class="muted small">${summary} · Updated ${updated}${counts.in ? " · refreshes every 30 seconds" : ""}</span></div>
+    <div class="filters">
+      <div class="seg" id="lv-show"><button data-s="rostered" class="${f.show === "rostered" ? "active" : ""}">Rostered players</button><button data-s="all" class="${f.show === "all" ? "active" : ""}">All players</button></div>
+      <select id="lv-team" aria-label="Fantasy team"><option value="ALL">All fantasy teams</option>${teamOpts}</select>
+    </div>
+    ${L.byes?.length ? `<p class="muted small">On bye: ${L.byes.map(esc).join(", ")}</p>` : ""}
+    <div class="games">${games.map(gameCard).join("") || `<p class="muted">No NFL games found for this week.</p>`}</div>`;
+  $("lv-show").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => { f.show = b.dataset.s; renderLive(); }));
+  $("lv-team").addEventListener("change", (e) => { f.team = e.target.value; renderLive(); });
+  // Only flash a score change once.
+  state.liveBumps = {};
+}
+
 // ---------- Transactions ----------
 async function loadActivity() {
   if (state.demo) return window.DemoLeague.activity();
@@ -897,7 +1038,7 @@ function banner(msg) { $("banner").hidden = !msg; $("banner").innerHTML = msg ||
 function render() {
   if (!state.week) return;
   showView(state.tab);
-  ({ matchups: renderMatchups, players: renderPlayers, managers: renderManagers, season: renderSeason, transactions: renderTransactions })[state.tab]();
+  ({ matchups: renderMatchups, live: renderLive, players: renderPlayers, managers: renderManagers, season: renderSeason, transactions: renderTransactions })[state.tab]();
 }
 
 async function loadWeek(week, force) {
@@ -998,6 +1139,10 @@ function bindUi() {
     store.set("ffb.season", state.season || null);
     await loadLeague();
     setUrl();
+  });
+  // Catch up on live games when the page comes back into view.
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && state.tab === "live" && state.liveStale) renderLive();
   });
   // Keep live weeks fresh.
   setInterval(() => {

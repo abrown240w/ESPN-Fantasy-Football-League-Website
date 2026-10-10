@@ -249,5 +249,57 @@
     return { games, byes, oprk };
   }
 
-  window.DemoLeague = { response, activity, nfl };
+  // Same shape as /api/live. Games in progress advance each time it's called.
+  const liveStart = Date.now();
+  function live(sp) {
+    const n = nfl(sp);
+    const abbr = (id) => (typeof PRO !== "undefined" && PRO[id]) || `T${id}`;
+    const logo = (id) => `https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/${abbr(id).toLowerCase()}.png`;
+    const elapsedMin = (Date.now() - liveStart) / 60000;
+    const pairs = Object.entries(n.games).filter(([, g]) => g[1]).map(([h, g]) => [Number(h), g[0]]);
+    const progressOf = {};
+    const games = pairs.map(([h, a], i) => {
+      const st = i < 3 ? "post" : i < 8 ? "in" : "pre";
+      const progress = st === "post" ? 1 : st === "in" ? Math.min(0.97, 0.15 + (i - 3) * 0.15 + elapsedMin / 4) : 0;
+      progressOf[h] = progressOf[a] = progress;
+      const q = Math.min(4, Math.floor(progress * 4) + 1), clockSec = Math.round((1 - ((progress * 4) % 1)) * 900);
+      const side = (id) => ({ proId: id, abbr: abbr(id), name: abbr(id), logo: logo(id), score: st === "pre" ? 0 : Math.round(progress * (14 + (id * 7) % 20)), record: `${(id % 4) + 1}-${(id * 3) % 4}` });
+      return {
+        id: `demo${i}`, state: st,
+        date: new Date(Date.now() + (st === "pre" ? (i - 6) * 3 * 3600e3 : -3 * 3600e3)).toISOString(),
+        detail: st === "in" ? `${["1st", "2nd", "3rd", "4th"][q - 1]} ${Math.floor(clockSec / 60)}:${String(clockSec % 60).padStart(2, "0")}` : st === "post" ? "Final" : "",
+        broadcast: ["CBS", "FOX", "NBC", "ESPN"][i % 4],
+        possession: st === "in" ? (i % 2 ? h : a) : null,
+        downDistance: st === "in" ? `${["1st & 10", "2nd & 7", "3rd & 3"][i % 3]} at ${abbr(i % 2 ? a : h)} ${20 + (i * 9) % 30}` : "",
+        redZone: st === "in" && i === 4,
+        lastPlay: st === "in" ? "J.Doe pass short right to M.Smith for 12 yards" : "",
+        home: side(h), away: side(a),
+      };
+    });
+    const players = [];
+    const played = (posId, full, proId) => {
+      const prog = progressOf[proId];
+      if (!prog) return null;
+      return Math.round(full * Math.floor(prog * 12) / 12 * 100) / 100;
+    };
+    for (const t of teams) {
+      for (const p of t.players) {
+        if (progressOf[p.proTeamId] === undefined) continue;
+        const w = p.weeks[sp], full = w.actual ?? w.proj * 1.1;
+        const pts = played(p.defaultPositionId, full, p.proTeamId);
+        players.push({ id: p.id, name: p.fullName, posId: p.defaultPositionId, proId: p.proTeamId, teamId: t.id, slotId: t["lineup" + sp][p.id], pts, proj: w.proj, stats: pts == null ? {} : statsFor(p.defaultPositionId, pts), injury: p.injuryStatus === "ACTIVE" ? "" : p.injuryStatus });
+      }
+    }
+    // A couple of free agents per NFL team.
+    for (const proId of Object.keys(progressOf).map(Number)) {
+      for (let k = 0; k < 2; k++) {
+        const posId = k ? 3 : 2, full = 4 + ((proId * 13 + k * 7) % 12);
+        const pts = played(posId, full, proId);
+        players.push({ id: 50000 + proId * 10 + k, name: `${FIRST[(proId * 7 + k) % FIRST.length]} ${LAST[(proId * 11 + k * 5) % LAST.length]}`, posId, proId, teamId: 0, slotId: null, pts, proj: Math.round(full * 0.9 * 10) / 10, stats: pts == null ? {} : statsFor(posId, pts), injury: "" });
+      }
+    }
+    return { sp, updated: Date.now(), games, byes: Object.keys(n.byes).map((id) => abbr(Number(id))), players };
+  }
+
+  window.DemoLeague = { response, activity, nfl, live };
 })();

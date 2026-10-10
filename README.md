@@ -3,6 +3,7 @@
 A website that connects to an ESPN fantasy football league and breaks down every week:
 
 - **Matchups**: every game with score, projection and win chance. Tap one for a position-by-position head-to-head, bench comparison and key takeaways.
+- **Live games**: this week's NFL games with live scores and clock, and every rostered player's live stats and fantasy points, who rosters them, and whether they're starting. Refreshes every 30 seconds during games.
 - **Players**: top scorer at each position, plus a searchable, sortable table of every rostered player (points, projection, over/under, stat line, injury status, opponent and opponent rank, ESPN PPR rank, season scoring rank).
 - **Managers**: weekly awards (top score, best lineup, most bench points wasted, unluckiest loss, …) and a report card with each team's optimal lineup and lineup efficiency.
 - **Season**: standings with all-play record, luck rating, streaks and power rankings, a luck chart, and a weekly score heatmap.
@@ -15,6 +16,7 @@ netlify/functions/espn.mjs   Server-side proxy to ESPN (browsers can't call ESPN
 netlify/functions/logo.mjs   Loads custom-uploaded team logos (needs ESPN_S2 and SWID)
 netlify/functions/activity.mjs   League transactions and pending trades
 netlify/functions/nfl.mjs   NFL opponents and opponent ranks (OPRK) for each week
+netlify/functions/live.mjs   Live NFL scoreboard with live fantasy points for every player
 index.html, styles.css, app.js, demo.js   The website
 ```
 
