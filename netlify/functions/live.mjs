@@ -93,8 +93,10 @@ export default async (req) => {
     const proIds = games.flatMap((g) => [g.home.proId, g.away.proId]).filter(Boolean);
     const byes = (board.week?.teamsOnBye || []).map((t) => t.abbreviation);
 
+    // ?scoreboard=1 returns just the games (status, clock, possession) for lightweight polling.
+    const scoreboardOnly = params.get("scoreboard") === "1";
     let players = [];
-    if (proIds.length) {
+    if (proIds.length && !scoreboardOnly) {
       const filter = {
         players: {
           filterProTeamIds: { value: proIds },
