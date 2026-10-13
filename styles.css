@@ -393,7 +393,32 @@ table.data.roster-table td { white-space: normal; vertical-align: top; }
 .tooltip { position: fixed; z-index: 50; pointer-events: none; background: var(--surface); color: var(--ink); border: 1px solid var(--border); box-shadow: 0 6px 20px rgba(0,0,0,.18); border-radius: 8px; padding: 8px 10px; font-size: .82rem; max-width: 260px; }
 .tooltip b { display: block; margin-bottom: 2px; }
 
+/* NFL game status markers (Matchups & Roster) */
+.nm-short { display: none; }
+.gs { display: inline-flex; align-items: center; justify-content: center; vertical-align: middle; margin-left: 4px; font-size: .8rem; line-height: 1; cursor: default; }
+.gs-live { width: 9px; height: 9px; border-radius: 50%; background: #16a34a; box-shadow: 0 0 0 0 rgba(22,163,74,.6); animation: gs-pulse 1.6s infinite; }
+.gs-poss { font-size: .95rem; filter: drop-shadow(0 0 2px rgba(22,163,74,.7)); }
+.gs-final { color: var(--muted); font-weight: 800; font-size: .75rem; }
+@keyframes gs-pulse { 0% { box-shadow: 0 0 0 0 rgba(22,163,74,.55); } 70% { box-shadow: 0 0 0 6px rgba(22,163,74,0); } 100% { box-shadow: 0 0 0 0 rgba(22,163,74,0); } }
+.gs-text { white-space: nowrap; }
+.gs-text.live { color: #15803d; font-weight: 700; }
+td.gs-cell-live, tr.gs-cell-live td { background: #f0fbf3; }
+td.gs-cell-poss, tr.gs-cell-poss td { background: #dcf5e3; }
+td.gs-cell-final .nm, tr.gs-cell-final td .pl-link { color: var(--ink-2); }
+.gs-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 0 0 10px; }
+.gs-legend > span { display: inline-flex; align-items: center; gap: 4px; }
+.gs-legend .gs { margin-left: 0; }
+@media (prefers-reduced-motion: reduce) { .gs-live { animation: none; } }
+
 @media (max-width: 640px) {
+  /* Matchup breakdown on phones: short names, no opponent-rank line. */
+  .h2h .nm-full { display: none; }
+  .h2h .nm-short { display: inline; }
+  .h2h .pl .opp-sub { display: none; }
+  .h2h .pl { max-width: none; width: auto; }
+  .h2h .pl .nm { white-space: normal; overflow: visible; line-height: 1.25; }
+  .h2h th, .h2h td { padding: 6px 3px; }
+  .h2h .slot { width: 34px; font-size: .7rem; }
   .brand h1 { font-size: 1.1rem; }
   .h2h { font-size: .8rem; }
   .h2h .pl .sub { display: none; }

@@ -200,6 +200,7 @@ function parsePlayer(entry, sp, teamId, rosterInfo = {}, nfl = null) {
     pos: POS[pl.defaultPositionId] || "?",
     nfl: PRO[pl.proTeamId] || "",
     slotId, slot: SLOT[slotId] || String(slotId),
+    proId: pl.proTeamId,
     starter: slotId !== BENCH && slotId !== IR,
     played: actual != null,
     actual: actual ?? 0,
@@ -429,6 +430,81 @@ const injBadge = (p) => {
   return ` <span class="badge ${severe ? "out" : "inj"}" title="${esc(full)}" data-tip="${esc(full)}">${esc(short)}</span>`;
 };
 const statusBadge = (s) => (s === "final" ? `<span class="badge final">FINAL</span>` : s === "live" ? `<span class="badge live">LIVE</span>` : `<span class="badge">UPCOMING</span>`);
+// "J. Love" for tight spaces on phones; defenses keep their full name.
+const shortName = (name) => {
+  const parts = String(name).split(" ");
+  return /D\/ST$/.test(name) || parts.length < 2 ? name : `${parts[0][0]}. ${parts.slice(1).join(" ")}`;
+};
+// Player link that shows the full name normally and the short name on phones (where CSS allows).
+const plinkNm = (p) => `<button type="button" class="pl-link" data-pid="${esc(p.id)}"><span class="nm-full">${esc(p.name)}</span><span class="nm-short">${esc(shortName(p.name))}</span></button>`;
+
+// ---- NFL game status for the current week (final / in progress / offense on the field) ----
+async function fetchScoreboard(sp) {
+  if (state.demo) return window.DemoLeague.live(sp);
+  const q = new URLSearchParams({ scoringPeriodId: sp, scoreboard: "1" });
+  if (state.leagueId) q.set("leagueId", state.leagueId);
+  if (state.season) q.set("season", state.season);
+  const res = await fetch(`/api/live?${q}`);
+  if (!res.ok) throw new Error(`Scoreboard request failed (${res.status})`);
+  return res.json();
+}
+
+// Returns game status for the selected week if it's the current week; refreshes in the background.
+function ensureGameStatus() {
+  const b = state.base, w = state.week;
+  if (!w || w.week !== b.current) return null;
+  const s = state.gameStatus?.sp === w.sp ? state.gameStatus : null;
+  if ((!s || Date.now() - s.at > 25000) && !state.gameStatusLoading) {
+    state.gameStatusLoading = true;
+    fetchScoreboard(w.sp)
+      .then((d) => {
+        if (state.base !== b) return;
+        const byPro = {};
+        for (const g of d.games) {
+          for (const side of [g.home, g.away]) {
+            byPro[side.proId] = { state: g.state, detail: g.detail, date: g.date, poss: g.state === "in" && g.possession === side.proId };
+          }
+        }
+        state.gameStatus = { sp: w.sp, at: Date.now(), byPro, anyLive: d.games.some((g) => g.state === "in") };
+      })
+      .catch(() => {})
+      .finally(() => {
+        state.gameStatusLoading = false;
+        if (state.base === b && (state.tab === "matchups" || state.tab === "roster")) render();
+      });
+  }
+  return s;
+}
+
+function gameStatusOf(p) {
+  const s = state.gameStatus;
+  if (!s || state.week?.sp !== s.sp || !p.proId) return null;
+  return s.byPro[p.proId] || (p.opp?.bye ? { state: "bye" } : null);
+}
+// Compact icon next to a player's name.
+function gsIcon(p) {
+  const g = gameStatusOf(p);
+  if (!g) return "";
+  if (g.state === "in") return g.poss
+    ? ` <span class="gs gs-poss" title="Offense on the field · ${esc(g.detail)}" aria-label="Offense on the field">🏈</span>`
+    : ` <span class="gs gs-live" title="Game in progress · ${esc(g.detail)}" aria-label="Game in progress"></span>`;
+  if (g.state === "post") return ` <span class="gs gs-final" title="Game final" aria-label="Game final">✓</span>`;
+  return "";
+}
+// Short text for the line under a name: "2nd 5:32", "Final", "Sun 1:00 PM".
+function gsText(p) {
+  const g = gameStatusOf(p);
+  if (!g) return "";
+  if (g.state === "in") return `<span class="gs-text live">${g.poss ? "On field · " : ""}${esc(g.detail)}</span>`;
+  if (g.state === "post") return `<span class="gs-text">Final</span>`;
+  if (g.state === "pre" && g.date) return `<span class="gs-text">${new Date(g.date).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" })}</span>`;
+  return "";
+}
+function gsClass(p) {
+  const g = gameStatusOf(p);
+  return !g ? "" : g.state === "in" ? (g.poss ? "gs-cell-poss" : "gs-cell-live") : g.state === "post" ? "gs-cell-final" : "";
+}
+
 const ptsCell = (p, status) => (p.played ? ptsLink(p.id, state.week.sp, f1(p.actual)) : status === "final" ? f1(p.actual) : `<span class="muted">–</span>`);
 
 function showView(name) {
@@ -489,8 +565,14 @@ function matchupDetail(m) {
     const h = home.starters.filter((p) => p.slotId === slot), a = away.starters.filter((p) => p.slotId === slot);
     for (let i = 0; i < Math.max(h.length, a.length); i++) rows.push([h[i], SLOT[slot], a[i]]);
   }
-  const cellL = (p, win) => p ? `<td class="pl ${win ? "edge-win" : ""}"><span class="nm">${plink(p.id, p.name)}${injBadge(p)}</span><span class="sub">${p.pos} · ${p.nfl}${p.line ? " · " + esc(p.line) : ""}</span>${p.opp ? `<span class="opp-sub">${oppHtml(p)}</span>` : ""}</td><td class="num hide-sm muted">${f1(p.proj)}</td><td class="num edge">${ptsCell(p, st)}</td>` : `<td class="pl muted">Empty</td><td class="hide-sm"></td><td></td>`;
-  const cellR = (p, win) => p ? `<td class="num edge">${ptsCell(p, st)}</td><td class="num hide-sm muted">${f1(p.proj)}</td><td class="pl right ${win ? "edge-win" : ""}"><span class="nm">${injBadge(p)} ${plink(p.id, p.name)}</span><span class="sub">${p.line ? esc(p.line) + " · " : ""}${p.pos} · ${p.nfl}</span>${p.opp ? `<span class="opp-sub">${oppHtml(p)}</span>` : ""}</td>` : `<td></td><td class="hide-sm"></td><td class="pl right muted">Empty</td>`;
+  ensureGameStatus(); // final / live / on-field markers for the current week
+  // Position, NFL team, stat line and game status; mirrored for the right-hand team.
+  const sub = (p, right) => {
+    const bits = right ? [gsText(p), p.line && esc(p.line), `${p.pos} · ${p.nfl}`] : [`${p.pos} · ${p.nfl}`, p.line && esc(p.line), gsText(p)];
+    return `<span class="sub">${bits.filter(Boolean).join(" · ")}</span>`;
+  };
+  const cellL = (p, win) => p ? `<td class="pl ${win ? "edge-win" : ""} ${gsClass(p)}"><span class="nm">${plinkNm(p)}${injBadge(p)}${gsIcon(p)}</span>${sub(p, false)}${p.opp ? `<span class="opp-sub">${oppHtml(p)}</span>` : ""}</td><td class="num hide-sm muted ${gsClass(p)}">${f1(p.proj)}</td><td class="num edge ${gsClass(p)}">${ptsCell(p, st)}</td>` : `<td class="pl muted">Empty</td><td class="hide-sm"></td><td></td>`;
+  const cellR = (p, win) => p ? `<td class="num edge ${gsClass(p)}">${ptsCell(p, st)}</td><td class="num hide-sm muted ${gsClass(p)}">${f1(p.proj)}</td><td class="pl right ${win ? "edge-win" : ""} ${gsClass(p)}"><span class="nm">${injBadge(p)} ${plinkNm(p)}${gsIcon(p)}</span>${sub(p, true)}${p.opp ? `<span class="opp-sub">${oppHtml(p)}</span>` : ""}</td>` : `<td></td><td class="hide-sm"></td><td class="pl right muted">Empty</td>`;
   const scoreOf = (p) => (p ? (st === "upcoming" ? p.proj : p.actual) : -Infinity);
   const row = ([h, slot, a]) => {
     const hs = scoreOf(h), as = scoreOf(a);
@@ -501,6 +583,7 @@ function matchupDetail(m) {
   const benchRow = ([h, slot, a]) => `<tr class="muted">${h ? cellL(h) : `<td></td><td class="hide-sm"></td><td></td>`}<td class="slot">${slot || ""}</td>${a ? cellR(a) : `<td></td><td class="hide-sm"></td><td></td>`}</tr>`;
 
   return `<div class="card detail">
+    ${state.gameStatus?.sp === state.week.sp ? `<div class="gs-legend small muted"><span><span class="gs gs-poss">🏈</span> Offense on the field</span><span><span class="gs gs-live"></span> Game in progress</span><span><span class="gs gs-final">✓</span> Game final</span></div>` : ""}
     <div class="detail-head"><h3 class="vs-head"><span style="color:var(--home)">■</span>${teamName(home.teamId, 26)}<span class="muted">vs</span><span style="color:var(--away)">■</span>${teamName(away.teamId, 26)}</h3>${statusBadge(st)}</div>
     <div style="overflow-x:auto"><table class="h2h">
       <thead><tr><th>${esc(H.abbrev || "Home")}</th><th class="num hide-sm">Proj</th><th class="num">Pts</th><th class="slot">Slot</th><th class="num">Pts</th><th class="num hide-sm">Proj</th><th class="right">${esc(A.abbrev || "Away")}</th></tr></thead>
@@ -1368,8 +1451,9 @@ function renderRoster() {
     matchupLine = `Week ${w.week} vs ${teamName(opp.teamId, 22)} · <strong>${score}</strong> ${result}`;
   }
 
-  const row = (p) => `<tr><td class="slot-cell">${esc(p.slot)}</td>
-    <td><strong>${plink(p.id, p.name)}</strong>${injBadge(p)}<div class="small muted">${p.pos}${p.nfl ? ` · ${p.nfl}` : ""}${p.line ? ` · ${esc(p.line)}` : ""}</div></td>
+  ensureGameStatus();
+  const row = (p) => `<tr class="${gsClass(p)}"><td class="slot-cell">${esc(p.slot)}</td>
+    <td><strong>${plink(p.id, p.name)}</strong>${injBadge(p)}${gsIcon(p)}<div class="small muted">${[`${p.pos}${p.nfl ? ` · ${p.nfl}` : ""}`, p.line && esc(p.line), gsText(p)].filter(Boolean).join(" · ")}</div></td>
     <td>${oppHtml(p)}</td>
     <td class="num">${f1(p.proj)}</td>
     <td class="num">${p.played ? ptsLink(p.id, w.sp, f1(p.actual)) : `<span class="muted">–</span>`}</td>
@@ -2148,6 +2232,10 @@ function bindUi() {
   });
   $("retry").addEventListener("click", () => loadLeague());
   $("league-select").addEventListener("change", (e) => switchLeague(e.target.value, ""));
+  // Keep final / live / on-field markers current while games are being played.
+  setInterval(() => {
+    if (document.visibilityState === "visible" && (state.tab === "matchups" || state.tab === "roster") && state.gameStatus?.anyLive) ensureGameStatus();
+  }, 30000);
   // Catch up on live games when the page comes back into view.
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible" && state.tab === "live" && state.liveStale) renderLive();
