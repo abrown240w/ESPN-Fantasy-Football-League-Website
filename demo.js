@@ -304,14 +304,33 @@
       const progress = st === "post" ? 1 : st === "in" ? Math.min(0.97, 0.15 + (i - 3) * 0.15 + elapsedMin / 4) : 0;
       progressOf[h] = progressOf[a] = progress;
       const q = Math.min(4, Math.floor(progress * 4) + 1), clockSec = Math.round((1 - ((progress * 4) % 1)) * 900);
-      const side = (id) => ({ proId: id, abbr: abbr(id), name: abbr(id), logo: logo(id), score: st === "pre" ? 0 : Math.round(progress * (14 + (id * 7) % 20)), record: `${(id % 4) + 1}-${(id * 3) % 4}` });
+      const colors = ["#0b2265", "#a71930", "#004c54", "#fb4f14", "#203731", "#002244", "#00338d", "#e31837", "#4f2683", "#125740"];
+      const side = (id) => ({ proId: id, abbr: abbr(id), name: abbr(id), logo: logo(id), color: colors[id % colors.length], score: st === "pre" ? 0 : Math.round(progress * (14 + (id * 7) % 20)), record: `${(id % 4) + 1}-${(id * 3) % 4}` });
+      // Field position (0 = home goal line, 100 = away goal line), moving as the demo game advances.
+      let field = null, downDistance = "";
+      const possession = st === "in" ? (i % 2 ? h : a) : null;
+      if (st === "in") {
+        const dir = possession === h ? 1 : -1;
+        const gain = [7, 12, -3, 24][i % 4];
+        const own = i === 4 ? 85 : 20 + Math.round((progress * 140 + i * 9) % 55); // yards from the offense's own goal line
+        const spot = dir > 0 ? own : 100 - own;
+        const yl = (s) => (s === 50 ? "50" : s < 50 ? `${abbr(h)} ${s}` : `${abbr(a)} ${100 - s}`);
+        const down = 1 + (i % 3), dist = [10, 7, 3][i % 3];
+        downDistance = `${["1st", "2nd", "3rd"][down - 1]} & ${own >= 90 ? "Goal" : dist} at ${yl(spot)}`;
+        field = {
+          yardLine: spot, possText: yl(spot), down, distance: dist,
+          lastPlay: { type: i % 2 ? "Pass Reception" : "Rush", start: spot - dir * gain, end: spot, yards: gain, teamId: possession, scoring: false },
+          driveStart: Math.max(0, Math.min(100, spot - dir * (gain + 18))), driveDesc: `${3 + i} plays, ${gain + 18} yards, ${2 + (i % 3)}:${String(10 + i * 7).slice(-2)}`,
+        };
+      }
       return {
+        field,
         id: `demo${i}`, state: st,
         date: new Date(Date.now() + (st === "pre" ? (i - 6) * 3 * 3600e3 : -3 * 3600e3)).toISOString(),
         detail: st === "in" ? `${["1st", "2nd", "3rd", "4th"][q - 1]} ${Math.floor(clockSec / 60)}:${String(clockSec % 60).padStart(2, "0")}` : st === "post" ? "Final" : "",
         broadcast: ["CBS", "FOX", "NBC", "ESPN"][i % 4],
-        possession: st === "in" ? (i % 2 ? h : a) : null,
-        downDistance: st === "in" ? `${["1st & 10", "2nd & 7", "3rd & 3"][i % 3]} at ${abbr(i % 2 ? a : h)} ${20 + (i * 9) % 30}` : "",
+        possession,
+        downDistance,
         redZone: st === "in" && i === 4,
         lastPlay: st === "in" ? "J.Doe pass short right to M.Smith for 12 yards" : "",
         home: side(h), away: side(a),
@@ -342,5 +361,62 @@
     return { sp, updated: Date.now(), games, byes: Object.keys(n.byes).map((id) => abbr(Number(id))), players };
   }
 
-  window.DemoLeague = { response, activity, nfl, live };
+  // Same shape as /api/values: [espnId, name, position, nflTeam, value, overallRank, positionRank, trend30Day].
+  function values() {
+    const posName = (id) => Object.keys(POS).find((k) => POS[k][0] === id);
+    const scale = { QB: 260, RB: 520, WR: 470, TE: 420 };
+    const list = allPlayers.filter((p) => scale[posName(p.defaultPositionId)])
+      .map((p) => { const pos = posName(p.defaultPositionId); return { id: p.id, name: p.fullName, pos, nfl: p.proTeamId, value: Math.round(p.base * scale[pos] * (0.8 + ((p.id * 37) % 40) / 100)) }; });
+    // A handful of unrostered players so the Trade Analyzer has free agents to suggest.
+    ["RB", "RB", "WR", "WR", "WR", "TE", "QB", "RB", "TE", "WR"].forEach((pos, i) => list.push({ id: 80000 + i, name: `${FIRST[(i * 5 + 3) % FIRST.length]} ${LAST[(i * 7 + 2) % LAST.length]}`, pos, nfl: 1 + (i * 3) % 30, value: 900 + ((i * 613) % 2600) }));
+    list.sort((a, b) => b.value - a.value);
+    const posCount = {};
+    const abbr = (id) => (typeof PRO !== "undefined" && PRO[id]) || "";
+    return { updated: Date.now(), players: list.map((v, i) => [v.id, v.name, v.pos, abbr(v.nfl), v.value, i + 1, (posCount[v.pos] = (posCount[v.pos] || 0) + 1), ((v.id * 131) % 1400) - 600]) };
+  }
+
+  // Same shape as /api/player: a season game log with per-stat points (appliedStats).
+  function player(id) {
+    let p = null, teamId = 0;
+    for (const t of teams) { const f = t.players.find((x) => x.id === id); if (f) { p = f; teamId = t.id; } }
+    const scoring = { 3: 0.04, 4: 6, 20: -2, 24: 0.1, 25: 6, 53: 1, 42: 0.1, 43: 6 };
+    const weeks = [];
+    if (p) {
+      for (let sp = 1; sp < CURRENT_WEEK; sp++) {
+        const w = p.weeks[sp];
+        if (w.actual == null) continue;
+        let stats, applied = {};
+        if (p.defaultPositionId === 5) { const fg = Math.max(0, Math.round((w.actual - 2) / 3)); stats = { 80: fg, 83: fg, 84: fg + 1, 86: 2, 87: 2 }; applied = { 80: fg * 3, 86: 2 }; }
+        else if (p.defaultPositionId === 16) { const sacks = Math.max(0, Math.round(w.actual / 2)); stats = { 99: sacks, 120: 17, 92: 1 }; applied = { 99: sacks, 92: 5 }; }
+        else { stats = statsFor(p.defaultPositionId, w.actual); for (const [k, v] of Object.entries(stats)) if (scoring[k] && v) applied[k] = round(v * scoring[k]); }
+        const nflWeek = nfl(sp), g = nflWeek.games[p.proTeamId];
+        weeks.push({ sp, proId: p.proTeamId, opp: g ? g[0] : null, home: g ? g[1] : null, date: null, pts: round(Object.values(applied).reduce((a, b) => a + b, 0)), stats, applied });
+      }
+    }
+    const name = p ? p.fullName : `Demo player ${id}`;
+    return { player: { id, name, posId: p ? p.defaultPositionId : 3, proId: p ? p.proTeamId : 1, injury: p && p.injuryStatus !== "ACTIVE" ? p.injuryStatus : "", teamId, bye: 9 }, seasonPts: 0, seasonProj: p ? round(p.base * 16) : 0, weeks };
+  }
+
+  // Same shape as /api/freeagents. The first ten match the free agents in values() so trade values line up.
+  function freeAgents(sp) {
+    const shape = ["RB", "RB", "WR", "WR", "WR", "TE", "QB", "RB", "TE", "WR", "WR", "RB", "QB", "TE", "K", "K", "DST", "DST", "WR", "RB", "WR", "RB", "TE", "WR", "K", "DST", "QB", "WR", "RB", "WR"];
+    const played = sp < CURRENT_WEEK;
+    const players = shape.map((pos, i) => {
+      const [posId, , [lo, hi]] = POS[pos];
+      const proj = round(lo * 0.6 + ((i * 37) % 10) / 10 * (hi - lo) * 0.6);
+      const name = i < 10 ? `${FIRST[(i * 5 + 3) % FIRST.length]} ${LAST[(i * 7 + 2) % LAST.length]}` : pos === "DST" ? `${["Saints", "Colts", "Titans"][i % 3]} D/ST` : `${FIRST[(i * 11 + 1) % FIRST.length]} ${LAST[(i * 13 + 4) % LAST.length]}`;
+      return {
+        id: i < 10 ? 80000 + i : 81000 + i, name, posId, proId: 1 + (i * 7) % 30,
+        status: i % 6 === 2 ? "W" : "FA", waiverDate: i % 6 === 2 ? Date.now() + 2 * 864e5 : null,
+        injury: i % 9 === 4 ? "QUESTIONABLE" : "",
+        own: round(Math.max(1, 78 - i * 2.4)), ownChg: round(((i * 53) % 130) / 10 - 5),
+        proj, pts: played ? round(Math.max(0, proj + (((i * 29) % 13) - 6))) : null,
+        seasonPts: round(proj * (CURRENT_WEEK - 1) * 0.9), seasonProj: round(proj * 17),
+        pprRank: 20 + i, posRank: 25 + (i * 3) % 40,
+      };
+    });
+    return { sp, updated: Date.now(), players };
+  }
+
+  window.DemoLeague = { response, activity, nfl, live, values, player, freeAgents };
 })();

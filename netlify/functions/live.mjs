@@ -25,12 +25,16 @@ async function getJson(url, { fantasy = false, headers = {} } = {}) {
   return res.json();
 }
 
+const hex = (c) => (/^[0-9a-f]{6}$/i.test(c || "") ? `#${c}` : null);
+
 function side(c) {
   return {
     proId: Number(c.team?.id),
     abbr: c.team?.abbreviation || "",
     name: c.team?.shortDisplayName || c.team?.name || "",
     logo: c.team?.logo || "",
+    color: hex(c.team?.color),
+    altColor: hex(c.team?.alternateColor),
     score: c.score != null ? Number(c.score) : null,
     record: c.records?.[0]?.summary || "",
   };
@@ -53,6 +57,24 @@ export default async (req) => {
       const home = comp.competitors?.find((c) => c.homeAway === "home") || {};
       const away = comp.competitors?.find((c) => c.homeAway === "away") || {};
       const sit = comp.situation || {};
+      const lp = sit.lastPlay || {};
+      // Field position for the on-field graphic. ESPN yard lines run 0 (home goal line) to 100 (away goal line).
+      const field = comp.situation ? {
+        yardLine: sit.yardLine ?? null,
+        possText: sit.possessionText || "",
+        down: sit.down ?? null,
+        distance: sit.distance ?? null,
+        lastPlay: lp.text ? {
+          type: lp.type?.text || "",
+          start: lp.start?.yardLine ?? null,
+          end: lp.end?.yardLine ?? null,
+          yards: lp.statYardage ?? null,
+          teamId: lp.team?.id ? Number(lp.team.id) : null,
+          scoring: !!lp.scoreValue,
+        } : null,
+        driveStart: lp.drive?.start?.yardLine ?? null,
+        driveDesc: lp.drive?.description || "",
+      } : null;
       return {
         id: e.id,
         date: e.date,
@@ -63,6 +85,7 @@ export default async (req) => {
         downDistance: sit.downDistanceText || sit.shortDownDistanceText || "",
         redZone: !!sit.isRedZone,
         lastPlay: sit.lastPlay?.text || "",
+        field,
         home: side(home),
         away: side(away),
       };
