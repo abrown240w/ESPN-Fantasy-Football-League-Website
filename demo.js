@@ -319,7 +319,10 @@
         downDistance = `${["1st", "2nd", "3rd"][down - 1]} & ${own >= 90 ? "Goal" : dist} at ${yl(spot)}`;
         field = {
           yardLine: spot, possText: yl(spot), down, distance: dist,
-          lastPlay: { type: i % 2 ? "Pass Reception" : "Rush", start: spot - dir * gain, end: spot, yards: gain, teamId: possession, scoring: false },
+          // Game 5 shows an incomplete pass (no yardage, same spot); the rest alternate passes and runs.
+          lastPlay: i === 5
+            ? { type: "Pass Incompletion", start: spot, end: spot, yards: 0, teamId: possession, scoring: false }
+            : { type: i % 2 ? "Pass Reception" : "Rush", start: spot - dir * gain, end: spot, yards: gain, teamId: possession, scoring: false },
           driveStart: Math.max(0, Math.min(100, spot - dir * (gain + 18))), driveDesc: `${3 + i} plays, ${gain + 18} yards, ${2 + (i % 3)}:${String(10 + i * 7).slice(-2)}`,
         };
       }
@@ -332,7 +335,7 @@
         possession,
         downDistance,
         redZone: st === "in" && i === 4,
-        lastPlay: st === "in" ? "J.Doe pass short right to M.Smith for 12 yards" : "",
+        lastPlay: st !== "in" ? "" : i === 5 ? "J.Doe pass incomplete deep left to M.Smith" : i % 2 ? `J.Doe pass short right to M.Smith for ${[7, 12, -3, 24][i % 4]} yards` : `R.Roe up the middle for ${[7, 12, -3, 24][i % 4]} yards`,
         home: side(h), away: side(a),
       };
     });

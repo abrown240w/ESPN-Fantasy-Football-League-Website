@@ -5,8 +5,9 @@
 
 const FANTASY = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl";
 const SCOREBOARD = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard";
-// Stat IDs used for stat lines (passing, rushing, receiving).
-const KEEP_STATS = ["3", "4", "20", "24", "25", "53", "42", "43", "58"];
+// Stat IDs used for stat lines: passing, rushing, receiving, kicking (FG/XP made and
+// attempted) and defense (sacks, INT, fumble recoveries, points allowed).
+const KEEP_STATS = ["3", "4", "20", "24", "25", "53", "42", "43", "58", "83", "84", "86", "87", "99", "95", "96", "120"];
 
 function defaultSeason() {
   const now = new Date();

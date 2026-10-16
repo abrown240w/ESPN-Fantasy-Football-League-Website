@@ -160,6 +160,7 @@ table.data tr:last-child td { border-bottom: 0; }
 .seg button { border: 0; background: var(--surface); padding: 7px 12px; cursor: pointer; color: var(--ink-2); }
 .seg button.active { background: var(--accent); color: #fff; }
 .view-seg { margin-bottom: 18px; }
+.all-owner { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
 .view-seg button { padding: 8px 16px; font-weight: 600; }
 .badge.wv { background: #e3eefc; color: #1c5cab; cursor: default; }
 .inj-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: -4px 0 12px; }
@@ -361,6 +362,7 @@ table.data.gamelog td.num { width: 1%; }
 table.data.roster-table td { white-space: normal; vertical-align: top; }
 .roster-table .slot-cell { font-weight: 700; color: var(--ink-2); font-size: .8rem; width: 52px; }
 .roster-table tr.total-row td { border-top: 2px solid var(--axis); background: var(--surface-2); }
+table.data.roster-table td.r-sub { display: none; }
 
 /* Transactions */
 .tx-week { margin: 20px 0 8px; font-size: .85rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
@@ -393,6 +395,79 @@ table.data.roster-table td { white-space: normal; vertical-align: top; }
 .tooltip { position: fixed; z-index: 50; pointer-events: none; background: var(--surface); color: var(--ink); border: 1px solid var(--border); box-shadow: 0 6px 20px rgba(0,0,0,.18); border-radius: 8px; padding: 8px 10px; font-size: .82rem; max-width: 260px; }
 .tooltip b { display: block; margin-bottom: 2px; }
 
+/* Matchup cards: teams side by side over the win-chance bar */
+.mc-teams { display: grid; grid-template-columns: 1fr auto 1fr; gap: 8px; align-items: start; }
+.mc-side { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; text-align: left; }
+.mc-side.right { align-items: flex-end; text-align: right; }
+.mc-id { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+.mc-side.right .mc-id { flex-direction: row-reverse; }
+.mc-swatch { width: 10px; height: 10px; border-radius: 3px; }
+.mc-name { font-size: .95rem; line-height: 1.2; overflow-wrap: anywhere; }
+.mc-owner { font-size: .78rem; color: var(--muted); }
+.mc-score { font-size: 1.5rem; font-weight: 800; font-variant-numeric: tabular-nums; margin-top: 6px; line-height: 1.1; }
+.mc-proj { font-size: .75rem; color: var(--muted); }
+.mc-side.loser .mc-score { color: var(--muted); }
+.mc-vs { align-self: center; color: var(--muted); font-size: .8rem; font-weight: 700; }
+
+/* Matchup breakdown, ESPN-style */
+.mx-head { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.mx-team { display: grid; grid-template-columns: auto 1fr; grid-template-areas: "logo id" "total total"; gap: 4px 10px; align-items: center; min-width: 0; }
+.mx-team.right { grid-template-columns: 1fr auto; grid-template-areas: "id logo" "total total"; text-align: right; }
+.mx-team .logo { grid-area: logo; }
+.mx-team-id { grid-area: id; display: flex; flex-direction: column; min-width: 0; }
+.mx-team-id strong { line-height: 1.2; overflow-wrap: anywhere; }
+.mx-total { grid-area: total; font-size: 2rem; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.mx-total small { display: block; font-size: .75rem; font-weight: 400; color: var(--muted); }
+.mx-wps { display: grid; grid-template-columns: 1fr auto 1fr; gap: 10px; align-items: center; margin: 12px 0 10px; }
+.mx-wp { display: flex; align-items: center; gap: 8px; }
+.mx-wp.right { flex-direction: row-reverse; }
+.mx-wp-pct { font-weight: 700; font-variant-numeric: tabular-nums; font-size: .9rem; }
+.mx-wp-track { flex: 1; height: 8px; background: var(--surface-2); border-radius: 4px; overflow: hidden; display: flex; }
+.mx-wp.right .mx-wp-track { justify-content: flex-end; }
+.mx-wp-track div { height: 100%; border-radius: 4px; }
+.mx-wp-label { font-size: .8rem; font-weight: 700; color: var(--ink-2); }
+.gs-legend .lg { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -2px; margin-right: 4px; }
+.lg-live { background: var(--surface-2); border: 1px solid var(--axis); }
+.lg-poss { background: #fdf0d5; box-shadow: inset 3px 0 0 #c98a00; }
+.lg-rz { background: #fde4e4; box-shadow: inset 3px 0 0 #d32f2f; }
+.mx-rows { border-top: 1px solid var(--grid); }
+.mx-row { display: grid; grid-template-columns: 1fr 44px 1fr; border-bottom: 1px solid var(--grid); }
+.mx-slot { display: flex; align-items: center; justify-content: center; background: var(--surface-2); font-weight: 700; font-size: .78rem; color: var(--ink-2); text-align: center; }
+.mx-side { display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; min-width: 0; position: relative; }
+.mx-side.right { flex-direction: row-reverse; text-align: right; }
+.mx-side.empty { align-items: center; }
+.mx-info { flex: 1; min-width: 0; }
+.mx-name { font-size: .95rem; line-height: 1.25; }
+.mx-name .pl-link { font-weight: 500; }
+.mx-side.is-live .mx-name .pl-link { font-weight: 800; color: var(--ink); }
+.mx-game, .mx-stats { font-size: .78rem; color: var(--muted); line-height: 1.3; }
+.mx-stats { color: var(--ink-2); }
+.mx-clock { font-weight: 700; color: var(--ink); }
+.mx-pts { text-align: right; flex: 0 0 auto; }
+.mx-side.right .mx-pts { text-align: left; }
+.mx-score { font-size: 1.15rem; font-weight: 800; font-variant-numeric: tabular-nums; }
+.mx-proj { font-size: .75rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.mx-side.is-poss { background: #fdf0d5; box-shadow: inset 4px 0 0 #c98a00; }
+.mx-side.right.is-poss { box-shadow: inset -4px 0 0 #c98a00; }
+.mx-side.is-rz { background: #fde4e4; box-shadow: inset 4px 0 0 #d32f2f; }
+.mx-side.right.is-rz { box-shadow: inset -4px 0 0 #d32f2f; }
+.mx-row.bench .mx-name .pl-link { color: var(--ink-2); }
+.mx-bench-head { margin-top: 14px; padding: 6px 10px; background: var(--surface-2); font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.mx .nm-short { display: none; }
+
+/* Live games: players side by side, reusing the matchup-breakdown row styles */
+.lv-players { padding: 10px 16px 14px; }
+.lv-row, .mx-row.lv-head { grid-template-columns: 1fr 8px 1fr; }
+.mx-row.lv-head { border-bottom: 0; font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); padding-bottom: 4px; }
+.mx-row.lv-head > div { padding: 0 10px; }
+.mx-row.lv-head .mx-slot, .lv-row .mx-slot { background: transparent; }
+.lv-head .right { text-align: right; }
+.lv-owner { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; margin-top: 2px; }
+.mx-side.right .lv-owner { justify-content: flex-end; }
+.lv-owner .logo { margin-right: 2px; }
+.lv-none { padding: 4px 0; }
+.mx-side.bump { animation: bump 2.5s ease-out; }
+
 /* NFL game status markers (Matchups & Roster) */
 .nm-short { display: none; }
 .gs { display: inline-flex; align-items: center; justify-content: center; vertical-align: middle; margin-left: 4px; font-size: .8rem; line-height: 1; cursor: default; }
@@ -411,7 +486,43 @@ td.gs-cell-final .nm, tr.gs-cell-final td .pl-link { color: var(--ink-2); }
 @media (prefers-reduced-motion: reduce) { .gs-live { animation: none; } }
 
 @media (max-width: 640px) {
-  /* Matchup breakdown on phones: short names, no opponent-rank line. */
+  /* Roster on phones: each player is a card. Line 1: slot, name, points. Line 2: stats (full width).
+     Line 3: opponent, projection, value. PPR and scoring rank are hidden (they're on the Players tab). */
+  .roster-table thead { display: none; }
+  .roster-table, .roster-table tbody { display: block; }
+  .roster-table tr { display: flex; flex-wrap: wrap; align-items: flex-start; padding: 8px 10px; border-bottom: 1px solid var(--grid); }
+  table.data.roster-table td { border: 0; padding: 0; }
+  .roster-table td.hide-sm { display: none; }
+  .roster-table .r-slot { order: 1; flex: 0 0 40px; width: auto; padding-top: 2px; }
+  .roster-table .r-player { order: 2; flex: 1 1 calc(100% - 110px); min-width: 0; }
+  .roster-table .r-pts { order: 3; flex: 0 0 70px; font-size: 1.15rem; font-weight: 700; }
+  .roster-table .r-sub-desk { display: none; }
+  table.data.roster-table td.r-sub { display: block; order: 4; flex: 0 0 calc(100% - 40px); margin: 2px 0 0 40px; white-space: normal; }
+  .roster-table .r-opp { order: 4; margin: 6px 12px 0 40px; font-size: .85rem; }
+  .roster-table .r-proj, .roster-table .r-val { order: 5; margin-top: 6px; margin-right: 12px; text-align: left; font-size: .85rem; }
+  .roster-table .r-val { order: 6; }
+  .roster-table .r-proj::before, .roster-table .r-val::before { content: attr(data-label) " "; color: var(--muted); }
+  .roster-table .r-opp:empty { display: none; }
+  .roster-table .r-opp:empty + .r-proj { margin-left: 40px; }
+  .roster-table tr.gs-cell-live { background: #f0fbf3; }
+  .roster-table tr.gs-cell-poss { background: #dcf5e3; }
+  .roster-table tr.total-row { background: var(--surface-2); border-top: 2px solid var(--axis); }
+  table.data.roster-table tr.total-row td { background: transparent; border-top: 0; }
+  /* Matchup breakdown on phones: short names, no opponent rank, tighter spacing. */
+  .mx .nm-full { display: none; }
+  .mx .nm-short { display: inline; }
+  .mx .mx-oprk { display: none; }
+  .mx-row { grid-template-columns: 1fr 34px 1fr; }
+  .lv-row, .mx-row.lv-head { grid-template-columns: 1fr 4px 1fr; }
+  .lv-players { padding: 8px 6px 10px; }
+  .mx-row.lv-head > div { padding: 0 6px; }
+  .mx-side { padding: 7px 6px; gap: 4px; }
+  .mx-name { font-size: .88rem; }
+  .mx-game, .mx-stats { font-size: .72rem; }
+  .mx-score { font-size: 1rem; }
+  .mx-total { font-size: 1.6rem; }
+  .mx-slot { font-size: .68rem; }
+  .mc-score { font-size: 1.3rem; }
   .h2h .nm-full { display: none; }
   .h2h .nm-short { display: inline; }
   .h2h .pl .opp-sub { display: none; }
