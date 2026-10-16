@@ -1574,9 +1574,11 @@ function renderHistory() {
 }
 
 // ---------- Roster ----------
-// Available players (free agents or waivers) at the same position projected to outscore `p` this week, best first.
+// A "meaningful" upgrade is projected at least this many more points this week.
+const UPGRADE_MIN_GAIN = 2;
+// Available players (free agents or waivers) at the same position projected to clearly outscore `p` this week, best first.
 function upgradesFor(p, fa) {
-  return fa.players.filter((u) => u.posId === p.posId && (u.proj || 0) > (p.proj || 0) + 0.05).sort((a, b) => b.proj - a.proj);
+  return fa.players.filter((u) => u.posId === p.posId && (u.proj || 0) >= (p.proj || 0) + UPGRADE_MIN_GAIN).sort((a, b) => b.proj - a.proj);
 }
 
 function renderRoster() {
@@ -1611,8 +1613,8 @@ function renderRoster() {
     if (!fa || fa.error) return `<span class="upg-none" title="${fa?.error ? "Couldn't load free agents" : "Checking free agents…"}">…</span>`;
     const n = upgradesFor(p, fa).length;
     return n
-      ? `<button type="button" class="upg-btn" data-pid="${esc(p.id)}" title="${n} available ${esc(p.pos)}${n > 1 ? "s" : ""} projected higher this week">▲ ${n}</button>`
-      : `<span class="upg-none" title="No available ${esc(p.pos)} is projected higher this week">–</span>`;
+      ? `<button type="button" class="upg-btn" data-pid="${esc(p.id)}" title="${n} available ${esc(p.pos)}${n > 1 ? "s" : ""} projected at least ${UPGRADE_MIN_GAIN} points higher this week">▲ ${n >= 10 ? "10+" : n}</button>`
+      : `<span class="upg-none" title="No available ${esc(p.pos)} is projected at least ${UPGRADE_MIN_GAIN} points higher this week">–</span>`;
   };
   const list = (title, players) => players.length
     ? `<h3 class="ta-sub">${title}</h3><div class="pr-list mx">${players.map((p) => playerRow(rosteredRow(p), { label: p.slot, sp: w.sp, action: upgradeBtn(p), owner: false })).join("")}</div>` : "";
@@ -1621,7 +1623,7 @@ function renderRoster() {
   if (side) {
     const bench = side.bench.filter((p) => p.slotId !== IR), ir = side.bench.filter((p) => p.slotId === IR);
     const starterValue = state.values?.byId ? fmtVal(sum(side.starters, (p) => valueOf(p.id) || 0)) : null;
-    body = `<div class="pr-sum small"><span><span class="muted">Starters proj</span> <strong>${f1(side.proj)}</strong></span><span><span class="muted">Points</span> <strong>${played ? f2(side.score) : "–"}</strong></span>${starterValue ? `<span><span class="muted">Starters value</span> <strong>${starterValue}</strong></span>` : ""}<span class="muted pr-sum-key"><span class="upg-btn sample">▲</span> = better free agents available</span></div>`
+    body = `<div class="pr-sum small"><span><span class="muted">Starters proj</span> <strong>${f1(side.proj)}</strong></span><span><span class="muted">Points</span> <strong>${played ? f2(side.score) : "–"}</strong></span>${starterValue ? `<span><span class="muted">Starters value</span> <strong>${starterValue}</strong></span>` : ""}<span class="muted pr-sum-key"><span class="upg-btn sample">▲</span> = free agents projected ${UPGRADE_MIN_GAIN}+ pts higher</span></div>`
       + list("Starters", side.starters) + list("Bench", bench) + list("Injured reserve", ir);
   }
   const rosterValue = side && state.values?.byId?.size ? sum(side.players, (p) => valueOf(p.id) || 0) : null;
@@ -1660,7 +1662,7 @@ function openUpgrades(p) {
   }).join("");
   showModal(`<div class="pm-head"><h2 id="pl-modal-title">Upgrades for ${esc(p.name)}</h2>
       <div class="muted">${esc(p.pos)} · projected ${f1(p.proj)} in week ${w.week}</div></div>
-    <p class="small muted" style="margin:10px 0">${ups.length} available ${esc(p.pos)}${ups.length > 1 ? "s" : ""} projected higher this week, best first. The green number is how many more points each is projected to score.</p>
+    <p class="small muted" style="margin:10px 0">${upgradesFor(p, fa).length} available ${esc(p.pos)}${upgradesFor(p, fa).length > 1 ? "s" : ""} projected at least ${UPGRADE_MIN_GAIN} points higher this week${ups.length < upgradesFor(p, fa).length ? ` (top ${ups.length} shown)` : ""}, best first. The green number is how many more points each is projected to score.</p>
     <div class="pr-list mx">${rows}</div>
     <p class="small muted" style="margin-top:10px">Free agents and players on waivers (<span class="badge wv">W</span>), using ESPN's week ${w.week} projections.</p>`);
 }
@@ -1806,9 +1808,9 @@ function renderTradeAnalyzer() {
   const L = leagueProfiles(rosters);
   const teamIds = Object.keys(rosters).sort((a, b) => team(a).name.localeCompare(team(b).name));
   const myKey = `ffb.myteam.${state.leagueId || "default"}`;
-  const ta = (state.ta ||= { my: store.get(myKey) || "", other: "", give: [], get: [] });
+  // my = team being analyzed; a/b = the two sides of the mock trade (default: my team vs. another).
+  const ta = (state.ta ||= { my: store.get(myKey) || "", a: "", b: "", give: [], get: [] });
   if (!rosters[ta.my]) ta.my = teamIds[0];
-  if (!rosters[ta.other] || ta.other === ta.my) ta.other = teamIds.find((id) => id !== ta.my);
   const me = L.profiles[ta.my];
   const n = L.n;
   const rk = (r) => `${ordinal(r)} of ${n}`;
@@ -1902,46 +1904,49 @@ function renderTradeAnalyzer() {
       <button class="link-btn" data-target="${i}">Try in mock trade ↑</button></div>`).join("")
     || `<p class="muted">No clear trade targets right now${weakPositions.length ? "" : ", since you have no below-average positions"}.</p>`;
 
-  // --- Mock trade ---
-  const myPlayers = [...rosters[ta.my]].sort((a, b) => b.value - a.value);
-  const theirPlayers = [...rosters[ta.other]].sort((a, b) => b.value - a.value);
-  const pick = (list, chosen, name) => [0, 1, 2].map((i) => `<select data-side="${name}" data-i="${i}" aria-label="Player ${i + 1}"><option value="">${i ? "Add a player (optional)" : "Choose a player"}</option>
+  // --- Mock trade: any team (A) with any other team (B). "give" = A's players, "get" = B's players. ---
+  if (!rosters[ta.a]) ta.a = ta.my;
+  if (!rosters[ta.b] || ta.b === ta.a) ta.b = teamIds.find((id) => id !== ta.a);
+  const A = ta.a, B = ta.b;
+  const playersA = [...rosters[A]].sort((a, b) => b.value - a.value);
+  const playersB = [...rosters[B]].sort((a, b) => b.value - a.value);
+  const pick = (list, chosen, name) => [0, 1, 2].map((i) => `<select data-side="${name}" data-i="${i}" aria-label="Player ${i + 1}"><option value="">${i ? "+ Add player" : "Choose a player"}</option>
       ${list.map((p) => `<option value="${p.id}" ${String(chosen[i]) === String(p.id) ? "selected" : ""}>${esc(p.name)} (${p.pos}) · ${fmtVal(p.value)}</option>`).join("")}</select>`).join("");
-  const giveP = ta.give.map((id) => myPlayers.find((p) => String(p.id) === String(id))).filter(Boolean);
-  const getP = ta.get.map((id) => theirPlayers.find((p) => String(p.id) === String(id))).filter(Boolean);
+  const sendA = ta.give.map((id) => playersA.find((p) => String(p.id) === String(id))).filter(Boolean);
+  const sendB = ta.get.map((id) => playersB.find((p) => String(p.id) === String(id))).filter(Boolean);
   let result = `<p class="muted">Pick players on both sides to see how the trade grades out.</p>`;
-  if (giveP.length && getP.length) {
-    const gv = sum(giveP, (p) => p.value), rv = sum(getP, (p) => p.value), d = rv - gv, pctD = d / Math.max(gv, rv, 1);
-    const verdict = Math.abs(pctD) <= 0.05 ? `<span class="verdict even">Fair trade</span> <span class="muted">(within 5%)</span>`
-      : d > 0 ? `<span class="verdict pos">You win by ${fmtVal(d)}</span> <span class="muted">(${Math.round(pctD * 100)}%)</span>`
-      : `<span class="verdict neg">You lose by ${fmtVal(-d)}</span> <span class="muted">(${Math.round(-pctD * 100)}%)</span>`;
+  if (sendA.length && sendB.length) {
+    const nameA = esc(team(A).name), nameB = esc(team(B).name);
+    const va = sum(sendA, (p) => p.value), vb = sum(sendB, (p) => p.value); // value each team sends
+    const d = vb - va, pctD = Math.abs(d) / Math.max(va, vb, 1);           // d > 0: team A receives more
+    const verdict = pctD <= 0.05 ? `<span class="verdict even">Fair trade</span> <span class="muted">(within 5%)</span>`
+      : `<span class="verdict pos">${d > 0 ? nameA : nameB} wins by ${fmtVal(Math.abs(d))}</span> <span class="muted">(${Math.round(pctD * 100)}%)</span>`;
     const after = (players, out, inn) => players.filter((p) => !out.includes(p)).concat(inn.map((p) => ({ ...p, slotId: BENCH })));
-    const myAfter = teamProfile(after(rosters[ta.my], giveP, getP), L.needs, state.base.slotCounts);
-    const theirAfter = teamProfile(after(rosters[ta.other], getP, giveP), L.needs, state.base.slotCounts);
-    const theirBefore = L.profiles[ta.other];
-    // Re-rank positions for my team with the trade applied.
-    const rankAfter = (pos) => 1 + Object.entries(L.profiles).filter(([id]) => id !== String(ta.my)).map(([id, p]) => (id === String(ta.other) ? theirAfter : p).byPos[pos].coreValue).filter((v) => v > myAfter.byPos[pos].coreValue).length;
-    const posChanges = TA_POS.map((pos) => [pos, L.ranks[pos][ta.my], rankAfter(pos)]).filter(([, a, b]) => a !== b)
-      .map(([pos, a, b]) => `<span class="${b < a ? "pos" : "neg"}">${pos} ${ordinal(a)} → ${ordinal(b)}</span>`).join(" · ");
-    const consolidation = giveP.length !== getP.length
-      ? `<p class="small muted">${giveP.length > getP.length ? "You're getting fewer players back." : "You're getting more players back."} In uneven trades the side receiving the single best player usually deserves a bit extra, since roster spots and star power matter; raw totals don't capture that.</p>` : "";
+    const afterA = teamProfile(after(rosters[A], sendA, sendB), L.needs, state.base.slotCounts);
+    const afterB = teamProfile(after(rosters[B], sendB, sendA), L.needs, state.base.slotCounts);
+    const profileAfter = (id) => (id === String(A) ? afterA : id === String(B) ? afterB : L.profiles[id]);
+    // Each team's position ranks with the trade applied to both rosters.
+    const rankAfter = (id, pos) => 1 + Object.keys(L.profiles).filter((o) => o !== String(id) && profileAfter(o).byPos[pos].coreValue > profileAfter(String(id)).byPos[pos].coreValue).length;
+    const posChanges = (id) => TA_POS.map((pos) => [pos, L.ranks[pos][id], rankAfter(id, pos)]).filter(([, x, y]) => x !== y)
+      .map(([pos, x, y]) => `<span class="${y < x ? "pos" : "neg"}">${pos} ${ordinal(x)} → ${ordinal(y)}</span>`).join(" · ");
+    const impact = (id, name, before, aft) => `<div class="tr-team"><strong>${name}</strong>
+        <div><span class="muted small">Starting lineup value</span> ${fmtVal(before.lineupValue)} → <strong>${fmtVal(aft.lineupValue)}</strong> ${valDelta(aft.lineupValue - before.lineupValue)}</div>
+        ${posChanges(id) ? `<div><span class="muted small">Position ranks</span> ${posChanges(id)}</div>` : ""}</div>`;
+    const consolidation = sendA.length !== sendB.length
+      ? `<p class="small muted">${nameA} sends ${sendA.length} player${sendA.length > 1 ? "s" : ""} and ${nameB} sends ${sendB.length}. In uneven trades the side receiving the single best player usually deserves a bit extra, since roster spots and star power matter; raw totals don't capture that.</p>` : "";
     result = `<div class="trade-result">
-      <div class="tr-totals"><div><span class="muted small">You give</span><strong>${fmtVal(gv)}</strong></div><div class="tr-arrow">⇄</div><div><span class="muted small">You get</span><strong>${fmtVal(rv)}</strong></div></div>
+      <div class="tr-totals"><div><span class="muted small">${nameA} sends</span><strong>${fmtVal(va)}</strong></div><div class="tr-arrow">⇄</div><div class="right"><span class="muted small">${nameB} sends</span><strong>${fmtVal(vb)}</strong></div></div>
       <div class="tr-verdict">${verdict}</div>
-      <div class="tr-impact">
-        <div><span class="muted small">Your starting lineup value</span> ${fmtVal(me.lineupValue)} → <strong>${fmtVal(myAfter.lineupValue)}</strong> ${valDelta(myAfter.lineupValue - me.lineupValue)}</div>
-        <div><span class="muted small">${esc(team(ta.other).name)}'s starting lineup value</span> ${fmtVal(theirBefore.lineupValue)} → <strong>${fmtVal(theirAfter.lineupValue)}</strong> ${valDelta(theirAfter.lineupValue - theirBefore.lineupValue)}</div>
-        ${posChanges ? `<div><span class="muted small">Your position ranks</span> ${posChanges}</div>` : ""}
-      </div>${consolidation}</div>`;
+      <div class="tr-impact">${impact(A, nameA, L.profiles[A], afterA)}${impact(B, nameB, L.profiles[B], afterB)}</div>${consolidation}</div>`;
   }
 
   const teamOpts = (sel, exclude) => teamIds.filter((id) => id !== exclude).map((id) => `<option value="${id}" ${id === String(sel) ? "selected" : ""}>${esc(team(id).name)}</option>`).join("");
   el.innerHTML = `<div class="section-head"><h2>Trade Analyzer</h2>
       <label class="small muted ta-me">My team <select id="ta-my">${teamOpts(ta.my)}</select></label></div>
-    <div class="section-head" id="mock-trade"><h2>Mock trade</h2><span class="muted small">Up to 3 players per side</span></div>
-    <div class="grid grid-2 mock">
-      <div class="card"><div class="mock-head">You give <span class="muted small">(${esc(team(ta.my).name)})</span></div>${pick(myPlayers, ta.give, "give")}</div>
-      <div class="card"><div class="mock-head">You get from <select id="ta-other">${teamOpts(ta.other, ta.my)}</select></div>${pick(theirPlayers, ta.get, "get")}</div>
+    <div class="section-head" id="mock-trade"><h2>Mock trade</h2><span class="muted small">Any two teams · up to 3 players per side</span></div>
+    <div class="mock">
+      <div class="card"><div class="mock-head">${logoImg(team(A), 22)}<select id="ta-a" aria-label="First team">${teamOpts(A)}</select></div><div class="mock-sends">sends</div>${pick(playersA, ta.give, "give")}</div>
+      <div class="card"><div class="mock-head">${logoImg(team(B), 22)}<select id="ta-b" aria-label="Second team">${teamOpts(B, A)}</select></div><div class="mock-sends">sends</div>${pick(playersB, ta.get, "get")}</div>
     </div>
     <div class="card">${result}</div>
     <div class="section-head"><h2>Your team</h2></div>
@@ -1963,8 +1968,15 @@ function renderTradeAnalyzer() {
     <div class="grid targets">${targetRows}</div>
     ${fcCredit()}`;
 
-  $("ta-my").addEventListener("change", (e) => { ta.my = e.target.value; store.set(myKey, ta.my); ta.give = []; if (ta.other === ta.my) { ta.other = ""; ta.get = []; } renderTradeAnalyzer(); });
-  $("ta-other").addEventListener("change", (e) => { ta.other = e.target.value; ta.get = []; renderTradeAnalyzer(); });
+  $("ta-my").addEventListener("change", (e) => { ta.my = e.target.value; store.set(myKey, ta.my); renderTradeAnalyzer(); });
+  $("ta-a").addEventListener("change", (e) => {
+    // Picking the team that's already on the other side swaps the two sides.
+    if (e.target.value === String(ta.b)) Object.assign(ta, { b: ta.a, give: ta.get, get: ta.give });
+    else ta.give = [];
+    ta.a = e.target.value;
+    renderTradeAnalyzer();
+  });
+  $("ta-b").addEventListener("change", (e) => { ta.b = e.target.value; ta.get = []; renderTradeAnalyzer(); });
   el.querySelectorAll("select[data-side]").forEach((s) => s.addEventListener("change", () => {
     const arr = ta[s.dataset.side];
     arr[+s.dataset.i] = s.value;
@@ -1973,7 +1985,7 @@ function renderTradeAnalyzer() {
   }));
   el.querySelectorAll("[data-target]").forEach((b) => b.addEventListener("click", () => {
     const t = topTargets[+b.dataset.target];
-    Object.assign(ta, { other: t.teamId, get: [String(t.p.id)], give: t.pkg.players.map((p) => String(p.id)) });
+    Object.assign(ta, { a: ta.my, b: t.teamId, get: [String(t.p.id)], give: t.pkg.players.map((p) => String(p.id)) });
     renderTradeAnalyzer();
     $("mock-trade").scrollIntoView({ behavior: "smooth", block: "start" });
   }));

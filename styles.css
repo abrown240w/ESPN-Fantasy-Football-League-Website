@@ -306,10 +306,17 @@ table.data tr:last-child td { border-bottom: 0; }
 .target { display: grid; gap: 4px; padding: 12px 16px; }
 .link-btn { justify-self: start; background: none; border: 0; padding: 4px 0; color: var(--accent-ink); font-weight: 600; cursor: pointer; }
 .link-btn:hover { text-decoration: underline; }
-.mock .card { display: grid; gap: 8px; align-content: start; }
-.mock-head { font-weight: 700; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.mock { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+.mock .card { display: grid; gap: 8px; align-content: start; min-width: 0; }
+.mock select { width: 100%; min-width: 0; }
+.mock-sends { font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin-bottom: -2px; }
+.tr-totals .right { text-align: right; }
+.tr-impact { grid-template-columns: 1fr 1fr; gap: 12px; }
+.tr-team { display: grid; gap: 4px; align-content: start; }
+.mock-head { font-weight: 700; display: flex; align-items: center; gap: 8px; }
+.mock-head select { flex: 1; width: auto; font-weight: 700; }
 .trade-result { display: grid; gap: 12px; }
-.tr-totals { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
+.tr-totals { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 12px; }
 .tr-totals > div { display: flex; flex-direction: column; }
 .tr-totals strong { font-size: 1.6rem; font-variant-numeric: tabular-nums; }
 .tr-arrow { font-size: 1.5rem; color: var(--muted); }
@@ -539,6 +546,14 @@ td.gs-cell-final .nm, tr.gs-cell-final td .pl-link { color: var(--ink-2); }
   .mx .mx-oprk { display: none; }
   .mx-row { grid-template-columns: 1fr 34px 1fr; }
   .lv-row, .mx-row.lv-head { grid-template-columns: 1fr 4px 1fr; }
+  /* Mock trade stays side by side on phones. */
+  .mock { gap: 6px; }
+  .mock .card { padding: 8px; gap: 6px; }
+  .mock select, .ta-me select { font-size: .78rem; padding: 6px 4px; }
+  .mock-head { gap: 4px; }
+  .mock-head .logo { display: none; }
+  .tr-impact { gap: 8px; font-size: .8rem; }
+  .tr-totals strong { font-size: 1.3rem; }
   .pr-row { grid-template-columns: 34px minmax(0, 1fr) auto auto; gap: 6px; padding: 8px 8px; }
   .pr-label { font-size: .7rem; }
   .pr-row .mx-pts { min-width: 40px; }
