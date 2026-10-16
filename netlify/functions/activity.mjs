@@ -75,8 +75,29 @@ export default async (req) => {
     for (const page of pages) for (const t of page.transactions || []) byId.set(t.id, t);
     const all = [...byId.values()];
 
-    // A proposal the other team accepted has a TRADE_ACCEPT pointing at it.
-    const acceptedAt = new Map(all.filter((t) => t.type === "TRADE_ACCEPT").map((t) => [t.relatedTransactionId, t.proposedDate]));
+    // How ESPN records a trade: the TRADE_PROPOSAL stays "PENDING" even after the trade goes through.
+    // When the other team accepts, a TRADE_ACCEPT is added; when the trade processes, a second
+    // TRADE_ACCEPT with status EXECUTED (carrying the final player list) is added. An acceptance may
+    // point at the proposal or at the earlier acceptance, so follow the chain back to the proposal.
+    const proposalIdOf = (t) => {
+      let id = t.relatedTransactionId;
+      for (let hops = 0; hops < 5; hops++) {
+        const r = byId.get(id);
+        if (!r || r.type !== "TRADE_ACCEPT") return id;
+        id = r.relatedTransactionId;
+      }
+      return id;
+    };
+    const acceptedAt = new Map(), executed = new Map(), vetoed = new Set();
+    for (const t of all) {
+      if (t.type === "TRADE_ACCEPT") {
+        const pid = proposalIdOf(t);
+        if (t.status === "EXECUTED") executed.set(pid, t);
+        else if (!acceptedAt.has(pid)) acceptedAt.set(pid, t.proposedDate);
+      } else if (t.type === "TRADE_VETO") {
+        vetoed.add(proposalIdOf(t));
+      }
+    }
 
     const moves = [], pendingTrades = [];
     for (const t of all) {
@@ -89,11 +110,17 @@ export default async (req) => {
           adds: items.filter((i) => i.type === "ADD").map((i) => i.playerId),
           drops: items.filter((i) => i.type === "DROP").map((i) => i.playerId),
         });
-      } else if (t.type === "TRADE_PROPOSAL" && t.status === "EXECUTED") {
+      } else if (t.type === "TRADE_ACCEPT" && t.status === "EXECUTED") {
+        // A processed trade. Prefer the executed record's player list; fall back to the proposal's.
+        const proposal = byId.get(proposalIdOf(t));
+        const source = (t.items || []).length ? t : proposal || t;
+        moves.push({ id: t.id, kind: "trade", date, week: t.scoringPeriodId, sides: tradeSides(source) });
+      } else if (t.type === "TRADE_PROPOSAL" && t.status === "EXECUTED" && !executed.has(t.id)) {
         moves.push({ id: t.id, kind: "trade", date, week: t.scoringPeriodId, sides: tradeSides(t) });
       } else if (t.type === "TRADE_UPHOLD" && t.status === "EXECUTED" && (t.items || []).length && !byId.has(t.relatedTransactionId)) {
         moves.push({ id: t.id, kind: "trade", date, week: t.scoringPeriodId, sides: tradeSides(t) });
-      } else if (t.type === "TRADE_PROPOSAL" && acceptedAt.has(t.id) && !isClosed(t.status)) {
+      } else if (t.type === "TRADE_PROPOSAL" && acceptedAt.has(t.id) && !executed.has(t.id) && !vetoed.has(t.id) && !isClosed(t.status)) {
+        // Accepted by both teams but not processed yet (e.g. in the league's review period).
         pendingTrades.push({ id: t.id, proposedDate: t.proposedDate, acceptedDate: acceptedAt.get(t.id), sides: tradeSides(t) });
       }
     }

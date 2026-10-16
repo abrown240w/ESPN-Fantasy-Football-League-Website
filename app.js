@@ -35,9 +35,9 @@ const state = {
   weekCache: {},
   openMatchup: null,
   players: {
-    view: "fa", q: "", pos: "ALL", team: "ALL", role: "starters", sort: { key: "actual", dir: -1 },
-    faQ: "", faPos: "ALL", faStatus: "all", faSort: { key: "own", dir: -1 },
-    allQ: "", allPos: "ALL", allSort: { key: "proj", dir: -1 },
+    view: "fa", q: "", pos: "ALL", team: "ALL", role: "starters", rSort: "pts",
+    faQ: "", faPos: "ALL", faStatus: "all", faSort: "own",
+    allQ: "", allPos: "ALL", allSort: "proj",
   },
   managers: { sort: { key: "score", dir: -1 } },
   standings: { sort: { key: "rank", dir: 1 } },
@@ -690,7 +690,8 @@ function matchupInsights(m) {
 
 // ---------- Players ----------
 function renderPlayers() {
-  ensureValues(); // the Trade value column fills in when values arrive
+  ensureValues(); // trade values fill in when they arrive
+  ensureGameStatus(); // game lines and live highlighting
   const el = $("view-players"), f = state.players;
   const views = [["fa", "Free agents"], ["rostered", "Rostered players"], ["all", "All"]];
   el.innerHTML = `<div class="seg view-seg" id="pf-view" role="tablist">
@@ -700,66 +701,27 @@ function renderPlayers() {
   ({ fa: renderFreeAgents, rostered: renderRosteredPlayers, all: renderAllPlayers })[f.view]($("pf-body"));
 }
 
-// Free agents for the selected week, or null while loading (the Players tab re-renders when they arrive).
-function ensureFreeAgents(el) {
+// ---------- Player rows (shared by the Players and Roster tabs) ----------
+// Free agents for the selected week, or null while they load (the Players or Roster tab re-renders when they arrive).
+function faData() {
   const sp = state.week.sp, cache = (state.fa ||= {}), d = cache[sp];
-  if (d && d !== "loading") {
-    if (d.error) { el.innerHTML = `<div class="banner">${esc(d.error)}</div>`; return null; }
-    return d;
-  }
-  el.innerHTML = `<div class="loading"><span class="spinner"></span> Loading free agents…</div>`;
+  if (d && d !== "loading") return d;
   if (!d) {
     cache[sp] = "loading";
     const base = state.base;
     fetchFreeAgents(sp)
       .then((x) => { if (state.base === base) cache[sp] = x; })
       .catch((e) => { if (state.base === base) cache[sp] = { error: e.message }; })
-      .finally(() => { if (state.base === base && state.tab === "players" && state.players.view !== "rostered") renderPlayers(); });
+      .finally(() => { if (state.base === base && (state.tab === "players" || state.tab === "roster")) render(); });
   }
   return null;
 }
-
-// Rostered players and free agents together, with the columns both have.
-function renderAllPlayers(el) {
-  const w = state.week, sp = w.sp, f = state.players;
-  const d = ensureFreeAgents(el);
-  if (!d) return;
-  const rostered = w.sides.flatMap((s) => s.players).map((p) => ({ ...p, pts: p.played ? p.actual : null, owner: p.teamId }));
-  const available = d.players.map((p) => ({ ...p, pos: POS[p.posId] || "?", nfl: PRO[p.proId] || "", opp: computeOpp(w.nfl, p.posId, p.proId, sp), owner: 0 }));
-  const seen = new Set(rostered.map((p) => p.id));
-  const all = [...rostered, ...available.filter((p) => !seen.has(p.id))];
-  const posOpts = ["ALL", ...POS_ORDER].map((p) => `<option ${f.allPos === p ? "selected" : ""}>${p}</option>`).join("");
-  el.innerHTML = `<div class="section-head"><h2>All players</h2><span class="muted small">Rostered players plus the top available free agents · week ${w.week}</span></div>
-    <div class="filters">
-      <input id="all-q" type="search" placeholder="Search all players…" value="${esc(f.allQ)}">
-      <select id="all-pos" aria-label="Position">${posOpts}</select>
-    </div><div id="all-table"></div>${fcCredit()}`;
-  const owner = (p) => {
-    if (p.owner) return `<span class="all-owner">${logoImg(team(p.owner), 18)}<span>${esc(team(p.owner).name)}</span> <span class="role ${p.starter ? "start" : "bench"}">${p.starter ? esc(p.slot) : p.slotId === IR ? "IR" : "BN"}</span></span>`;
-    return p.status === "W" ? `<span class="badge wv">W</span> <span class="muted">Waivers</span>` : `<span class="muted">Free agent</span>`;
-  };
-  const draw = () => {
-    const q = f.allQ.toLowerCase();
-    const rows = all.filter((p) => (f.allPos === "ALL" || p.pos === f.allPos) && (!q || p.name.toLowerCase().includes(q)));
-    const cols = [
-      { key: "name", label: "Player", render: (p) => `<strong>${plink(p.id, p.name)}</strong>${injBadge(p)}` },
-      { key: "pos", label: "Pos", sort: (p) => POS_ORDER.indexOf(p.pos) },
-      { key: "nfl", label: "NFL", cls: "hide-sm" },
-      { key: "owner", label: "Team", title: "Fantasy team and lineup slot, or free agent / waivers", sort: (p) => (p.owner ? team(p.owner).name : "~"), render: owner },
-      { key: "opp", label: "Opp", sort: (p) => p.opp?.rank ?? null, render: oppHtml },
-      { key: "proj", label: "Proj", num: true, render: (p) => f1(p.proj) },
-      { key: "pts", label: "Pts", num: true, sort: (p) => p.pts, render: (p) => (p.pts == null ? `<span class="muted">–</span>` : ptsLink(p.id, sp, f1(p.pts))) },
-      { key: "pprRank", label: "PPR rank", num: true, cls: "hide-sm", title: "ESPN experts' average PPR rank for this week, within the position", sort: (p) => p.pprRank, render: (p) => posRankHtml(p, p.pprRank) },
-      { key: "posRank", label: "Scoring rank", num: true, cls: "hide-sm", title: "Season rank by fantasy points, within the position", sort: (p) => p.posRank, render: (p) => posRankHtml(p, p.posRank) },
-      { key: "value", label: "Trade value", num: true, title: "FantasyCalc redraft trade value, with 30-day trend", sort: (p) => valueOf(p.id), render: (p) => valueCell(p.id) },
-    ];
-    const t = $("all-table");
-    t.replaceChildren(sortableTable(cols, rows, f.allSort, draw));
-    if (!rows.length) t.insertAdjacentHTML("beforeend", `<p class="muted">No players match those filters.</p>`);
-  };
-  $("all-q").addEventListener("input", (e) => { f.allQ = e.target.value; draw(); });
-  $("all-pos").addEventListener("change", (e) => { f.allPos = e.target.value; draw(); });
-  draw();
+// Same, but shows loading/error messages in `el`.
+function ensureFreeAgents(el) {
+  const d = faData();
+  if (!d) { el.innerHTML = `<div class="loading"><span class="spinner"></span> Loading free agents…</div>`; return null; }
+  if (d.error) { el.innerHTML = `<div class="banner">${esc(d.error)}</div>`; return null; }
+  return d;
 }
 
 async function fetchFreeAgents(sp) {
@@ -778,45 +740,94 @@ async function fetchFreeAgents(sp) {
   return body;
 }
 
+// Rostered players and free agents shaped the same way for playerRow().
+const rosteredRow = (p) => ({ ...p, pts: p.played ? p.actual : null, owner: p.teamId });
+const faRow = (p, w) => ({ ...p, pos: POS[p.posId] || "?", nfl: PRO[p.proId] || "", opp: computeOpp(w.nfl, p.posId, p.proId, w.sp), owner: 0 });
+const waiverTip = (p) => (p.waiverDate ? `<b>On waivers</b>Clears ${new Date(p.waiverDate).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` : "<b>On waivers</b>");
+
+// One player row in the matchup style: label | name / game line / stats / details | points & projection | optional action.
+// Rows get the same highlighting as the matchup screen (bold = playing, gold = on the field, red = red zone).
+function playerRow(p, { label, sp, action = "", owner = true } = {}) {
+  const pts = p.pts == null ? "–" : ptsLink(p.id, sp, f1(p.pts));
+  let who = "";
+  if (owner && p.owner) {
+    const t = team(p.owner);
+    who = `${logoImg(t, 16)}<span class="nm-full">${esc(t.name)}</span><span class="nm-short">${esc(t.abbrev)}</span>`
+      + (p.slot ? ` <span class="role ${p.starter ? "start" : "bench"}">${p.starter ? esc(p.slot) : p.slotId === IR ? "IR" : "BN"}</span>` : "");
+  } else if (owner && p.status) {
+    who = p.status === "W" ? `<span class="badge wv" data-tip="${esc(waiverTip(p))}">W</span> Waivers` : "Free agent";
+  }
+  const v = state.values?.byId?.get(p.id);
+  const details = [
+    who && `<span class="pr-owner">${who}</span>`,
+    p.own != null && `${f1(p.own)}% rost${Math.abs(p.ownChg || 0) >= 0.5 ? ` <span class="trend ${p.ownChg > 0 ? "pos" : "neg"}">${p.ownChg > 0 ? "▲" : "▼"}${f1(Math.abs(p.ownChg))}</span>` : ""}`,
+    p.seasonPts != null && `${f1(p.seasonPts)} season pts`,
+    p.pprRank && `PPR ${posRankHtml(p, p.pprRank)}`,
+    p.posRank && `Rank ${posRankHtml(p, p.posRank)}`,
+    v && `Value ${valueCell(p.id)}`,
+  ].filter(Boolean);
+  return `<div class="pr-row ${gsState(p)}">
+    <div class="pr-label">${esc(label ?? p.pos)}</div>
+    <div class="pr-info">
+      <div class="mx-name">${plinkNm(p)}${injBadge(p)}</div>
+      <div class="mx-game">${gameLineHtml(p)}${p.opp?.rank ? ` ${oprkChip(p)}` : ""}</div>
+      ${p.short ? `<div class="mx-stats" title="${esc(p.line)}">${esc(p.short)}</div>` : ""}
+      ${details.length ? `<div class="pr-details">${details.join(`<span class="dot">·</span>`)}</div>` : ""}
+    </div>
+    <div class="mx-pts"><div class="mx-score">${pts}</div><div class="mx-proj">${f1(p.proj)}</div></div>
+    ${action}
+  </div>`;
+}
+
+// Legend for the row highlighting, shared by the player lists.
+const statusLegend = () => `<div class="gs-legend small muted"><span><i class="lg lg-live"></i><strong>Bold</strong> = playing now</span><span><i class="lg lg-poss"></i>Offense on the field</span><span><i class="lg lg-rz"></i>In the red zone</span></div>`;
+
+// Sort options: [key, label, value, direction]. Missing values sort last; ties go to the higher projection.
+const SORTS = {
+  proj: ["proj", "Projection", (p) => p.proj, -1],
+  pts: ["pts", "Points", (p) => p.pts, -1],
+  own: ["own", "% Rostered", (p) => p.own, -1],
+  seasonPts: ["seasonPts", "Season points", (p) => p.seasonPts, -1],
+  value: ["value", "Trade value", (p) => valueOf(p.id), -1],
+  pprRank: ["pprRank", "PPR rank", (p) => p.pprRank, 1],
+  posRank: ["posRank", "Scoring rank", (p) => p.posRank, 1],
+  name: ["name", "Name", (p) => p.name, 1],
+};
+function sortRows(rows, key) {
+  const [, , fn, dir] = SORTS[key] || SORTS.proj;
+  return [...rows].sort((a, b) => {
+    const x = fn(a), y = fn(b);
+    if (x == null || y == null) return x == null && y == null ? (b.proj || 0) - (a.proj || 0) : x == null ? 1 : -1;
+    const c = (typeof x === "string" ? x.localeCompare(y) : x - y) * dir;
+    return c || (b.proj || 0) - (a.proj || 0);
+  });
+}
+const sortSelect = (id, keys, current) => `<label class="sort-lbl small muted">Sort <select id="${id}">${keys.map((k) => `<option value="${k}" ${k === current ? "selected" : ""}>${SORTS[k][1]}</option>`).join("")}</select></label>`;
+const posOptions = (current) => ["ALL", ...POS_ORDER].map((p) => `<option ${current === p ? "selected" : ""}>${p}</option>`).join("");
+const injLegend = () => `<div class="inj-legend small muted"><span><span class="badge wv">W</span> On waivers</span>${Object.entries(INJURY).filter(([k]) => k !== "PROBABLE").map(([, [s, full, sev]]) => `<span><span class="badge ${sev ? "out" : "inj"}">${s}</span> ${full}</span>`).join("")}</div>`;
+const listOf = (rows, sp, empty) => rows.length ? rows.map((p) => playerRow(p, { sp })).join("") : `<p class="muted pr-empty">${empty}</p>`;
+
 function renderFreeAgents(el) {
-  const w = state.week, sp = w.sp, f = state.players;
+  const w = state.week, f = state.players;
   const d = ensureFreeAgents(el);
   if (!d) return;
-
-  const all = d.players.map((p) => ({ ...p, pos: POS[p.posId] || "?", nfl: PRO[p.proId] || "", opp: computeOpp(w.nfl, p.posId, p.proId, sp) }));
-  const posOpts = ["ALL", ...POS_ORDER].map((p) => `<option ${f.faPos === p ? "selected" : ""}>${p}</option>`).join("");
-  const showPts = all.some((p) => p.pts != null);
-  el.innerHTML = `<div class="section-head"><h2>Available free agents</h2><span class="muted small">Unrostered in your league now · week ${w.week} projections${showPts ? " and points" : ""}</span></div>
-    <div class="inj-legend small muted"><span><span class="badge wv">W</span> On waivers</span>${Object.entries(INJURY).filter(([k]) => k !== "PROBABLE").map(([, [s, full, sev]]) => `<span><span class="badge ${sev ? "out" : "inj"}">${s}</span> ${full}</span>`).join("")}</div>
+  const all = d.players.map((p) => faRow(p, w));
+  el.innerHTML = `<div class="section-head"><h2>Available free agents</h2><span class="muted small">Unrostered in your league now · week ${w.week} projections</span></div>
+    ${injLegend()}${statusLegend()}
     <div class="filters">
       <input id="fa-q" type="search" placeholder="Search free agents…" value="${esc(f.faQ)}">
-      <select id="fa-pos" aria-label="Position">${posOpts}</select>
+      <select id="fa-pos" aria-label="Position">${posOptions(f.faPos)}</select>
       <div class="seg" id="fa-status">${[["all", "All"], ["FA", "Free agents"], ["W", "On waivers"]].map(([k, l]) => `<button data-s="${k}" class="${f.faStatus === k ? "active" : ""}">${l}</button>`).join("")}</div>
-    </div><div id="fa-table"></div>
-    <p class="small muted">Sorted by % rostered across all ESPN leagues by default. Click a column to sort.</p>${fcCredit()}`;
-  const waiverTip = (p) => (p.waiverDate ? `<b>On waivers</b>Clears ${new Date(p.waiverDate).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` : "<b>On waivers</b>");
+      ${sortSelect("fa-sort", ["own", "proj", "pts", "seasonPts", "value", "pprRank", "posRank", "name"], f.faSort)}
+    </div><div id="fa-list" class="pr-list mx"></div>${fcCredit()}`;
   const draw = () => {
     const q = f.faQ.toLowerCase();
     const rows = all.filter((p) => (f.faPos === "ALL" || p.pos === f.faPos) && (f.faStatus === "all" || p.status === f.faStatus) && (!q || p.name.toLowerCase().includes(q)));
-    const cols = [
-      { key: "name", label: "Player", render: (p) => `<strong>${plink(p.id, p.name)}</strong>${p.status === "W" ? ` <span class="badge wv" data-tip="${esc(waiverTip(p))}">W</span>` : ""}${injBadge(p)}` },
-      { key: "pos", label: "Pos", sort: (p) => POS_ORDER.indexOf(p.pos) },
-      { key: "nfl", label: "NFL", cls: "hide-sm" },
-      { key: "opp", label: "Opp", title: "This week's opponent and ESPN's opponent rank vs. the player's position (1st = toughest, 32nd = easiest)", sort: (p) => p.opp?.rank ?? null, render: oppHtml },
-      { key: "own", label: "% Rost", num: true, title: "Percent of ESPN leagues where the player is rostered, with the change this week", render: (p) => (p.own == null ? "–" : `${f1(p.own)}%${Math.abs(p.ownChg || 0) >= 0.5 ? ` <span class="trend ${p.ownChg > 0 ? "pos" : "neg"}">${p.ownChg > 0 ? "▲" : "▼"}${f1(Math.abs(p.ownChg))}</span>` : ""}`) },
-      { key: "proj", label: "Proj", num: true, title: `ESPN projection for week ${w.week}`, render: (p) => f1(p.proj) },
-      ...(showPts ? [{ key: "pts", label: "Pts", num: true, title: `Points in week ${w.week}`, render: (p) => (p.pts == null ? `<span class="muted">–</span>` : ptsLink(p.id, sp, f1(p.pts))) }] : []),
-      { key: "seasonPts", label: "Season pts", num: true, render: (p) => f1(p.seasonPts) },
-      { key: "pprRank", label: "PPR rank", num: true, cls: "hide-sm", title: "ESPN experts' average PPR rank for this week, within the position", sort: (p) => p.pprRank, render: (p) => posRankHtml(p, p.pprRank) },
-      { key: "posRank", label: "Scoring rank", num: true, cls: "hide-sm", title: "Season rank by fantasy points, within the position", sort: (p) => p.posRank, render: (p) => posRankHtml(p, p.posRank) },
-      { key: "value", label: "Trade value", num: true, title: "FantasyCalc redraft trade value, with 30-day trend", sort: (p) => valueOf(p.id), render: (p) => valueCell(p.id) },
-    ];
-    const t = $("fa-table");
-    t.replaceChildren(sortableTable(cols, rows, f.faSort, draw));
-    if (!rows.length) t.insertAdjacentHTML("beforeend", `<p class="muted">No free agents match those filters.</p>`);
+    $("fa-list").innerHTML = listOf(sortRows(rows, f.faSort), w.sp, "No free agents match those filters.");
   };
   $("fa-q").addEventListener("input", (e) => { f.faQ = e.target.value; draw(); });
   $("fa-pos").addEventListener("change", (e) => { f.faPos = e.target.value; draw(); });
+  $("fa-sort").addEventListener("change", (e) => { f.faSort = e.target.value; draw(); });
   $("fa-status").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => {
     f.faStatus = b.dataset.s;
     $("fa-status").querySelectorAll("button").forEach((x) => x.classList.toggle("active", x === b));
@@ -827,7 +838,7 @@ function renderFreeAgents(el) {
 
 function renderRosteredPlayers(el) {
   const w = state.week, f = state.players;
-  const all = w.sides.flatMap((s) => s.players);
+  const all = w.sides.flatMap((s) => s.players).map(rosteredRow);
   const showPts = w.status !== "upcoming";
   // Week leaders per position (rostered players).
   const leaders = POS_ORDER.map((pos) => {
@@ -835,48 +846,58 @@ function renderRosteredPlayers(el) {
     return list[0] && { pos, p: list[0] };
   }).filter(Boolean);
   const teamOpts = Object.values(state.base.teams).sort((a, b) => a.name.localeCompare(b.name)).map((t) => `<option value="${t.id}" ${String(f.team) === String(t.id) ? "selected" : ""}>${esc(t.name)}</option>`).join("");
-  const posOpts = ["ALL", ...POS_ORDER].map((p) => `<option ${f.pos === p ? "selected" : ""}>${p}</option>`).join("");
   el.innerHTML = `<div class="section-head"><h2>Week ${w.week} ${showPts ? "top scorers" : "top projections"} by position</h2></div>
     <div class="grid grid-awards">${leaders.map(({ pos, p }) => `<div class="card award"><div class="label">${pos}</div><div class="value">${f1(showPts ? p.actual : p.proj)}</div><div class="who">${plink(p.id, p.name)}${injBadge(p)}</div><div class="why">${esc(team(p.teamId).name)} · ${p.starter ? "started" : "on bench"}${p.diff != null ? ` · ${signed(p.diff)} vs proj` : ""}</div></div>`).join("")}</div>
-    <div class="section-head"><h2>All rostered players</h2><span class="muted small">Click a column to sort</span></div>
-    <div class="inj-legend small muted">${Object.entries(INJURY).filter(([k]) => k !== "PROBABLE").map(([, [s, f, sev]]) => `<span><span class="badge ${sev ? "out" : "inj"}">${s}</span> ${f}</span>`).join("")}</div>
+    <div class="section-head"><h2>All rostered players</h2></div>
+    ${injLegend()}${statusLegend()}
     <div class="filters">
       <input id="pf-q" type="search" placeholder="Search players…" value="${esc(f.q)}">
-      <select id="pf-pos" aria-label="Position">${posOpts}</select>
+      <select id="pf-pos" aria-label="Position">${posOptions(f.pos)}</select>
       <select id="pf-team" aria-label="Manager"><option value="ALL">All managers</option>${teamOpts}</select>
       <div class="seg" id="pf-role">${["starters", "bench", "all"].map((r) => `<button data-r="${r}" class="${f.role === r ? "active" : ""}">${r[0].toUpperCase() + r.slice(1)}</button>`).join("")}</div>
-    </div><div id="pf-table"></div>${fcCredit()}`;
+      ${sortSelect("pf-sort", ["pts", "proj", "value", "pprRank", "posRank", "name"], f.rSort)}
+    </div><div id="pf-list" class="pr-list mx"></div>${fcCredit()}`;
   const draw = () => {
     const q = f.q.toLowerCase();
     const rows = all.filter((p) => (f.pos === "ALL" || p.pos === f.pos) && (f.team === "ALL" || String(p.teamId) === String(f.team)) &&
       (f.role === "all" || (f.role === "starters" ? p.starter : !p.starter)) && (!q || p.name.toLowerCase().includes(q)));
-    const maxPts = Math.max(...rows.map((p) => p.actual), 1);
-    const cols = [
-      { key: "name", label: "Player", render: (p) => `<strong>${plink(p.id, p.name)}</strong>${injBadge(p)}${p.line ? `<div class="small muted">${esc(p.line)}</div>` : ""}` },
-      { key: "pos", label: "Pos", sort: (p) => POS_ORDER.indexOf(p.pos) },
-      { key: "nfl", label: "NFL", cls: "hide-sm" },
-      { key: "opp", label: "Opp", title: "This week's opponent and ESPN's opponent rank vs. the player's position (1st = toughest, 32nd = easiest)", sort: (p) => p.opp?.rank ?? null, render: oppHtml },
-      { key: "pprRank", label: "PPR rank", num: true, title: "ESPN experts' average PPR rank for this week, within the position", sort: (p) => p.pprRank, render: (p) => posRankHtml(p, p.pprRank) },
-      { key: "posRank", label: "Scoring rank", num: true, title: "Season rank by fantasy points, within the position", sort: (p) => p.posRank, render: (p) => posRankHtml(p, p.posRank) },
-      { key: "value", label: "Trade value", num: true, title: "FantasyCalc redraft trade value, with 30-day trend", sort: (p) => valueOf(p.id), render: (p) => valueCell(p.id) },
-      { key: "teamId", label: "Manager", sort: (p) => team(p.teamId).name, render: (p) => esc(team(p.teamId).name) },
-      { key: "slot", label: "Slot", sort: (p) => SLOT_DISPLAY.indexOf(p.slotId) + (p.starter ? 0 : 100) },
-      { key: "actual", label: "Pts", num: true, sort: (p) => (p.played ? p.actual : null), render: (p) => p.played ? `<div class="bar-cell"><span class="track"><span class="fill" style="display:block;width:${Math.max(0, (p.actual / maxPts) * 100)}%"></span></span>${ptsLink(p.id, w.sp, f1(p.actual))}</div>` : `<span class="muted">–</span>` },
-      { key: "proj", label: "Proj", num: true, render: (p) => f1(p.proj) },
-      { key: "diff", label: "+/−", num: true, title: "Actual points minus ESPN projection", render: (p) => `<span class="${clsSign(p.diff)}">${signed(p.diff)}</span>` },
-    ];
-    const t = $("pf-table");
-    t.replaceChildren(sortableTable(cols, rows, f.sort, draw));
-    if (!rows.length) t.insertAdjacentHTML("beforeend", `<p class="muted">No players match those filters.</p>`);
+    $("pf-list").innerHTML = listOf(sortRows(rows, f.rSort), w.sp, "No players match those filters.");
   };
   $("pf-q").addEventListener("input", (e) => { f.q = e.target.value; draw(); });
   $("pf-pos").addEventListener("change", (e) => { f.pos = e.target.value; draw(); });
   $("pf-team").addEventListener("change", (e) => { f.team = e.target.value; draw(); });
+  $("pf-sort").addEventListener("change", (e) => { f.rSort = e.target.value; draw(); });
   $("pf-role").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => {
     f.role = b.dataset.r;
     $("pf-role").querySelectorAll("button").forEach((x) => x.classList.toggle("active", x === b));
     draw();
   }));
+  draw();
+}
+
+// Rostered players and free agents together.
+function renderAllPlayers(el) {
+  const w = state.week, f = state.players;
+  const d = ensureFreeAgents(el);
+  if (!d) return;
+  const rostered = w.sides.flatMap((s) => s.players).map(rosteredRow);
+  const seen = new Set(rostered.map((p) => p.id));
+  const all = [...rostered, ...d.players.filter((p) => !seen.has(p.id)).map((p) => faRow(p, w))];
+  el.innerHTML = `<div class="section-head"><h2>All players</h2><span class="muted small">Rostered players plus the top available free agents · week ${w.week}</span></div>
+    ${statusLegend()}
+    <div class="filters">
+      <input id="all-q" type="search" placeholder="Search all players…" value="${esc(f.allQ)}">
+      <select id="all-pos" aria-label="Position">${posOptions(f.allPos)}</select>
+      ${sortSelect("all-sort", ["proj", "pts", "value", "pprRank", "posRank", "name"], f.allSort)}
+    </div><div id="all-list" class="pr-list mx"></div>${fcCredit()}`;
+  const draw = () => {
+    const q = f.allQ.toLowerCase();
+    const rows = all.filter((p) => (f.allPos === "ALL" || p.pos === f.allPos) && (!q || p.name.toLowerCase().includes(q)));
+    $("all-list").innerHTML = listOf(sortRows(rows, f.allSort), w.sp, "No players match those filters.");
+  };
+  $("all-q").addEventListener("input", (e) => { f.allQ = e.target.value; draw(); });
+  $("all-pos").addEventListener("change", (e) => { f.allPos = e.target.value; draw(); });
+  $("all-sort").addEventListener("change", (e) => { f.allSort = e.target.value; draw(); });
   draw();
 }
 
@@ -1553,8 +1574,14 @@ function renderHistory() {
 }
 
 // ---------- Roster ----------
+// Available players (free agents or waivers) at the same position projected to outscore `p` this week, best first.
+function upgradesFor(p, fa) {
+  return fa.players.filter((u) => u.posId === p.posId && (u.proj || 0) > (p.proj || 0) + 0.05).sort((a, b) => b.proj - a.proj);
+}
+
 function renderRoster() {
-  ensureValues(); // the Value column fills in when values arrive
+  ensureValues(); // trade values fill in when they arrive
+  ensureGameStatus(); // game lines and live highlighting
   const w = state.week, el = $("view-roster");
   const ids = Object.keys(state.base.teams).sort((a, b) => team(a).name.localeCompare(team(b).name));
   const key = `ffb.rosterteam.${state.leagueId || "default"}`;
@@ -1578,29 +1605,24 @@ function renderRoster() {
     matchupLine = `Week ${w.week} vs ${teamName(opp.teamId, 22)} · <strong>${score}</strong> ${result}`;
   }
 
-  ensureGameStatus();
-  // Cell classes let phones lay each row out as a card (see .roster-table in styles.css).
-  // The stat line appears twice: under the name in the desktop table, and as its own full-width line on phones.
-  const row = (p) => {
-    const statLine = [`${p.pos}${p.nfl ? ` · ${p.nfl}` : ""}`, p.line && esc(p.line), gsText(p)].filter(Boolean).join(" · ");
-    return `<tr class="${gsClass(p)}"><td class="slot-cell r-slot">${esc(p.slot)}</td>
-    <td class="r-player"><strong>${plink(p.id, p.name)}</strong>${injBadge(p)}${gsIcon(p)}<div class="small muted r-sub-desk">${statLine}</div></td>
-    <td class="r-sub small muted">${statLine}</td>
-    <td class="r-opp">${oppHtml(p)}</td>
-    <td class="num r-proj" data-label="Proj">${f1(p.proj)}</td>
-    <td class="num r-pts">${p.played ? ptsLink(p.id, w.sp, f1(p.actual)) : `<span class="muted">–</span>`}</td>
-    <td class="num hide-sm">${posRankHtml(p, p.pprRank)}</td>
-    <td class="num hide-sm">${posRankHtml(p, p.posRank)}</td>
-    <td class="num r-val" data-label="Value">${valueCell(p.id)}</td></tr>`;
+  // Upgrade button: how many available players at the same position are projected higher this week.
+  const fa = faData();
+  const upgradeBtn = (p) => {
+    if (!fa || fa.error) return `<span class="upg-none" title="${fa?.error ? "Couldn't load free agents" : "Checking free agents…"}">…</span>`;
+    const n = upgradesFor(p, fa).length;
+    return n
+      ? `<button type="button" class="upg-btn" data-pid="${esc(p.id)}" title="${n} available ${esc(p.pos)}${n > 1 ? "s" : ""} projected higher this week">▲ ${n}</button>`
+      : `<span class="upg-none" title="No available ${esc(p.pos)} is projected higher this week">–</span>`;
   };
-  const head = `<thead><tr><th>Slot</th><th>Player</th><th>Opp</th><th class="num">Proj</th><th class="num">Pts</th><th class="num hide-sm" title="ESPN experts' average PPR rank for this week">PPR rank</th><th class="num hide-sm" title="Season rank by fantasy points">Scoring rank</th><th class="num" title="FantasyCalc redraft trade value">Value</th></tr></thead>`;
-  const table = (title, list, totals) => list.length ? `<h3 class="ta-sub">${title}</h3><div class="table-wrap"><table class="data roster-table">${head}<tbody>${list.map(row).join("")}${totals || ""}</tbody></table></div>` : "";
+  const list = (title, players) => players.length
+    ? `<h3 class="ta-sub">${title}</h3><div class="pr-list mx">${players.map((p) => playerRow(rosteredRow(p), { label: p.slot, sp: w.sp, action: upgradeBtn(p), owner: false })).join("")}</div>` : "";
 
   let body = `<p class="muted">${esc(t.name)} has no lineup for week ${w.week}.</p>`;
   if (side) {
     const bench = side.bench.filter((p) => p.slotId !== IR), ir = side.bench.filter((p) => p.slotId === IR);
-    const totals = `<tr class="total-row"><td class="r-slot"></td><td class="r-player"><strong>Starters total</strong></td><td class="r-opp"></td><td class="num r-proj" data-label="Proj"><strong>${f1(side.proj)}</strong></td><td class="num r-pts"><strong>${played ? f2(side.score) : "–"}</strong></td><td class="hide-sm"></td><td class="hide-sm"></td><td class="num r-val" data-label="Value"><strong>${state.values?.byId ? fmtVal(sum(side.starters, (p) => valueOf(p.id) || 0)) : ""}</strong></td></tr>`;
-    body = table("Starters", side.starters, totals) + table("Bench", bench) + table("Injured reserve", ir);
+    const starterValue = state.values?.byId ? fmtVal(sum(side.starters, (p) => valueOf(p.id) || 0)) : null;
+    body = `<div class="pr-sum small"><span><span class="muted">Starters proj</span> <strong>${f1(side.proj)}</strong></span><span><span class="muted">Points</span> <strong>${played ? f2(side.score) : "–"}</strong></span>${starterValue ? `<span><span class="muted">Starters value</span> <strong>${starterValue}</strong></span>` : ""}<span class="muted pr-sum-key"><span class="upg-btn sample">▲</span> = better free agents available</span></div>`
+      + list("Starters", side.starters) + list("Bench", bench) + list("Injured reserve", ir);
   }
   const rosterValue = side && state.values?.byId?.size ? sum(side.players, (p) => valueOf(p.id) || 0) : null;
   const opts = ids.map((id) => `<option value="${id}" ${id === String(sel) ? "selected" : ""}>${esc(team(id).name)} (${esc(team(id).owner)})</option>`).join("");
@@ -1617,9 +1639,30 @@ function renderRoster() {
       </div>
     </div>
     <p class="small muted">Lineup for week ${w.week}. Change the week at the top to see other weeks.</p>
+    ${statusLegend()}
     ${body}
     ${fcCredit()}`;
   $("roster-team").addEventListener("change", (e) => { state.rosterTeam = e.target.value; store.set(key, e.target.value); renderRoster(); });
+  el.querySelectorAll(".upg-btn[data-pid]").forEach((b) => b.addEventListener("click", () => {
+    const p = side.players.find((x) => String(x.id) === b.dataset.pid);
+    if (p) { state.modalReturn = b; openUpgrades(p); }
+  }));
+}
+
+// Popup listing the available players who'd be an upgrade for `p` this week.
+function openUpgrades(p) {
+  const w = state.week, fa = faData();
+  if (!fa || fa.error) return;
+  const ups = upgradesFor(p, fa).slice(0, 20);
+  const rows = ups.map((u) => {
+    const row = faRow(u, w);
+    return playerRow(row, { sp: w.sp, action: `<div class="upg-diff" title="Projected points more than ${esc(p.name)}">+${f1(u.proj - (p.proj || 0))}</div>` });
+  }).join("");
+  showModal(`<div class="pm-head"><h2 id="pl-modal-title">Upgrades for ${esc(p.name)}</h2>
+      <div class="muted">${esc(p.pos)} · projected ${f1(p.proj)} in week ${w.week}</div></div>
+    <p class="small muted" style="margin:10px 0">${ups.length} available ${esc(p.pos)}${ups.length > 1 ? "s" : ""} projected higher this week, best first. The green number is how many more points each is projected to score.</p>
+    <div class="pr-list mx">${rows}</div>
+    <p class="small muted" style="margin-top:10px">Free agents and players on waivers (<span class="badge wv">W</span>), using ESPN's week ${w.week} projections.</p>`);
 }
 
 // ---------- Trade values (FantasyCalc) ----------
@@ -2135,6 +2178,16 @@ function initPlayerModal() {
     state.modalReturn = b;
     openPlayer(b.dataset.pid, b.dataset.sp ? Number(b.dataset.sp) : null);
   }, true);
+}
+
+// Open the shared popup with arbitrary content (e.g. the Roster tab's upgrade list).
+function showModal(html) {
+  const m = $("pl-modal");
+  $("pl-modal-body").innerHTML = html;
+  m.hidden = false;
+  document.body.classList.add("modal-open");
+  m.querySelector(".modal-close").focus();
+  m.querySelector(".modal-card").scrollTop = 0;
 }
 
 async function openPlayer(id, focusSp) {

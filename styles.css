@@ -468,6 +468,31 @@ table.data.roster-table td.r-sub { display: none; }
 .lv-none { padding: 4px 0; }
 .mx-side.bump { animation: bump 2.5s ease-out; }
 
+/* Player rows (Roster & Players), matching the matchup breakdown */
+.pr-list { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.pr-row { display: grid; grid-template-columns: 48px minmax(0, 1fr) auto auto; gap: 10px; align-items: start; padding: 9px 12px; border-bottom: 1px solid var(--grid); }
+.pr-row:last-child { border-bottom: 0; }
+.pr-label { font-weight: 700; font-size: .78rem; color: var(--ink-2); padding-top: 2px; }
+.pr-info { min-width: 0; }
+.pr-details { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; margin-top: 3px; font-size: .75rem; color: var(--muted); }
+.pr-details .dot { color: var(--axis); }
+.pr-owner { display: inline-flex; align-items: center; gap: 4px; color: var(--ink-2); }
+.pr-row .mx-pts { min-width: 48px; }
+.pr-row.is-live .mx-name .pl-link { font-weight: 800; color: var(--ink); }
+.pr-row.is-poss { background: #fdf0d5; box-shadow: inset 4px 0 0 #c98a00; }
+.pr-row.is-rz { background: #fde4e4; box-shadow: inset 4px 0 0 #d32f2f; }
+.pr-empty { padding: 12px; margin: 0; }
+.sort-lbl { display: inline-flex; align-items: center; gap: 6px; }
+.sort-lbl select { padding: 7px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--ink); }
+.upg-btn { align-self: center; border: 1px solid #16a34a; background: #e8f7ee; color: #15803d; font: inherit; font-weight: 800; font-size: .8rem; border-radius: 999px; padding: 4px 10px; cursor: pointer; white-space: nowrap; }
+.upg-btn:hover { background: #d3f0dd; }
+.upg-btn.sample { cursor: default; padding: 1px 6px; font-size: .7rem; }
+.upg-none { align-self: center; width: 46px; text-align: center; color: var(--axis); cursor: default; }
+.upg-diff { align-self: center; font-weight: 800; color: var(--good); font-variant-numeric: tabular-nums; }
+.pr-sum { display: flex; flex-wrap: wrap; gap: 4px 16px; align-items: center; margin: 4px 0 6px; }
+.pr-sum-key { margin-left: auto; }
+#pl-modal .pr-list { margin-top: 4px; }
+
 /* NFL game status markers (Matchups & Roster) */
 .nm-short { display: none; }
 .gs { display: inline-flex; align-items: center; justify-content: center; vertical-align: middle; margin-left: 4px; font-size: .8rem; line-height: 1; cursor: default; }
@@ -514,6 +539,11 @@ td.gs-cell-final .nm, tr.gs-cell-final td .pl-link { color: var(--ink-2); }
   .mx .mx-oprk { display: none; }
   .mx-row { grid-template-columns: 1fr 34px 1fr; }
   .lv-row, .mx-row.lv-head { grid-template-columns: 1fr 4px 1fr; }
+  .pr-row { grid-template-columns: 34px minmax(0, 1fr) auto auto; gap: 6px; padding: 8px 8px; }
+  .pr-label { font-size: .7rem; }
+  .pr-row .mx-pts { min-width: 40px; }
+  .upg-btn { padding: 4px 8px; }
+  .pr-sum-key { margin-left: 0; }
   .lv-players { padding: 8px 6px 10px; }
   .mx-row.lv-head > div { padding: 0 6px; }
   .mx-side { padding: 7px 6px; gap: 4px; }
