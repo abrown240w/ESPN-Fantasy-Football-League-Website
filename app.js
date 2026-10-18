@@ -778,7 +778,7 @@ function playerRow(p, { label, sp, action = "", owner = true } = {}) {
     <div class="pr-label">${esc(label ?? p.pos)}</div>
     <div class="pr-info">
       <div class="mx-name">${plinkNm(p)}${injBadge(p)}</div>
-      <div class="mx-game">${gameLineHtml(p)}${p.opp?.rank ? ` ${oprkChip(p)}` : ""}</div>
+      <div class="mx-game">${gameLineHtml(p)}${p.opp?.rank ? ` ${oprkChip(p)}` : ""}${wxChip(p.proId, gameStatusOf(p)?.state)}</div>
       ${p.short ? `<div class="mx-stats" title="${esc(p.line)}">${esc(p.short)}</div>` : ""}
       ${details.length ? `<div class="pr-details">${details.join(`<span class="dot">·</span>`)}</div>` : ""}
     </div>
@@ -1288,6 +1288,7 @@ async function refreshLive() {
 
 function renderLive() {
   const el = $("view-live");
+  ensureWeather(state.live?.sp || state.week?.sp); // game-day forecasts fill in when they arrive
   const L = state.live;
   if (!L || state.liveStale) {
     state.liveStale = false;
@@ -1368,6 +1369,7 @@ function renderLive() {
         <div class="g-status">${status}${g.broadcast ? `<div class="muted small">${esc(g.broadcast)}</div>` : ""}</div>
         ${scoreSide(g.home, g, true)}
       </div>
+      ${g.state === "post" ? "" : wxLine(wxGame(g.home.proId, L.sp))}
       ${graphic}${sit}${g.state === "in" && g.lastPlay ? `<div class="g-last small muted">Last play: ${esc(g.lastPlay)}</div>` : ""}
       <div class="lv-players mx">${playerRows(g)}</div>
     </div>`;
@@ -1385,7 +1387,7 @@ function renderLive() {
       <select id="lv-team" aria-label="Fantasy team"><option value="ALL">All fantasy teams</option>${teamOpts}</select>
     </div>
     ${L.byes?.length ? `<p class="muted small">On bye: ${L.byes.map(esc).join(", ")}</p>` : ""}
-    <div class="games">${games.map(gameCard).join("") || `<p class="muted">No NFL games found for this week.</p>`}</div>`;
+    <div class="games">${games.map(gameCard).join("") || `<p class="muted">No NFL games found for this week.</p>`}</div>${games.some((g) => g.state !== "post") ? wxCredit() : ""}`;
   $("lv-show").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => { f.show = b.dataset.s; renderLive(); }));
   $("lv-team").addEventListener("change", (e) => { f.team = e.target.value; renderLive(); });
   // Only flash a score change once.
@@ -1610,6 +1612,7 @@ function upgradesFor(p, fa) {
 
 function renderRoster() {
   ensureValues(); // trade values fill in when they arrive
+  ensureWeather(); // game-day forecasts fill in when they arrive
   ensureUsage(); // snap counts and targets fill in when they arrive
   ensureGameStatus(); // game lines and live highlighting
   const w = state.week, el = $("view-roster");
@@ -1671,7 +1674,7 @@ function renderRoster() {
     <p class="small muted">Lineup for week ${w.week}. Change the week at the top to see other weeks.</p>
     ${statusLegend()}
     ${body}
-    ${fcCredit()}${nvCredit()}`;
+    ${fcCredit()}${nvCredit()}${wxCredit()}`;
   $("roster-team").addEventListener("change", (e) => { state.rosterTeam = e.target.value; store.set(key, e.target.value); renderRoster(); });
   el.querySelectorAll(".upg-btn[data-pid]").forEach((b) => b.addEventListener("click", () => {
     const p = side.players.find((x) => String(x.id) === b.dataset.pid);
@@ -1841,6 +1844,101 @@ function usageBrief(id) {
   const u = usageOf(id);
   if (!u) return "";
   return `<span data-tip="${usageTip(u)}">Snaps ${pctTxt(u.last.pct)}${usageTrend(u.last.pct, u.prior?.pct)}${u.pos !== "QB" && u.last.share != null ? ` · Tgt ${pctTxt(u.last.share)}` : ""} <span class="muted">(wk ${u.last.wk})</span></span>`;
+}
+
+// ---------- Game-day weather (Open-Meteo) ----------
+// Open-Meteo's license (CC BY 4.0) asks for credit wherever the forecast appears.
+const wxCredit = () => `<p class="fc-credit small muted">Weather from <a href="https://open-meteo.com" target="_blank" rel="noopener">Open-Meteo.com</a> (CC BY 4.0) · kickoff-window forecast, updated hourly. Retractable-roof calls are a guess; teams decide on game day.</p>`;
+
+async function fetchWeather(sp) {
+  if (state.demo) return window.DemoLeague.weather(sp);
+  const q = new URLSearchParams({ scoringPeriodId: sp });
+  if (state.season) q.set("season", state.season);
+  let res, body;
+  try {
+    res = await fetch(`/api/weather?${q}`);
+    body = await res.json();
+  } catch {
+    throw new ApiError("no_function", "Couldn't reach the weather function. Make sure netlify/functions/weather.mjs is uploaded.");
+  }
+  if (!res.ok) throw new ApiError(body.error, body.message || `Request failed (${res.status})`);
+  return body;
+}
+
+// Weather for the selected week, or null while it loads (the Roster / Live games tab re-renders when it arrives).
+// Refetched after an hour so forecasts stay current.
+function ensureWeather(sp = state.week?.sp) {
+  if (!sp) return null;
+  const cache = (state.weather ||= {}), d = cache[sp];
+  if (d && d !== "loading" && Date.now() - d.at < 3600e3) return d;
+  if (d !== "loading") {
+    cache[sp] = d && d !== "loading" ? d : "loading";
+    const base = state.base;
+    fetchWeather(sp)
+      .then((x) => { if (state.base === base) cache[sp] = { ...x, at: Date.now(), byPro: Object.fromEntries(x.games.flatMap((g) => [[g.home, g], [g.away, g]])) }; })
+      .catch((e) => { if (state.base === base) cache[sp] = { error: e.message, at: Date.now(), byPro: {}, games: [] }; })
+      .finally(() => { if (state.base === base && ["roster", "live"].includes(state.tab)) render(); });
+  }
+  return d && d !== "loading" ? d : null;
+}
+const wxGame = (proId, sp = state.week?.sp) => { const d = state.weather?.[sp]; return d && d !== "loading" ? d.byPro?.[proId] || null : null; };
+
+const wxIcon = (code) => (code >= 95 ? "⛈️" : (code >= 71 && code <= 77) || code >= 85 ? "🌨️" : code >= 51 ? "🌧️" : code >= 45 ? "🌫️" : code === 3 ? "☁️" : code >= 1 ? "⛅" : "☀️");
+const deg = (n) => `${Math.round(n)}°`;
+// Is the roof (fixed or a closed retractable one) keeping the weather out?
+const wxIndoors = (g) => g.roof === "dome" || /closed/.test(g.roofCall?.call || "");
+function wxTip(g) {
+  const f = g.forecast;
+  const where = `${esc(g.venue)}${g.city ? ` · ${esc(g.city)}` : ""}`;
+  if (g.roof === "dome") return esc(`<b>Indoors</b>${where}<br>Fixed roof, so weather won't matter.`);
+  const roof = g.roof === "retractable" ? `<br>Retractable roof: ${g.roofCall?.call ? `${g.roofCall.call} (${g.roofCall.why})` : "decided on game day"}` : "";
+  if (!f) return esc(`<b>${g.roof === "retractable" ? "Retractable roof" : "Outdoors"}</b>${where}<br>Forecast shows up about two weeks before kickoff.${roof}`);
+  return esc(`<b>${wxIcon(f.code)} ${f.desc} · ${deg(f.tempF)}</b>${where}<br>${f.precipProb}% chance of precipitation · wind ${Math.round(f.windMph)} mph (gusts ${Math.round(f.gustMph)})${roof}`);
+}
+// Small chip for player cards: rain chance with a condition icon, or a stadium icon when the roof is closed.
+// liveState (from the scoreboard, which is fresher than the hourly forecast) hides it once the game ends.
+function wxChip(proId, liveState) {
+  const g = wxGame(proId);
+  if (!g || g.state === "post" || liveState === "post") return "";
+  if (wxIndoors(g)) return `<span class="wx wx-in" data-tip="${wxTip(g)}">🏟️</span>`;
+  const f = g.forecast;
+  if (!f) return "";
+  return `<span class="wx ${f.precipProb >= 50 ? "wx-wet" : ""}" data-tip="${wxTip(g)}">${wxIcon(f.code)} ${f.precipProb}%${f.windMph >= 15 ? " 💨" : ""}</span>`;
+}
+// One-line summary for a game card on the Live games tab.
+function wxLine(g) {
+  if (!g || g.state === "post") return "";
+  const f = g.forecast;
+  if (g.roof === "dome") return `<div class="g-wx" data-tip="${wxTip(g)}">🏟️ <strong>Indoors</strong> <span class="muted">· ${esc(g.venue)}</span></div>`;
+  const roof = g.roof === "retractable"
+    ? `<span class="wx-roof ${wxIndoors(g) ? "closed" : ""}">Retractable roof${g.roofCall?.call ? `: ${esc(g.roofCall.call)}` : ""}</span>` : "";
+  if (wxIndoors(g)) return `<div class="g-wx" data-tip="${wxTip(g)}">🏟️ ${roof} <span class="muted">· ${esc(g.roofCall?.why || "")}</span></div>`;
+  if (!f) return `<div class="g-wx muted">${roof || "Outdoors"} · forecast closer to kickoff</div>`;
+  return `<div class="g-wx" data-tip="${wxTip(g)}">${wxIcon(f.code)} <strong>${esc(f.desc)} ${deg(f.tempF)}</strong>
+    <span class="${f.precipProb >= 50 ? "wx-wet" : ""}">· ${f.precipProb}% precip</span> · wind ${Math.round(f.windMph)} mph${f.gustMph >= 25 ? ` (gusts ${Math.round(f.gustMph)})` : ""}${roof ? ` · ${roof}` : ""}</div>`;
+}
+// Full detail for the player popup: conditions plus hour-by-hour through the game.
+function wxDetail(proId) {
+  const g = wxGame(proId);
+  if (!g || g.state === "post") return "";
+  const f = g.forecast;
+  const kick = new Date(g.date).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  const head = `<h3 class="pm-sub">Game-day weather <span class="muted small">· ${esc(g.awayAbbr)} @ ${esc(g.homeAbbr)} · ${esc(kick)}</span></h3>
+    <p class="small muted">${esc(g.venue)}${g.city ? ` · ${esc(g.city)}` : ""}</p>`;
+  if (g.roof === "dome") return `${head}<div class="wx-card"><div class="wx-big">🏟️</div><div><strong>Indoors</strong><div class="small muted">Fixed roof. Weather won't be a factor.</div></div></div>`;
+  const roof = g.roof === "retractable"
+    ? `<div class="wx-card ${wxIndoors(g) ? "" : "wx-card-open"}"><div class="wx-big">🏟️</div><div><strong>Retractable roof${g.roofCall?.call ? `: ${esc(g.roofCall.call)}` : ""}</strong><div class="small muted">${esc(g.roofCall?.why || "")}. The team decides on game day${wxIndoors(g) ? "; if it's closed, the forecast below won't matter" : ""}.</div></div></div>` : "";
+  if (!f) return `${head}${roof}<p class="muted small">The forecast shows up about two weeks before kickoff.</p>`;
+  const hours = f.hours.map((h) => `<tr><td>${new Date(h.t).toLocaleTimeString(undefined, { hour: "numeric" })}</td><td>${wxIcon(h.code)}</td><td class="num">${deg(h.tempF)}</td><td class="num">${deg(h.feelsF)}</td><td class="num">${h.precipProb}%</td><td class="num">${Math.round(h.windMph)}${h.gustMph >= 20 ? `<span class="muted"> / ${Math.round(h.gustMph)}</span>` : ""}</td></tr>`).join("");
+  return `${head}${roof}
+    <div class="pm-stats wx-stats">
+      <div><span class="muted small">Conditions</span><strong>${wxIcon(f.code)} ${esc(f.desc)}</strong></div>
+      <div><span class="muted small">Kickoff temp</span><strong>${deg(f.tempF)}</strong><span class="muted small">feels like ${deg(f.feelsF)}</span></div>
+      <div><span class="muted small">Precip chance</span><strong class="${f.precipProb >= 50 ? "wx-wet" : ""}">${f.precipProb}%</strong><span class="muted small">${f.precipIn ? `${f.precipIn}" expected` : "during the game"}</span></div>
+      <div><span class="muted small">Wind</span><strong>${Math.round(f.windMph)} mph</strong><span class="muted small">gusts ${Math.round(f.gustMph)}</span></div>
+    </div>
+    <div class="table-wrap"><table class="data wx-hours"><thead><tr><th>Time</th><th></th><th class="num">Temp</th><th class="num">Feels</th><th class="num">Precip</th><th class="num">Wind</th></tr></thead><tbody>${hours}</tbody></table></div>
+    ${wxCredit()}`;
 }
 
 // ---------- Team usage tab ----------
@@ -2509,6 +2607,7 @@ function renderPlayerModal(d, focusSp) {
       ${val ? `<div><span class="muted small">Trade value</span><strong>${fmtVal(val.value)}</strong><span class="muted small">FantasyCalc</span></div>` : ""}
     </div>
     ${focusSp && !bySp[focusSp] ? `<p class="muted small">No stats yet for week ${focusSp}.</p>` : ""}
+    ${p.proId ? (ensureWeather(), wxDetail(p.proId)) : ""}
     <h3 class="pm-sub">${state.base.season} game log <span class="muted small">· tap points to see how they were scored</span></h3>
     <div class="table-wrap"><table class="data gamelog"><thead><tr><th>Wk</th><th>Game</th>${ul ? `<th class="num" title="Share of the team's offensive snaps">Snap</th><th class="num" title="Targets and share of the team's targets">Tgt</th>` : ""}<th class="num">Pts</th></tr></thead><tbody>${rows.join("")}</tbody></table></div>
     ${ul ? nvCredit() : ""}`;
@@ -2633,7 +2732,7 @@ async function switchLeague(leagueId, season) {
   Object.assign(state, {
     base: null, week: null, weekCache: {}, awardTally: null, activity: null, history: null,
     live: null, livePrev: {}, liveBumps: {}, openMatchup: null,
-    values: null, usage: null, ta: null, rostersLoading: false, playerCache: null, fa: null, rosterTeam: null,
+    values: null, usage: null, weather: null, ta: null, rostersLoading: false, playerCache: null, fa: null, rosterTeam: null,
   });
   state.players.team = state.txFilter.team = state.liveFilter.team = "ALL";
   state.historySel = "all";
@@ -2716,6 +2815,7 @@ function bindUi() {
     state.history = null;
     state.values = null;
     state.usage = null;
+    state.weather = null;
     state.fa = null;
     await loadLeague(wk);
   });

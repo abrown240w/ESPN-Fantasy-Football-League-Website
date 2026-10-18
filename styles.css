@@ -630,3 +630,17 @@ td.gs-cell-final .nm, tr.gs-cell-final td .pl-link { color: var(--ink-2); }
 .espn-open { display: inline-flex; align-items: center; gap: 4px; height: 36px; padding: 0 12px; border-radius: 10px; background: #c8102e; color: #fff; font-weight: 800; font-size: .85rem; letter-spacing: .02em; text-decoration: none; white-space: nowrap; }
 .espn-open:hover { background: #a50d26; }
 .espn-open .espn-arrow { font-size: .8em; opacity: .9; }
+
+/* Game-day weather */
+.wx { display: inline-flex; align-items: center; gap: 2px; margin-left: 6px; padding: 0 5px; border-radius: 999px; background: var(--surface-2); font-size: .72rem; font-weight: 600; color: var(--ink-2); white-space: nowrap; cursor: default; vertical-align: middle; }
+.wx.wx-wet { background: #e3f0ff; color: #1d5fb8; }
+.wx.wx-in { padding: 0 4px; }
+.g-wx { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; justify-content: center; margin: 6px 0 2px; font-size: .82rem; color: var(--ink-2); text-align: center; }
+.wx-wet { color: #1d5fb8; font-weight: 700; }
+.wx-roof { font-weight: 600; }
+.wx-roof.closed { color: var(--ink); }
+.wx-card { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 10px; background: var(--surface-2); margin: 6px 0 10px; }
+.wx-card-open { background: #f3f8ee; }
+.wx-big { font-size: 1.6rem; line-height: 1; }
+.wx-stats { margin: 6px 0 10px; }
+table.data.wx-hours td, table.data.wx-hours th { padding: 6px 8px; }

@@ -462,5 +462,31 @@
   }
   const PRO_IDS = Object.fromEntries([...Array(30).keys()].map((i) => [i + 1, 1]).concat([[33, 1], [34, 1]]));
 
-  window.DemoLeague = { response, activity, nfl, live, values, player, freeAgents, usage };
+  // Same shape as /api/weather. Domes and retractable roofs follow the real stadiums for each team ID.
+  function weather(sp) {
+    const abbr = (id) => (typeof PRO !== "undefined" && PRO[id]) || "";
+    const DOMES = { 8: "Ford Field", 13: "Allegiant Stadium", 14: "SoFi Stadium", 16: "U.S. Bank Stadium", 18: "Caesars Superdome", 24: "SoFi Stadium" };
+    const RETRACT = { 1: "Mercedes-Benz Stadium", 6: "AT&T Stadium", 11: "Lucas Oil Stadium", 22: "State Farm Stadium", 34: "NRG Stadium" };
+    const noise = (a, b) => (((a * 2654435761) ^ (b * 40503)) >>> 0) % 1000 / 1000;
+    const n = nfl(sp), games = [];
+    for (const [id, [opp, home, date]] of Object.entries(n.games)) {
+      if (!home) continue;
+      const h = Number(id), k = noise(h, sp), state = sp < CURRENT_WEEK ? "post" : "pre";
+      const roof = DOMES[h] ? "dome" : RETRACT[h] ? "retractable" : "open";
+      const code = [0, 1, 2, 3, 61, 63, 80, 0, 2, 71][Math.floor(k * 10)];
+      const wet = code >= 51;
+      const kick = Date.now() + (1 + Math.floor(k * 3)) * 864e5;
+      const f = state === "post" || roof === "dome" ? null : (() => {
+        const temp = 38 + Math.round(k * 45), wind = 4 + Math.round(noise(sp, h) * 20);
+        const hours = [0, 1, 2, 3].map((i) => ({ t: new Date(kick + i * 36e5).toISOString(), tempF: temp - i, feelsF: temp - i - (wind > 12 ? 5 : 1), precipProb: wet ? 45 + i * 10 : Math.round(k * 15), precipIn: wet ? 0.05 * (i + 1) : 0, code, windMph: wind + i, gustMph: wind + 9 + i }));
+        return { tempF: temp, feelsF: hours[0].feelsF, precipProb: Math.max(...hours.map((x) => x.precipProb)), precipIn: wet ? 0.5 : 0, windMph: wind + 3, gustMph: wind + 12, code, desc: { 0: "Clear", 1: "Mostly clear", 2: "Partly cloudy", 3: "Cloudy", 61: "Light rain", 63: "Rain", 80: "Rain showers", 71: "Light snow" }[code], hours };
+      })();
+      const g = { id: `${sp}-${h}`, date: new Date(kick).toISOString(), state, home: h, away: opp, homeAbbr: abbr(h), awayAbbr: abbr(opp), venue: DOMES[h] || RETRACT[h] || `${abbr(h)} Stadium`, city: "", roof, forecast: f };
+      if (roof === "retractable" && state !== "post") g.roofCall = h === 1 ? { call: "closed", why: "This roof is almost always closed for games" } : f && (f.precipProb >= 30 || f.tempF < 55 || f.tempF >= 80) ? { call: "likely closed", why: f.precipProb >= 30 ? `${f.precipProb}% rain chance` : `${f.tempF}° at kickoff` } : { call: "likely open", why: "Mild, dry forecast" };
+      games.push(g);
+    }
+    return { sp, updated: Date.now(), games };
+  }
+
+  window.DemoLeague = { response, activity, nfl, live, values, player, freeAgents, usage, weather };
 })();
