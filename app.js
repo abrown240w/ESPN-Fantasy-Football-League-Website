@@ -2755,8 +2755,12 @@ function renderHeader() {
   const label = LEAGUES.find((l) => l.id === (state.leagueId || LEAGUES[0].id))?.label;
   $("league-meta").textContent = [!state.demo && label && b.name !== label ? b.name : "", `${b.season || ""} season`, `${Object.keys(b.teams).length} teams`].filter(Boolean).join(" · ");
   document.title = `${b.name} · Weekly Breakdown`;
+  // Phones get short labels ("Wk 6 · now") so the week picker fits beside the league name.
+  const short = matchMedia("(max-width: 640px)").matches;
   $("week-select").innerHTML = Array.from({ length: b.weeks }, (_, i) => i + 1)
-    .map((w) => `<option value="${w}">Week ${w}${w > b.regWeeks ? " (playoffs)" : ""}${w === b.current ? " · current" : ""}</option>`).join("");
+    .map((w) => `<option value="${w}">${short
+      ? `Wk ${w}${w > b.regWeeks ? " (PO)" : ""}${w === b.current ? " · now" : ""}`
+      : `Week ${w}${w > b.regWeeks ? " (playoffs)" : ""}${w === b.current ? " · current" : ""}`}</option>`).join("");
   if (wk) $("week-select").value = wk;
   $("week-nav").hidden = false;
   $("tabs").hidden = false;

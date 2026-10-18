@@ -696,3 +696,16 @@ main .fc-credit a, .footer a { color: #fff; }
 /* Header slides when swiping to another league */
 .brand.slide-left { animation: slide-from-right .22s ease-out; }
 .brand.slide-right { animation: slide-from-left .22s ease-out; }
+
+/* Phones: league name, week picker and ESPN button on one row (week arrows hidden; the picker changes weeks). */
+@media (max-width: 640px) {
+  .topbar-inner { flex-wrap: nowrap; gap: 8px; padding-top: 10px; padding-bottom: 6px; }
+  .brand { flex: 1; min-width: 0; }
+  .brand-row { flex-wrap: nowrap; min-width: 0; }
+  .brand h1, .league-select { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+  .brand p { font-size: .75rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .week-nav { flex: none; gap: 6px; }
+  #prev-week, #next-week { display: none; }
+  .week-nav select { padding: 6px 6px; font-size: .82rem; }
+  .espn-open { height: 32px; padding: 0 9px; font-size: .78rem; }
+}
