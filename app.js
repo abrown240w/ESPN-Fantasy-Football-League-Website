@@ -1345,14 +1345,14 @@ function renderLive() {
     if (!left.length && !right.length) return `<p class="muted small lv-none">No ${f.show === "rostered" ? "rostered " : ""}players${f.team !== "ALL" ? " for this team" : ""} in this game.</p>`;
     const rows = Array.from({ length: Math.max(left.length, right.length) }, (_, i) =>
       `<div class="mx-row lv-row">${side(left[i], g, false)}<div class="mx-slot"></div>${side(right[i], g, true)}</div>`);
-    return `<div class="mx-row lv-head"><div>${esc(g.away.name || g.away.abbr)}</div><div class="mx-slot"></div><div class="right">${esc(g.home.name || g.home.abbr)}</div></div>
+    return `<div class="mx-row lv-head"><div>${esc(g.away.name || g.away.abbr)}</div><div class="mx-slot"></div><div class="right">@ ${esc(g.home.name || g.home.abbr)}</div></div>
       <div class="mx-rows">${rows.join("")}</div>`;
   };
   const scoreSide = (s, g, right) => {
     const won = g.state === "post" && s.score > (s === g.home ? g.away.score : g.home.score);
     return `<div class="g-team ${right ? "right" : ""} ${won ? "won" : ""}">
       <img class="g-logo" src="${esc(s.logo)}" alt="" width="36" height="36" loading="lazy">
-      <div class="g-name"><strong>${esc(s.abbr)}</strong>${g.possession === s.proId ? ` <span class="poss" title="Has the ball">🏈</span>` : ""}<span class="muted small">${esc(s.record)}</span></div>
+      <div class="g-name"><strong>${right ? `<span class="g-at">@</span>` : ""}${esc(s.abbr)}</strong>${g.possession === s.proId ? ` <span class="poss" title="Has the ball">🏈</span>` : ""}<span class="muted small">${esc(s.record)}</span></div>
       <div class="g-score">${g.state === "pre" ? "" : s.score ?? ""}</div>
     </div>`;
   };
@@ -1917,30 +1917,6 @@ function wxLine(g) {
   return `<div class="g-wx" data-tip="${wxTip(g)}">${wxIcon(f.code)} <strong>${esc(f.desc)} ${deg(f.tempF)}</strong>
     <span class="${f.precipProb >= 50 ? "wx-wet" : ""}">· ${f.precipProb}% precip</span> · wind ${Math.round(f.windMph)} mph${f.gustMph >= 25 ? ` (gusts ${Math.round(f.gustMph)})` : ""}${roof ? ` · ${roof}` : ""}</div>`;
 }
-// Full detail for the player popup: conditions plus hour-by-hour through the game.
-function wxDetail(proId) {
-  const g = wxGame(proId);
-  if (!g || g.state === "post") return "";
-  const f = g.forecast;
-  const kick = new Date(g.date).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
-  const head = `<h3 class="pm-sub">Game-day weather <span class="muted small">· ${esc(g.awayAbbr)} @ ${esc(g.homeAbbr)} · ${esc(kick)}</span></h3>
-    <p class="small muted">${esc(g.venue)}${g.city ? ` · ${esc(g.city)}` : ""}</p>`;
-  if (g.roof === "dome") return `${head}<div class="wx-card"><div class="wx-big">🏟️</div><div><strong>Indoors</strong><div class="small muted">Fixed roof. Weather won't be a factor.</div></div></div>`;
-  const roof = g.roof === "retractable"
-    ? `<div class="wx-card ${wxIndoors(g) ? "" : "wx-card-open"}"><div class="wx-big">🏟️</div><div><strong>Retractable roof${g.roofCall?.call ? `: ${esc(g.roofCall.call)}` : ""}</strong><div class="small muted">${esc(g.roofCall?.why || "")}. The team decides on game day${wxIndoors(g) ? "; if it's closed, the forecast below won't matter" : ""}.</div></div></div>` : "";
-  if (!f) return `${head}${roof}<p class="muted small">The forecast shows up about two weeks before kickoff.</p>`;
-  const hours = f.hours.map((h) => `<tr><td>${new Date(h.t).toLocaleTimeString(undefined, { hour: "numeric" })}</td><td>${wxIcon(h.code)}</td><td class="num">${deg(h.tempF)}</td><td class="num">${deg(h.feelsF)}</td><td class="num">${h.precipProb}%</td><td class="num">${Math.round(h.windMph)}${h.gustMph >= 20 ? `<span class="muted"> / ${Math.round(h.gustMph)}</span>` : ""}</td></tr>`).join("");
-  return `${head}${roof}
-    <div class="pm-stats wx-stats">
-      <div><span class="muted small">Conditions</span><strong>${wxIcon(f.code)} ${esc(f.desc)}</strong></div>
-      <div><span class="muted small">Kickoff temp</span><strong>${deg(f.tempF)}</strong><span class="muted small">feels like ${deg(f.feelsF)}</span></div>
-      <div><span class="muted small">Precip chance</span><strong class="${f.precipProb >= 50 ? "wx-wet" : ""}">${f.precipProb}%</strong><span class="muted small">${f.precipIn ? `${f.precipIn}" expected` : "during the game"}</span></div>
-      <div><span class="muted small">Wind</span><strong>${Math.round(f.windMph)} mph</strong><span class="muted small">gusts ${Math.round(f.gustMph)}</span></div>
-    </div>
-    <div class="table-wrap"><table class="data wx-hours"><thead><tr><th>Time</th><th></th><th class="num">Temp</th><th class="num">Feels</th><th class="num">Precip</th><th class="num">Wind</th></tr></thead><tbody>${hours}</tbody></table></div>
-    ${wxCredit()}`;
-}
-
 // ---------- Team usage tab ----------
 // Every QB/RB/WR/TE on one NFL team, week by week, in one of three views:
 // share of offensive snaps, share of the team's targets, or share of the team's rushing attempts.
@@ -2607,7 +2583,6 @@ function renderPlayerModal(d, focusSp) {
       ${val ? `<div><span class="muted small">Trade value</span><strong>${fmtVal(val.value)}</strong><span class="muted small">FantasyCalc</span></div>` : ""}
     </div>
     ${focusSp && !bySp[focusSp] ? `<p class="muted small">No stats yet for week ${focusSp}.</p>` : ""}
-    ${p.proId ? (ensureWeather(), wxDetail(p.proId)) : ""}
     <h3 class="pm-sub">${state.base.season} game log <span class="muted small">· tap points to see how they were scored</span></h3>
     <div class="table-wrap"><table class="data gamelog"><thead><tr><th>Wk</th><th>Game</th>${ul ? `<th class="num" title="Share of the team's offensive snaps">Snap</th><th class="num" title="Targets and share of the team's targets">Tgt</th>` : ""}<th class="num">Pts</th></tr></thead><tbody>${rows.join("")}</tbody></table></div>
     ${ul ? nvCredit() : ""}`;
@@ -2622,19 +2597,39 @@ function renderPlayerModal(d, focusSp) {
 }
 
 // ---------- Tooltip ----------
+// Mouse: the tip follows the pointer. Touch: tapping an item shows its tip just below it (or above
+// when there's no room), always kept fully on screen; tapping elsewhere or scrolling closes it.
 function initTooltip() {
-  const tip = $("tooltip");
+  const tip = $("tooltip"), M = 8;
+  let lastTouch = 0, anchor = null;
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(v, hi));
+  const show = (t) => { tip.innerHTML = t.getAttribute("data-tip"); tip.hidden = false; return tip.getBoundingClientRect(); };
+  const hide = () => { tip.hidden = true; anchor = null; };
   document.addEventListener("mousemove", (e) => {
+    if (Date.now() - lastTouch < 1000) return; // phones fire a fake mousemove after each tap
     const t = e.target.closest?.("[data-tip]");
-    if (!t) { tip.hidden = true; return; }
-    tip.innerHTML = t.getAttribute("data-tip");
-    tip.hidden = false;
-    const r = tip.getBoundingClientRect();
+    if (!t) { hide(); return; }
+    const r = show(t);
     let x = e.clientX + 14, y = e.clientY + 14;
-    if (x + r.width > innerWidth - 8) x = e.clientX - r.width - 14;
-    if (y + r.height > innerHeight - 8) y = e.clientY - r.height - 14;
-    tip.style.left = `${x}px`; tip.style.top = `${y}px`;
+    if (x + r.width > innerWidth - M) x = e.clientX - r.width - 14;
+    if (y + r.height > innerHeight - M) y = e.clientY - r.height - 14;
+    tip.style.left = `${clamp(x, M, innerWidth - r.width - M)}px`;
+    tip.style.top = `${clamp(y, M, innerHeight - r.height - M)}px`;
   });
+  document.addEventListener("touchstart", () => { lastTouch = Date.now(); }, { passive: true, capture: true });
+  document.addEventListener("click", (e) => {
+    if (Date.now() - lastTouch > 1000) return;
+    const t = e.target.closest?.("[data-tip]");
+    if (!t || t === anchor) { hide(); return; }
+    anchor = t;
+    const r = show(t), a = t.getBoundingClientRect();
+    const x = clamp(a.left + a.width / 2 - r.width / 2, M, innerWidth - r.width - M);
+    let y = a.bottom + 8;
+    if (y + r.height > innerHeight - M) y = Math.max(M, a.top - r.height - 8);
+    tip.style.left = `${x}px`;
+    tip.style.top = `${y}px`;
+  });
+  addEventListener("scroll", () => { if (anchor) hide(); }, { passive: true, capture: true });
 }
 
 // ---------- App flow ----------
