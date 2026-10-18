@@ -801,8 +801,7 @@ function ownerCell(p) {
     return `<span class="pt-owner">${logoImg(t, 18)}<span class="nm-full">${esc(t.name)}</span><span class="nm-short">${esc(t.abbrev)}</span></span>`
       + (p.slot ? ` <span class="role ${p.starter ? "start" : "bench"}">${p.starter ? esc(p.slot) : p.slotId === IR ? "IR" : "BN"}</span>` : "");
   }
-  const label = p.status === "W" ? `<span class="badge wv" data-tip="${esc(waiverTip(p))}">W</span> Waivers` : `<span class="muted">Free agent</span>`;
-  return p.name ? `${label} ${addBtn(p, "xs")}` : label;
+  return p.status === "W" ? `<span class="badge wv" data-tip="${esc(waiverTip(p))}">W</span> Waivers` : `<span class="muted">Free agent</span>`;
 }
 const DASH = `<span class="muted">–</span>`;
 const ownHtml = (p) => (p.own == null ? DASH
@@ -1033,7 +1032,7 @@ function renderManagers() {
   const w = state.week, el = $("view-managers");
   const sides = w.sides;
   if (w.status === "upcoming") {
-    el.innerHTML = `<div class="section-head"><h2>Week ${w.week} manager report</h2></div><p class="muted">Manager stats appear once games kick off. Check the Matchups tab for projections.</p>`;
+    el.innerHTML = `<div class="section-head"><h2>Week ${w.week} snapshot</h2></div><p class="muted">The weekly snapshot appears once games kick off. Check the Matchups tab for projections.</p>`;
     return;
   }
   const so = w.status === "final" ? "" : " (so far)";
@@ -1661,8 +1660,7 @@ function renderRoster() {
   el.innerHTML = `<div class="section-head"><h2>Rosters</h2><label class="small muted ta-me">Team <select id="roster-team">${opts}</select></label></div>
     <div class="card roster-head">
       ${logoImg(t, 56)}
-      <div class="roster-id"><h3>${esc(t.name)}</h3><div class="muted">${esc(t.owner)}</div><div class="roster-match">${matchupLine}</div>
-        <div class="espn-row">${String(sel) === String(myTeamId()) ? espnBtn(espnTeamUrl(sel), "Set lineup in ESPN") : espnBtn(espnTeamUrl(sel), "Open team in ESPN")}${espnBtn(espnAddUrl(), "Free agents in ESPN")}</div></div>
+      <div class="roster-id"><h3>${esc(t.name)}</h3><div class="muted">${esc(t.owner)}</div><div class="roster-match">${matchupLine}</div></div>
       <div class="roster-stats">
         <div><span class="muted small">Record</span><strong>${recordStr(t)}</strong></div>
         <div><span class="muted small">Standing</span><strong>${ordinal(standing)}</strong></div>
@@ -1688,42 +1686,30 @@ function openUpgrades(p) {
   const ups = upgradesFor(p, fa).slice(0, 20);
   const rows = ups.map((u) => {
     const row = faRow(u, w);
-    return playerRow(row, { sp: w.sp, action: `<div class="upg-act"><div class="upg-diff" title="Projected points more than ${esc(p.name)}">+${f1(u.proj - (p.proj || 0))}</div>${addBtn(row)}</div>` });
+    return playerRow(row, { sp: w.sp, action: `<div class="upg-diff" title="Projected points more than ${esc(p.name)}">+${f1(u.proj - (p.proj || 0))}</div>` });
   }).join("");
   showModal(`<div class="pm-head"><h2 id="pl-modal-title">Upgrades for ${esc(p.name)}</h2>
       <div class="muted">${esc(p.pos)} · projected ${f1(p.proj)} in week ${w.week}</div></div>
     <p class="small muted" style="margin:10px 0">${upgradesFor(p, fa).length} available ${esc(p.pos)}${upgradesFor(p, fa).length > 1 ? "s" : ""} projected at least ${UPGRADE_MIN_GAIN} points higher this week${ups.length < upgradesFor(p, fa).length ? ` (top ${ups.length} shown)` : ""}, best first. The green number is how many more points each is projected to score.</p>
     <div class="pr-list mx">${rows}</div>
-    <p class="small muted" style="margin-top:10px">Free agents and players on waivers (<span class="badge wv">W</span>), using ESPN's week ${w.week} projections. <strong>Add</strong> / <strong>Claim</strong> opens ESPN's free agent list with the player's name copied: paste it into the search, then add them and pick who to drop there.</p>`);
+    <p class="small muted" style="margin-top:10px">Free agents and players on waivers (<span class="badge wv">W</span>), using ESPN's week ${w.week} projections.</p>`);
 }
 
-// ---------- Shortcuts into ESPN ----------
-// Buttons that open the matching ESPN screen (in the ESPN Fantasy app on phones when it's installed),
-// where the move is made and confirmed. Nothing is changed on ESPN from this site. When a button has
-// a player name, it's copied first so it can be pasted straight into ESPN's player search.
+// ---------- Open in ESPN ----------
+// One button in the top bar that opens this league on ESPN (the ESPN Fantasy app on phones when it's
+// installed): your team's page once you've picked "My team" in the Trade Analyzer, otherwise the league home.
 const ESPN_FF = "https://fantasy.espn.com/football";
 const espnLeague = () => String(state.base?.raw?.id || state.leagueId || LEAGUES[0].id);
-const espnTeamUrl = (teamId) => `${ESPN_FF}/team?leagueId=${espnLeague()}&teamId=${teamId}&seasonId=${state.base.season}`;
-const espnAddUrl = () => `${ESPN_FF}/players/add?leagueId=${espnLeague()}`;
 const myTeamId = () => store.get(`ffb.myteam.${state.leagueId || "default"}`);
-const espnBtn = (href, label, copy = "", size = "") =>
-  `<a class="espn-btn ${size}" href="${esc(href)}" target="_blank" rel="noopener"${copy ? ` data-copy="${esc(copy)}"` : ""}>${label}<span class="espn-arrow" aria-hidden="true">↗</span></a>`;
-const addBtn = (p, size = "sm") => espnBtn(espnAddUrl(), p.status === "W" ? "Claim" : "Add", p.name, size);
-
-function toast(msg) {
-  let t = $("toast");
-  if (!t) { t = document.createElement("div"); t.id = "toast"; t.className = "toast"; t.setAttribute("role", "status"); document.body.appendChild(t); }
-  t.textContent = msg;
-  t.classList.add("show");
-  clearTimeout(toast.timer);
-  toast.timer = setTimeout(() => t.classList.remove("show"), 3500);
+function updateEspnLink() {
+  const a = $("espn-open");
+  if (!a || !state.base) return;
+  const my = myTeamId(), season = state.base.season;
+  a.href = my && state.base.teams[my]
+    ? `${ESPN_FF}/team?leagueId=${espnLeague()}&teamId=${my}&seasonId=${season}`
+    : `${ESPN_FF}/league?leagueId=${espnLeague()}&seasonId=${season}`;
+  a.title = my && state.base.teams[my] ? `Open ${team(my).name} in ESPN` : "Open this league in ESPN";
 }
-document.addEventListener("click", (e) => {
-  const a = e.target.closest("a.espn-btn[data-copy]");
-  if (!a || !navigator.clipboard) return;
-  const text = a.dataset.copy;
-  navigator.clipboard.writeText(text).then(() => toast(`Copied "${text}". Paste it into ESPN's search.`)).catch(() => {});
-});
 
 // ---------- Trade values (FantasyCalc) ----------
 // FantasyCalc's terms require a visible credit and link wherever their values appear.
@@ -2181,9 +2167,7 @@ function renderTradeAnalyzer() {
     result = `<div class="trade-result">
       <div class="tr-totals"><div><span class="muted small">${nameA} sends</span><strong>${fmtVal(va)}</strong></div><div class="tr-arrow">⇄</div><div class="right"><span class="muted small">${nameB} sends</span><strong>${fmtVal(vb)}</strong></div></div>
       <div class="tr-verdict">${verdict}</div>
-      <div class="tr-impact">${impact(A, nameA, L.profiles[A], afterA)}${impact(B, nameB, L.profiles[B], afterB)}</div>${consolidation}
-      <div class="espn-row">${espnBtn(espnTeamUrl(B), `Propose to ${nameB} in ESPN`, `${team(A).name} sends ${sendA.map((p) => p.name).join(", ")} · ${team(B).name} sends ${sendB.map((p) => p.name).join(", ")}`)}
-        <span class="small muted">Opens ${nameB}'s team on ESPN. Tap <strong>Propose Trade</strong> there and pick the same players (the trade is copied so you can paste it in a note).</span></div></div>`;
+      <div class="tr-impact">${impact(A, nameA, L.profiles[A], afterA)}${impact(B, nameB, L.profiles[B], afterB)}</div>${consolidation}</div>`;
   }
 
   const teamOpts = (sel, exclude) => teamIds.filter((id) => id !== exclude).map((id) => `<option value="${id}" ${id === String(sel) ? "selected" : ""}>${esc(team(id).name)}</option>`).join("");
@@ -2214,7 +2198,7 @@ function renderTradeAnalyzer() {
     <div class="grid targets">${targetRows}</div>
     ${fcCredit()}${nvCredit()}`;
 
-  $("ta-my").addEventListener("change", (e) => { ta.my = e.target.value; store.set(myKey, ta.my); renderTradeAnalyzer(); });
+  $("ta-my").addEventListener("change", (e) => { ta.my = e.target.value; store.set(myKey, ta.my); updateEspnLink(); renderTradeAnalyzer(); });
   $("ta-a").addEventListener("change", (e) => {
     // Picking the team that's already on the other side swaps the two sides.
     if (e.target.value === String(ta.b)) Object.assign(ta, { b: ta.a, give: ta.get, get: ta.give });
@@ -2512,7 +2496,7 @@ function renderPlayerModal(d, focusSp) {
   body.innerHTML = `<div class="pm-head">
       <div><h2 id="pl-modal-title">${esc(p.name)}${injBadge({ injury: p.injury })}</h2>
         <div class="muted">${pos}${p.proId ? ` · ${esc(PRO[p.proId] || "")}` : ""}${p.bye ? ` · Bye week ${p.bye}` : ""}</div>
-        <div class="pm-owner">${owner}${p.teamId ? espnBtn(espnTeamUrl(p.teamId), "Open team in ESPN", "", "sm") : addBtn({ name: p.name, status: state.fa?.[state.week?.sp]?.players?.find((x) => String(x.id) === String(p.id))?.status }, "sm")}</div></div>
+        <div class="pm-owner">${owner}</div></div>
     </div>
     <div class="pm-stats">
       <div><span class="muted small">Season points</span><strong>${f1(total)}</strong></div>
@@ -2587,6 +2571,7 @@ function keepState(el, draw) {
 
 function render() {
   if (!state.week) return;
+  updateEspnLink();
   showView(state.tab);
   keepState($(`view-${state.tab}`), () => renderTab());
 }

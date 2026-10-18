@@ -626,13 +626,7 @@ td.gs-cell-final .nm, tr.gs-cell-final td .pl-link { color: var(--ink-2); }
   .hide-sm { display: none; }
 }
 
-/* Shortcut buttons that open ESPN (where the move is made) */
-.espn-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 8px; }
-.espn-btn { display: inline-flex; align-items: center; gap: 4px; padding: 6px 12px; border-radius: 999px; border: 1px solid #c8102e; color: #c8102e; background: #fff5f6; font-weight: 700; font-size: .85rem; text-decoration: none; white-space: nowrap; }
-.espn-btn:hover { background: #ffe5e9; }
-.espn-arrow { font-size: .8em; }
-.espn-btn.sm { padding: 3px 9px; font-size: .75rem; }
-.espn-btn.xs { padding: 1px 7px; font-size: .7rem; margin-left: 2px; vertical-align: middle; }
-.upg-act { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; align-self: center; }
-.toast { position: fixed; left: 50%; bottom: calc(18px + env(safe-area-inset-bottom)); transform: translate(-50%, 20px); background: #1f2328; color: #fff; padding: 10px 16px; border-radius: 10px; font-size: .85rem; max-width: calc(100vw - 32px); box-shadow: 0 6px 20px rgba(0,0,0,.25); opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s; z-index: 60; }
-.toast.show { opacity: 1; transform: translate(-50%, 0); }
+/* "ESPN" button in the top bar: opens the league / your team in ESPN (or the ESPN Fantasy app) */
+.espn-open { display: inline-flex; align-items: center; gap: 4px; height: 36px; padding: 0 12px; border-radius: 10px; background: #c8102e; color: #fff; font-weight: 800; font-size: .85rem; letter-spacing: .02em; text-decoration: none; white-space: nowrap; }
+.espn-open:hover { background: #a50d26; }
+.espn-open .espn-arrow { font-size: .8em; opacity: .9; }
