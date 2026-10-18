@@ -567,9 +567,34 @@ function renderMatchups() {
   const w = state.week, el = $("view-matchups");
   if (!w.matchups.length) { el.innerHTML = `<p class="muted">No matchups scheduled for week ${w.week}.</p>`; return; }
   const label = w.status === "final" ? "Final scores" : w.status === "live" ? "Live scores · win chance from ESPN" : "Projected · win chance from ESPN";
-  el.innerHTML = `<div class="section-head"><h2>Week ${w.week} matchups ${statusBadge(w.status)}</h2><span class="muted small">${label}. Tap a matchup for the full breakdown.</span></div>
+  const head = `<div class="section-head"><h2>Week ${w.week} matchups ${statusBadge(w.status)}</h2><span class="muted small">${label}. ${MU_SPLIT.matches ? "Click" : "Tap"} a matchup for the full breakdown.</span></div>`;
+
+  // Desktop: matchups stacked on the left, the selected one's full breakdown beside them
+  // (starts on your own matchup). Phones: each card expands in place.
+  if (MU_SPLIT.matches) {
+    const mine = w.matchups.find((m) => [m.home?.teamId, m.away?.teamId].map(String).includes(String(myTeamId())));
+    if (!w.matchups.some((m) => m.id === state.openMatchup && m.away)) state.openMatchup = (mine?.away ? mine : w.matchups.find((m) => m.away))?.id ?? null;
+    const sel = w.matchups.find((m) => m.id === state.openMatchup);
+    el.innerHTML = `${head}<div class="mu-split">
+      <div class="mu-list">${w.matchups.map(matchupCard).join("")}</div>
+      <div class="mu-pane" id="mu-pane">${sel ? matchupDetail(sel, true) : `<p class="muted">Pick a matchup.</p>`}</div></div>`;
+    el.querySelectorAll(".matchup").forEach((c) => c.addEventListener("click", () => {
+      const m = w.matchups.find((x) => x.id === +c.dataset.id);
+      if (!m?.away || state.openMatchup === m.id) return;
+      state.openMatchup = m.id;
+      el.querySelectorAll(".matchup").forEach((b) => b.classList.toggle("open", b === c));
+      const pane = $("mu-pane");
+      pane.innerHTML = matchupDetail(m, true);
+      pane.scrollTop = 0;
+      pane.classList.remove("swap");
+      void pane.offsetWidth; // restart the fade
+      pane.classList.add("swap");
+    }));
+    return;
+  }
+  el.innerHTML = `${head}
     <div class="grid grid-2 mu-grid" id="mu-grid">${w.matchups.map((m) => `<div class="mu-item">${matchupCard(m)}
-      ${m.away ? `<div class="collapse ${state.openMatchup === m.id ? "open" : ""}" data-mu="${m.id}" ${state.openMatchup === m.id ? "" : "inert"}><div class="collapse-inner">${matchupDetail(m)}</div></div>` : ""}</div>`).join("")}</div>`;
+      ${m.away ? `<div class="collapse ${state.openMatchup === m.id ? "open" : ""}" data-mu="${m.id}" ${state.openMatchup === m.id ? "" : "inert"}><div class="collapse-inner">${matchupDetail(m, false)}</div></div>` : ""}</div>`).join("")}</div>`;
   // Open/close slides (no redraw); only one breakdown open at a time.
   const toggle = (id) => {
     state.openMatchup = state.openMatchup === id ? null : id;
@@ -579,8 +604,11 @@ function renderMatchups() {
     if (card && card.getBoundingClientRect().top < 60) card.scrollIntoView({ behavior: "smooth", block: "start" });
   };
   el.querySelectorAll(".matchup").forEach((c) => c.addEventListener("click", () => toggle(+c.dataset.id)));
-  el.querySelectorAll(".collapse[data-mu] .mx-head").forEach((h) => h.addEventListener("click", () => toggle(+h.closest(".collapse").dataset.mu)));
 }
+// Wide screens get the side-by-side Matchups layout; redraw when crossing the breakpoint.
+const MU_SPLIT = matchMedia("(min-width: 900px)");
+MU_SPLIT.addEventListener?.("change", () => { if (state.tab === "matchups" && state.week) render(); });
+
 // Slide a .collapse panel open or closed; closed panels can't be tabbed into.
 function setOpen(panel, open) {
   panel.classList.toggle("open", open);
@@ -601,12 +629,19 @@ function cardSide(s, color, status, isWinner, right) {
   </div>`;
 }
 
-// Live matchup card: each team's starters whose offense has the ball right now.
+// Live matchup card: under each team, how many starters are playing now and how many have yet to play.
+// (Players on bye or ruled out don't count as "yet to play".)
 function onFieldLine(m) {
-  const list = (s) => s.starters.filter((p) => gameStatusOf(p)?.state === "in" && gameStatusOf(p)?.poss)
-    .map((p) => `<span class="fs ${gameStatusOf(p).redZone ? "fs-rz" : "fs-poss"}">${gameStatusOf(p).redZone ? "RZ" : "🏈"} ${esc(shortName(p.name))}</span>`).join("");
-  const h = list(m.home), a = list(m.away);
-  return h || a ? `<div class="mc-onfield"><div>${h}</div><div class="right">${a}</div></div>` : "";
+  const counts = (s) => {
+    let now = 0, left = 0;
+    for (const p of s.starters) {
+      const g = gameStatusOf(p);
+      if (g?.state === "in") now++;
+      else if (g?.state === "pre" && !WONT_PLAY.test(p.injury || "")) left++;
+    }
+    return `<span><strong>${now}</strong> playing</span><span><strong>${left}</strong> yet to play</span>`;
+  };
+  return `<div class="mc-onfield"><div>${counts(m.home)}</div><div class="right">${counts(m.away)}</div></div>`;
 }
 
 function matchupCard(m) {
@@ -628,7 +663,9 @@ function matchupCard(m) {
   </button>`;
 }
 
-function matchupDetail(m) {
+// withHead = false when the breakdown opens under its matchup card, which already shows the teams,
+// scores and win chance.
+function matchupDetail(m, withHead = true) {
   const { home, away } = m, st = state.week.status;
   if (!away) return "";
   const H = team(home.teamId), A = team(away.teamId);
@@ -668,9 +705,9 @@ function matchupDetail(m) {
     </div>`;
   const wpBar = (v, color, right) => `<div class="mx-wp ${right ? "right" : ""}"><span class="mx-wp-pct">${pct(v)}</span><div class="mx-wp-track"><div style="width:${v * 100}%;background:${color}"></div></div></div>`;
 
-  return `<div class="card detail mx">
-    <div class="mx-head" title="Tap to close" role="button" tabindex="0">${headSide(home, H, false)}${headSide(away, A, true)}</div>
-    <div class="mx-wps">${wpBar(wpH, "var(--home)", false)}<span class="mx-wp-label">${st === "final" ? "Final" : "Win probability"}</span>${wpBar(wpA, "var(--away)", true)}</div>
+  return `<div class="card detail mx ${withHead ? "" : "attached"}">
+    ${withHead ? `<div class="mx-head">${headSide(home, H, false)}${headSide(away, A, true)}</div>
+    <div class="mx-wps">${wpBar(wpH, "var(--home)", false)}<span class="mx-wp-label">${st === "final" ? "Final" : "Win probability"}</span>${wpBar(wpA, "var(--away)", true)}</div>` : ""}
     <div class="mx-rows">${rows.map((r) => row(r, false)).join("")}</div>
     ${bn ? `<div class="mx-bench-head">Bench</div><div class="mx-rows">${benchRows.map((r) => row(r, true)).join("")}</div>` : ""}
     <h3 style="margin-top:16px">Key takeaways</h3>
