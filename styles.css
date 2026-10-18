@@ -808,3 +808,12 @@ table.data.bx-table th, table.data.bx-table td { padding: 6px 6px; font-size: .8
   .pr-has-hs .hs { --s: 32px !important; }
   .pr-has-hs { gap: 6px; }
 }
+
+/* Timeouts left (Live games score header): gold = available, grey = used */
+.g-score { display: flex; flex-direction: column; align-items: center; line-height: 1.05; }
+.g-to { display: flex; gap: 4px; justify-content: center; margin-top: 4px; }
+.g-to i { width: 8px; height: 8px; border-radius: 50%; background: #c9c7c0; }
+.g-to i.on { background: #e8b100; box-shadow: 0 0 0 1px #b88a00 inset; }
+/* Last-play labels on the field graphic */
+.field .lp-pen { fill: #fdd835; }
+.field .lp-to { fill: #ff8a80; }

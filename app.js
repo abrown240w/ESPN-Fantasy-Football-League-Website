@@ -1396,6 +1396,41 @@ function heatmap(season) {
     <div class="legend">Low<span class="ramp">${[0, 1, 2, 3, 4, 5, 6].map((i) => `<i style="background:var(--seq-${i})"></i>`).join("")}</span>High · numbers are each week's score</div>`;
 }
 
+// ---------- Last play: what kind it was ----------
+// ESPN's play type alone isn't enough: a run or catch with an accepted penalty is still typed "Rush" or
+// "Pass Reception" (with a misleading yardage), and timeouts replace the real last play. Classify by
+// type and text, and keep showing the last real play through stoppages.
+const STOPPAGE = /timeout|two-minute|end (of )?(period|half|quarter|game|regulation)|official|injury|coin toss/i;
+const hasFlag = (x) => /PENALTY/.test(x || "") && !/declined/i.test((x || "").split("PENALTY").slice(-1)[0] || "");
+const flagName = (x) => {
+  const pen = /PENALTY on [^,]*?,\s*([^,]+?),\s*(\d+)\s*yards?/i.exec(x || "");
+  return pen ? pen[1].replace(/^(Offensive|Defensive)\s+/i, (m) => m[0] + ". ") : "Penalty";
+};
+function playKind(type, text) {
+  const t = type || "", x = text || "";
+  if (STOPPAGE.test(t)) return "stoppage";
+  // ESPN types lost fumbles "Fumble Recovery (Opponent)"; "(Own)" fumbles play out like a normal snap.
+  if (/interception|fumble recovery \(opp|fumble return|muffed punt recovery \(opp/i.test(t) || /INTERCEPTED/.test(x)) return /fumble|muffed/i.test(t) ? "fumble" : "turnover";
+  // A kick with a flag is still drawn as the kick (the penalty is added to its label).
+  if (/kickoff|punt|field goal|extra point|on-?side/i.test(t)) return "kick";
+  if (t === "Penalty" || hasFlag(x)) return "penalty";
+  if (/safety/i.test(t)) return "safety";
+  if (/sack/i.test(t)) return "sack";
+  if (/incomplet/i.test(t) || /pass incomplete/i.test(x)) return "incomplete";
+  if (/pass|reception/i.test(t)) return "pass";
+  return "rush";
+}
+// The play to draw for a game: the latest one, or the last real one if play is stopped.
+function shownPlay(g) {
+  const mem = (state.lastRealPlay ||= {});
+  const lp = g.field?.lastPlay;
+  if (lp && lp.start != null && playKind(lp.type, g.lastPlay) !== "stoppage") {
+    mem[g.id] = { lp, text: g.lastPlay };
+    return { lp, text: g.lastPlay, earlier: false };
+  }
+  return mem[g.id] ? { ...mem[g.id], earlier: true } : null;
+}
+
 // ---------- On-field graphic for live games ----------
 // ESPN yard lines run 0 (home team's goal line) to 100 (away team's goal line). The away end zone
 // is drawn on the left and the home end zone on the right, matching the scoreboard above it.
@@ -1410,9 +1445,11 @@ function fieldGraphic(g) {
   else if (/^50$/.test(f.possText || "")) spot = 50;
   if (spot == null && f.yardLine != null) spot = f.yardLine;
   if (spot == null) return "";
-  // If the raw yard lines look mirrored relative to the spot, flip them.
-  let lp = f.lastPlay, driveStart = f.driveStart;
-  if (lp?.end != null && Math.abs(100 - lp.end - spot) + 1 < Math.abs(lp.end - spot)) {
+  // If the raw yard lines look mirrored relative to the spot, flip them (only for the newest play;
+  // an earlier one shown during a stoppage won't line up with the current spot).
+  const shown = shownPlay(g);
+  let lp = shown?.lp, driveStart = f.driveStart;
+  if (lp?.end != null && !shown.earlier && Math.abs(100 - lp.end - spot) + 1 < Math.abs(lp.end - spot)) {
     lp = { ...lp, start: lp.start == null ? null : 100 - lp.start, end: 100 - lp.end };
     driveStart = driveStart == null ? null : 100 - driveStart;
   }
@@ -1443,30 +1480,49 @@ function fieldGraphic(g) {
   // First-down line (yellow) and line of scrimmage (blue).
   if (fd != null && fd > 0 && fd < 100) parts.push(`<line x1="${x(fd)}" x2="${x(fd)}" y1="30" y2="150" stroke="#fdd835" stroke-width="5"/>`);
   parts.push(`<line x1="${x(spot)}" x2="${x(spot)}" y1="30" y2="150" stroke="#42a5f5" stroke-width="5"/>`);
-  // Last play. Completed passes and kicks: an arc with an arrowhead. Incomplete passes: a dotted
-  // arc ending in an X. Runs and everything else (sacks, scrambles, penalties): a straight arrow.
+  // Last play, drawn from where the ball actually started to where it ended:
+  //   pass: arc + arrowhead · incomplete: dotted arc ending in an X · run: straight arrow
+  //   sack: straight arrow back, red · kick/punt/FG: high arc · penalty: yellow flag + dashed line
+  //   interception/fumble lost: red line + label. Yardage comes from the spots, not ESPN's stat line.
   if (lp && lp.start != null && lp.end != null) {
-    const kind = `${lp.type} ${g.lastPlay || ""}`;
-    const incomplete = /incomplet/i.test(kind);
-    const aerial = incomplete || /pass|reception|interception|kick|punt|field goal/i.test(lp.type);
+    const text = shown.text || "";
+    const kind = playKind(lp.type, text);
+    const offDir = lp.teamId === home.proId ? 1 : lp.teamId === away.proId ? -1 : dir || 1; // direction the snapping team moves
     let endA = lp.end;
-    if (incomplete) {
-      // ESPN records no target spot for an incompletion, so aim it by the play text: short ~8 yds, deep ~20.
-      const playDir = lp.teamId === home.proId ? 1 : lp.teamId === away.proId ? -1 : dir;
-      endA = lp.start + playDir * (/deep/i.test(g.lastPlay || "") ? 20 : 8);
-    }
-    const xs = x(lp.start), xe = x(endA), Y = 96;
-    if (Math.abs(xe - xs) >= 4) {
-      const mid = (xs + xe) / 2, yds = lp.yards;
-      const lift = aerial ? Math.min(38, 14 + Math.abs(xe - xs) / 8) : 0; // arc height; stays inside the field
+    if (kind === "incomplete") endA = lp.start + offDir * (/deep/i.test(text) ? 20 : 8); // no target spot recorded
+    const xs = x(lp.start), xe = x(endA), Y = 96, mid = (xs + xe) / 2;
+    const gained = Math.round((lp.end - lp.start) * offDir);
+    const ydsTxt = (n) => `${n > 0 ? "+" : ""}${n} yds`;
+    const tag = (txt, y, cls = "lp-yds") => parts.push(`<text x="${Math.min(W - EZ - 30, Math.max(EZ + 30, mid))}" y="${y}" class="${cls}">${esc(txt)}</text>`);
+    const far = Math.abs(xe - xs) >= 4;
+    if (kind === "penalty") {
+      // Yellow flag at the spot of the foul; dashed line to where the ball was placed.
+      const pen = /PENALTY on [^,]*?,\s*([^,]+?),\s*(\d+)\s*yards?/i.exec(text);
+      const what = flagName(text);
+      const noPlay = /no play|nullified/i.test(text);
+      if (far) parts.push(`<path d="M${xs} ${Y} L${xe} ${Y}" stroke="#fdd835" stroke-width="4" stroke-dasharray="10 7" marker-end="url(#arrowy-${esc(g.id)})"/>`);
+      parts.push(`<path d="M${xs} ${Y + 14} L${xs} ${Y - 26}" stroke="#fff" stroke-width="3"/><path d="M${xs} ${Y - 26} L${xs + 22} ${Y - 20} L${xs} ${Y - 12} z" fill="#fdd835" stroke="#c9a400" stroke-width="1.5"/>`);
+      tag(`🚩 ${what}${pen ? ` · ${gained === 0 ? "offsetting" : ydsTxt(gained)}` : ""}${noPlay ? " · no play" : ""}`, Y - 34, "lp-yds lp-pen");
+    } else if (kind === "turnover" || kind === "fumble") {
+      // Turnover: red return path from where the ball changed hands.
+      const label = /INTERCEPT/i.test(text) || /interception/i.test(lp.type) ? "Interception" : "Fumble lost";
+      if (far) parts.push(`<path d="M${xs} ${Y} L${xe} ${Y}" stroke="#ef5350" stroke-width="4" marker-end="url(#arrowr-${esc(g.id)})"/>`);
+      parts.push(`<path d="M${xs - 9} ${Y - 9} L${xs + 9} ${Y + 9} M${xs + 9} ${Y - 9} L${xs - 9} ${Y + 9}" stroke="#ef5350" stroke-width="5" stroke-linecap="round"/>`);
+      tag(`${label}${/touchdown/i.test(lp.type + text) ? " · TD" : ""}`, Y - 16, "lp-yds lp-to");
+    } else if (far) {
+      const aerial = kind === "pass" || kind === "incomplete" || kind === "kick";
+      const lift = kind === "kick" ? Math.min(52, 22 + Math.abs(xe - xs) / 6) : aerial ? Math.min(38, 14 + Math.abs(xe - xs) / 8) : 0;
       const path = aerial ? `M${xs} ${Y} Q${mid} ${Y - lift * 2} ${xe} ${Y}` : `M${xs} ${Y} L${xe} ${Y}`;
-      if (incomplete) {
+      const color = kind === "sack" || kind === "safety" ? "#ef5350" : "#fff";
+      const tagY = aerial ? Math.max(54, Y - lift - 8) : Y - 12;
+      if (kind === "incomplete") {
         parts.push(`<path d="${path}" fill="none" stroke="#fff" stroke-width="4" stroke-dasharray="2 9" stroke-linecap="round"/>`);
         parts.push(`<path d="M${xe - 9} ${Y - 9} L${xe + 9} ${Y + 9} M${xe + 9} ${Y - 9} L${xe - 9} ${Y + 9}" stroke="#fff" stroke-width="5" stroke-linecap="round"/>`);
-        parts.push(`<text x="${mid}" y="${Math.max(54, Y - lift - 8)}" class="lp-yds">Incomplete</text>`);
+        tag("Incomplete", tagY);
       } else {
-        parts.push(`<path d="${path}" fill="none" stroke="#fff" stroke-width="4" marker-end="url(#arrow-${esc(g.id)})"/>`);
-        if (yds != null) parts.push(`<text x="${mid}" y="${aerial ? Math.max(54, Y - lift - 8) : Y - 12}" class="lp-yds">${yds > 0 ? "+" : ""}${yds} yds</text>`);
+        parts.push(`<path d="${path}" fill="none" stroke="${color}" stroke-width="4" ${kind === "kick" ? 'stroke-dasharray="14 6"' : ""} marker-end="url(#${color === "#fff" ? "arrow" : "arrowr"}-${esc(g.id)})"/>`);
+        const kickWord = /punt/i.test(lp.type) ? "Punt" : /field goal/i.test(lp.type) ? (/good/i.test(lp.type) ? "FG good" : "FG no good") : /extra point/i.test(lp.type) ? "XP" : "Kickoff";
+        tag(kind === "kick" ? `${kickWord}${hasFlag(text) ? ` · 🚩 ${flagName(text)}` : ""}` : kind === "sack" ? `Sack · ${ydsTxt(gained)}` : kind === "safety" ? "Safety" : `${ydsTxt(gained)}${/touchdown/i.test(lp.type) ? " · TD" : ""}`, tagY, kind === "sack" || kind === "safety" ? "lp-yds lp-to" : "lp-yds");
       }
     }
   }
@@ -1474,7 +1530,7 @@ function fieldGraphic(g) {
   const label = `${poss ? `${poss.abbr} ball ` : ""}${g.downDistance || ""}`.trim();
   return `<div class="field-wrap">
     <svg class="field ${narrow ? "narrow" : ""}" viewBox="0 0 ${W} 160" role="img" aria-label="${esc(label || "Field position")}">
-      <defs><marker id="arrow-${esc(g.id)}" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#fff"/></marker></defs>
+      <defs>${[["arrow", "#fff"], ["arrowy", "#fdd835"], ["arrowr", "#ef5350"]].map(([id, fill]) => `<marker id="${id}-${esc(g.id)}" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="${fill}"/></marker>`).join("")}</defs>
       ${parts.join("")}
     </svg>
     <div class="field-caption">${poss ? `<strong>${esc(poss.abbr)}</strong> ball ${arrowWord} · ` : ""}${esc(g.downDistance || f.possText || "")}${f.driveDesc ? ` <span class="muted">· Drive: ${esc(f.driveDesc)}</span>` : ""}
@@ -1600,7 +1656,7 @@ function renderLive() {
     return `<div class="g-team ${right ? "right" : ""} ${won ? "won" : ""}">
       <img class="g-logo" src="${esc(s.logo)}" alt="" width="36" height="36" loading="lazy">
       <div class="g-name"><strong>${right ? `<span class="g-at">@</span>` : ""}${esc(s.abbr)}</strong>${g.possession === s.proId ? ` <span class="poss" title="Has the ball">🏈</span>` : ""}<span class="muted small">${esc(s.record)}</span></div>
-      <div class="g-score">${g.state === "pre" ? "" : s.score ?? ""}</div>
+      <div class="g-score">${g.state === "pre" ? "" : s.score ?? ""}${g.state === "in" && s.timeouts != null ? `<div class="g-to" title="${s.timeouts} timeout${s.timeouts === 1 ? "" : "s"} left">${[0, 1, 2].map((i) => `<i class="${i < s.timeouts ? "on" : ""}"></i>`).join("")}</div>` : ""}</div>
     </div>`;
   };
   const gameCard = (g) => {
@@ -1619,7 +1675,11 @@ function renderLive() {
       ${g.state === "pre" ? "" : `<button type="button" class="bx-toggle ${state.boxUi[g.id]?.open ? "open" : ""}" data-bx="${esc(g.id)}" data-toggle="1" aria-expanded="${!!state.boxUi[g.id]?.open}">📊 Player stats <span class="caret">▾</span></button>`}
       ${state.boxUi[g.id]?.open ? boxPanel(g, rosteredBy) : ""}
       ${g.state === "post" ? "" : wxLine(wxGame(g.home.proId, L.sp))}
-      ${graphic}${sit}${g.state === "in" && g.lastPlay ? `<div class="g-last small muted">Last play: ${esc(g.lastPlay)}</div>` : ""}
+      ${graphic}${sit}${(() => {
+        if (g.state !== "in") return "";
+        const sp = shownPlay(g), stop = g.field?.lastPlay && playKind(g.field.lastPlay.type, g.lastPlay) === "stoppage";
+        return `${stop ? `<div class="g-last small"><strong>${esc(g.lastPlay)}</strong></div>` : ""}${sp?.text ? `<div class="g-last small muted">${sp.earlier ? "Last snap" : "Last play"}: ${esc(sp.text)}</div>` : !stop && g.lastPlay ? `<div class="g-last small muted">Last play: ${esc(g.lastPlay)}</div>` : ""}`;
+      })()}
       <div class="lv-players mx">${playerRows(g)}</div>
     </div>`;
   };

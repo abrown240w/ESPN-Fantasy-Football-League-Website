@@ -87,8 +87,8 @@ export default async (req) => {
         redZone: !!sit.isRedZone,
         lastPlay: sit.lastPlay?.text || "",
         field,
-        home: side(home),
-        away: side(away),
+        home: { ...side(home), timeouts: sit.homeTimeouts ?? null },
+        away: { ...side(away), timeouts: sit.awayTimeouts ?? null },
       };
     });
     const proIds = games.flatMap((g) => [g.home.proId, g.away.proId]).filter(Boolean);

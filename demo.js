@@ -305,7 +305,7 @@
       progressOf[h] = progressOf[a] = progress;
       const q = Math.min(4, Math.floor(progress * 4) + 1), clockSec = Math.round((1 - ((progress * 4) % 1)) * 900);
       const colors = ["#0b2265", "#a71930", "#004c54", "#fb4f14", "#203731", "#002244", "#00338d", "#e31837", "#4f2683", "#125740"];
-      const side = (id) => ({ proId: id, abbr: abbr(id), name: abbr(id), logo: logo(id), color: colors[id % colors.length], score: st === "pre" ? 0 : Math.round(progress * (14 + (id * 7) % 20)), record: `${(id % 4) + 1}-${(id * 3) % 4}` });
+      const side = (id) => ({ timeouts: st === "in" ? 3 - ((id + i) % 3) : null, proId: id, abbr: abbr(id), name: abbr(id), logo: logo(id), color: colors[id % colors.length], score: st === "pre" ? 0 : Math.round(progress * (14 + (id * 7) % 20)), record: `${(id % 4) + 1}-${(id * 3) % 4}` });
       // Field position (0 = home goal line, 100 = away goal line), moving as the demo game advances.
       let field = null, downDistance = "";
       const possession = st === "in" ? (i % 2 ? h : a) : null;
@@ -322,6 +322,8 @@
           // Game 5 shows an incomplete pass (no yardage, same spot); the rest alternate passes and runs.
           lastPlay: i === 5
             ? { type: "Pass Incompletion", start: spot, end: spot, yards: 0, teamId: possession, scoring: false }
+            : i === 6 ? { type: "Rush", start: spot + dir * 10, end: spot, yards: -18, teamId: possession, scoring: false }
+            : i === 7 ? { type: "Pass Interception Return", start: spot + dir * 25, end: spot, yards: 0, teamId: possession === h ? a : h, scoring: false }
             : { type: i % 2 ? "Pass Reception" : "Rush", start: spot - dir * gain, end: spot, yards: gain, teamId: possession, scoring: false },
           driveStart: Math.max(0, Math.min(100, spot - dir * (gain + 18))), driveDesc: `${3 + i} plays, ${gain + 18} yards, ${2 + (i % 3)}:${String(10 + i * 7).slice(-2)}`,
         };
@@ -335,7 +337,7 @@
         possession,
         downDistance,
         redZone: st === "in" && i === 4,
-        lastPlay: st !== "in" ? "" : i === 5 ? "J.Doe pass incomplete deep left to M.Smith" : i % 2 ? `J.Doe pass short right to M.Smith for ${[7, 12, -3, 24][i % 4]} yards` : `R.Roe up the middle for ${[7, 12, -3, 24][i % 4]} yards`,
+        lastPlay: st !== "in" ? "" : i === 5 ? "J.Doe pass incomplete deep left to M.Smith" : i === 6 ? "R.Roe left tackle for 4 yards. PENALTY on X-B.Lee, Offensive Holding, 10 yards, enforced at the spot of the foul." : i === 7 ? "J.Doe pass short left intended for M.Smith INTERCEPTED by K.Fox. K.Fox for 25 yards." : i % 2 ? `J.Doe pass short right to M.Smith for ${[7, 12, -3, 24][i % 4]} yards` : `R.Roe up the middle for ${[7, 12, -3, 24][i % 4]} yards`,
         home: side(h), away: side(a),
       };
     });
