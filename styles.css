@@ -307,9 +307,10 @@ table.data tr:last-child td { border-bottom: 0; }
 .target { display: grid; gap: 4px; padding: 12px 16px; }
 .link-btn { justify-self: start; background: none; border: 0; padding: 4px 0; color: var(--accent-ink); font-weight: 600; cursor: pointer; }
 .link-btn:hover { text-decoration: underline; }
-.mock { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
-.mock .card { display: grid; gap: 8px; align-content: start; min-width: 0; }
-.mock select { width: 100%; min-width: 0; }
+.mock { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; margin-bottom: 12px; }
+.mock .card { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; align-content: start; min-width: 0; overflow: hidden; }
+/* Dropdowns never grow past their box (iPhone Safari sizes them to the longest option otherwise). */
+.mock select { width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mock-sends { font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin-bottom: -2px; }
 .mock-chip { display: flex; align-items: center; gap: 6px; padding: 6px 4px 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); min-width: 0; }
 .mock-chip-info { flex: 1; min-width: 0; }
@@ -320,8 +321,8 @@ table.data tr:last-child td { border-bottom: 0; }
 .tr-totals .right { text-align: right; }
 .tr-impact { grid-template-columns: 1fr 1fr; gap: 12px; }
 .tr-team { display: grid; gap: 4px; align-content: start; }
-.mock-head { font-weight: 700; display: flex; align-items: center; gap: 8px; }
-.mock-head select { flex: 1; width: auto; font-weight: 700; }
+.mock-head { font-weight: 700; display: flex; align-items: center; gap: 8px; min-width: 0; }
+.mock-head select { flex: 1 1 0; width: 0; min-width: 0; font-weight: 700; }
 .trade-result { display: grid; gap: 12px; }
 .tr-totals { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 12px; }
 .tr-totals > div { display: flex; flex-direction: column; }
@@ -693,9 +694,6 @@ main .target, main .offline-note, main .mock-chip, main .wx, main .badge {
 main .seg { background: var(--surface); border-radius: 10px; }
 main .card, main .pr-list, main .table-wrap { box-shadow: 0 3px 12px rgba(0,0,0,.22); border-color: transparent; }
 main .fc-credit a, .footer a { color: #fff; }
-/* Header slides when swiping to another league */
-.brand.slide-left { animation: slide-from-right .22s ease-out; }
-.brand.slide-right { animation: slide-from-left .22s ease-out; }
 
 /* Phones: league name, week picker and ESPN button on one row (week arrows hidden; the picker changes weeks). */
 @media (max-width: 640px) {
