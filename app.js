@@ -485,8 +485,10 @@ function ensureGameStatus() {
         for (const g of d.games) {
           for (const [me, them] of [[g.home, g.away], [g.away, g.home]]) {
             const poss = g.state === "in" && g.possession === me.proId;
+            const oppPoss = g.state === "in" && !!g.possession && g.possession === them.proId;
             byPro[me.proId] = {
               state: g.state, detail: g.detail, date: g.date, poss, redZone: poss && !!g.redZone,
+              oppPoss, oppRedZone: oppPoss && !!g.redZone,
               home: me === g.home, oppAbbr: them.abbr, score: me.score, oppScore: them.score,
             };
           }
@@ -513,7 +515,7 @@ function gameLineHtml(p) {
     const opp = `${g.home ? "" : "@"}${esc(g.oppAbbr)}`;
     if (g.state === "pre") return `${opp} ${new Date(g.date).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" })}`;
     const score = g.score != null && g.oppScore != null ? ` ${g.score}-${g.oppScore}` : "";
-    return `${opp}${score} ${g.state === "in" ? `<span class="mx-clock">${esc(g.detail)}</span>` : "Final"}`;
+    return `${opp}${score} ${g.state === "in" ? `<span class="mx-clock">${esc((g.detail || "").replace(" - ", " "))}</span>` : "Final"}`;
   }
   if (p.opp?.bye) return "BYE";
   return p.opp?.team ? `${p.opp.home ? "" : "@"}${esc(p.opp.team)}` : "";
@@ -522,7 +524,11 @@ function gameLineHtml(p) {
 function gsState(p) {
   const g = gameStatusOf(p);
   if (!g) return "";
-  if (g.state === "in") return g.redZone ? "is-live is-rz" : g.poss ? "is-live is-poss" : "is-live";
+  if (g.state === "in") {
+    // A D/ST is "on the field" when the other team has the ball (red: backed up in its own red zone).
+    const def = p.posId === 16, on = def ? g.oppPoss : g.poss, rz = def ? g.oppRedZone : g.redZone;
+    return on ? (rz ? "is-live is-rz" : "is-live is-poss") : "is-live";
+  }
   return g.state === "post" ? "is-final" : "";
 }
 
@@ -710,40 +716,7 @@ function matchupDetail(m, withHead = true) {
     <div class="mx-wps">${wpBar(wpH, "var(--home)", false)}<span class="mx-wp-label">${st === "final" ? "Final" : "Win probability"}</span>${wpBar(wpA, "var(--away)", true)}</div>` : ""}
     <div class="mx-rows">${rows.map((r) => row(r, false)).join("")}</div>
     ${bn ? `<div class="mx-bench-head">Bench</div><div class="mx-rows">${benchRows.map((r) => row(r, true)).join("")}</div>` : ""}
-    <h3 style="margin-top:16px">Key takeaways</h3>
-    <ul class="insights">${matchupInsights(m).map((s) => `<li>${s}</li>`).join("")}</ul>
   </div>`;
-}
-
-function matchupInsights(m) {
-  const st = state.week.status, out = [];
-  const sides = [m.home, m.away];
-  const nm = (s) => `<strong>${esc(team(s.teamId).name)}</strong>`;
-  if (st === "upcoming") {
-    const fav = m.wp >= 0.5 ? m.home : m.away;
-    out.push(`${nm(fav)} is favored, projected to win by ${f1(Math.abs(m.home.proj - m.away.proj))} (${pct(Math.max(m.wp, 1 - m.wp))} win chance).`);
-    for (const s of sides) {
-      const top = [...s.starters].sort((a, b) => b.proj - a.proj)[0];
-      if (top) out.push(`${nm(s)}'s top projected starter: ${esc(top.name)} (${f1(top.proj)}).`);
-      const hurt = s.starters.filter((p) => p.injury);
-      if (hurt.length) out.push(`⚠️ ${nm(s)} is starting ${hurt.length} injury-listed player${hurt.length > 1 ? "s" : ""}: ${hurt.map((p) => `${esc(p.name)} (${esc(injuryInfo(p.injury)[1].toLowerCase())})`).join(", ")}.`);
-    }
-    return out;
-  }
-  for (const s of sides) {
-    if (s.mvp) out.push(`${nm(s)} MVP: ${esc(s.mvp.name)} with ${f1(s.mvp.actual)} pts (${signed(s.mvp.diff)} vs projection).`);
-    if (s.bust && s.bust.diff < -3) out.push(`${nm(s)} biggest letdown: ${esc(s.bust.name)}, ${f1(s.bust.actual)} pts (${signed(s.bust.diff)} vs projection).`);
-    if (s.benchLeft > 0.5) out.push(`${nm(s)} left ${f1(s.benchLeft)} pts on the bench${s.bestBench ? ` (best bench player: ${esc(s.bestBench.name)}, ${f1(s.bestBench.actual)})` : ""}.`);
-  }
-  if (st === "final") {
-    const [w, l] = m.home.score >= m.away.score ? [m.home, m.away] : [m.away, m.home];
-    if (l.optimal > w.score) out.push(`💡 ${nm(l)} would have won with their best possible lineup (${f1(l.optimal)} pts).`);
-    const startedHurt = sides.flatMap((s) => s.starters.filter((p) => p.injury === "OUT"));
-    if (startedHurt.length) out.push(`⚠️ Started a player listed OUT: ${startedHurt.map((p) => esc(p.name)).join(", ")}.`);
-  } else {
-    out.push(`Players finished: ${m.home.playedCount}/${m.home.starters.length} vs ${m.away.playedCount}/${m.away.starters.length}. Live projection ${f1(m.home.liveProj)} – ${f1(m.away.liveProj)}.`);
-  }
-  return out;
 }
 
 // ---------- Players ----------
@@ -913,6 +886,7 @@ function rosterNews(side) {
 // Compares the lineup with the best one by ESPN projection and flags starters who won't play.
 // Players whose game has started or finished are locked in place, like on ESPN.
 const WONT_PLAY = /^(OUT|INJURY_RESERVE|SUSPENSION)$/;
+const LINEUP_OK = "ok";
 function lineupCheck(side, w) {
   if (!side || w.status === "final") return "";
   const locked = (p) => { const g = gameStatusOf(p); return !!g && (g.state === "in" || g.state === "post"); };
@@ -945,7 +919,7 @@ function lineupCheck(side, w) {
   for (const p of side.starters) {
     if (!locked(p) && !out(p) && !outs.includes(p) && /QUESTIONABLE|DOUBTFUL/.test(p.injury || "")) items.push(`<div class="lc-item lc-note"><span class="lc-ico">⏳</span><span>${nm(p)} is ${injuryInfo(p.injury)[1].toLowerCase()}. Check the status before kickoff.</span></div>`);
   }
-  if (!items.length) return `<div class="card lc lc-ok"><span class="lc-ico">✓</span> <strong>Lineup is optimal</strong> <span class="muted small">by ESPN's week ${w.week} projections${side.starters.some(locked) ? " (players already in games are locked)" : ""}</span></div>`;
+  if (!items.length) return LINEUP_OK; // shown as a green check next to "Starters"
   return `<div class="card lc"><div class="lc-head"><strong>Lineup check</strong>${gain >= 0.5 ? ` <span class="muted small">Best lineup projects <strong class="pos">+${f1(gain)}</strong> pts</span>` : ""}</div>${items.join("")}</div>`;
 }
 
@@ -1041,22 +1015,23 @@ function playerRow(p, { label, sp, action = "", owner = true } = {}) {
     who = p.status === "W" ? `<span class="badge wv" data-tip="${esc(waiverTip(p))}">W</span> Waivers` : "Free agent";
   }
   const v = state.values?.byId?.get(p.id);
+  // Most useful first; the two rank items come last and are hidden on phones (they're on the Players tab).
   const details = [
     who && `<span class="pr-owner">${who}</span>`,
     p.own != null && `${f1(p.own)}% rost${Math.abs(p.ownChg || 0) >= 0.5 ? ` <span class="trend ${p.ownChg > 0 ? "pos" : "neg"}">${p.ownChg > 0 ? "▲" : "▼"}${f1(Math.abs(p.ownChg))}</span>` : ""}`,
     p.seasonPts != null && `${f1(p.seasonPts)} season pts`,
-    p.pprRank && `PPR ${posRankHtml(p, p.pprRank)}`,
-    p.posRank && `Rank ${posRankHtml(p, p.posRank)}`,
-    v && `Value ${valueCell(p.id)}`,
+    v && `Val ${valueCell(p.id)}`,
     usageBrief(p.id),
+    p.pprRank && `<span class="pd-rank">PPR ${posRankHtml(p, p.pprRank)}</span>`,
+    p.posRank && `<span class="pd-rank">Rk ${posRankHtml(p, p.posRank)}</span>`,
   ].filter(Boolean);
   return `<div class="pr-row ${gsState(p)}">
     <div class="pr-label">${esc(label ?? p.pos)}</div>
     <div class="pr-info pr-has-hs">${headshot(p, 38)}<div class="pr-text">
       <div class="mx-name">${plinkNm(p)}${injBadge(p)}</div>
-      <div class="mx-game">${gameLineHtml(p)}${p.opp?.rank ? ` ${oprkChip(p)}` : ""}${wxChip(p.proId, gameStatusOf(p)?.state)}</div>
-      ${p.short ? `<div class="mx-stats" title="${esc(p.line)}">${esc(p.short)}</div>` : ""}
-      ${details.length ? `<div class="pr-details">${details.join(`<span class="dot">·</span>`)}</div>` : ""}
+      <div class="mx-game">${gameLineHtml(p)}${p.opp?.rank ? `<span class="pr-oprk"> ${oprkChip(p)}</span>` : ""}${wxChip(p.proId, gameStatusOf(p)?.state)}</div>
+      <div class="mx-stats" ${p.short ? `title="${esc(p.line)}"` : ""}>${p.short ? esc(p.short) : "&nbsp;"}</div>
+      <div class="pr-details">${details.length ? details.map((d) => `<span class="pd">${d}</span>`).join("") : "&nbsp;"}</div>
     </div></div>
     <div class="mx-pts"><div class="mx-score">${pts}</div><div class="mx-proj">${f1(p.proj)}</div></div>
     ${action}
@@ -1677,7 +1652,8 @@ function renderLive() {
     if (!p) return `<div class="mx-side ${right ? "right" : ""} empty"></div>`;
     const bump = state.liveBumps[p.id];
     const pts = g.state === "pre" ? "–" : ptsLink(p.id, L.sp, f2(p.pts ?? 0));
-    const onField = g.state === "in" && g.possession === p.proId;
+    // Offense: their team has the ball. D/ST: the other team has the ball.
+    const onField = g.state === "in" && !!g.possession && (p.posId === 16 ? g.possession !== p.proId : g.possession === p.proId);
     const cls = g.state === "in" ? `is-live ${onField ? (g.redZone ? "is-rz" : "is-poss") : ""}` : g.state === "post" ? "is-final" : "";
     const line = compactLine(p.posId, p.stats);
     return `<div class="mx-side ${right ? "right" : ""} ${cls} ${bump ? "bump" : ""}">
@@ -1720,23 +1696,24 @@ function renderLive() {
     const sit = g.state === "in" && (g.downDistance || g.redZone)
       ? `<div class="g-sit">${graphic ? "" : g.downDistance ? esc(g.downDistance) : ""}${g.redZone ? ` <span class="badge out">RED ZONE</span>` : ""}</div>` : "";
     const open = !!state.liveOpen?.[g.id];
+    const lastPlay = `${(() => {
+        if (g.state !== "in") return "";
+        const sp = shownPlay(g), stop = g.field?.lastPlay && playKind(g.field.lastPlay.type, g.lastPlay) === "stoppage";
+        return `${stop ? `<div class="g-last small"><strong>${esc(g.lastPlay)}</strong></div>` : ""}${sp?.text ? `<div class="g-last small muted">${sp.earlier ? "Last snap" : "Last play"}: ${esc(sp.text)}</div>` : !stop && g.lastPlay ? `<div class="g-last small muted">Last play: ${esc(g.lastPlay)}</div>` : ""}`;
+      })()}`;
     return `<div class="card game state-${g.state} ${open ? "open" : ""}" data-game="${esc(g.id)}">
-      <div class="g-head" data-gtoggle role="button" tabindex="0" aria-expanded="${open}">
+      <div class="g-top" data-gtoggle role="button" tabindex="0" aria-expanded="${open}" title="${open ? "Tap to close" : "Tap for players, stats & weather"}">
+      <div class="g-head">
         ${scoreSide(g.away, g, false)}
         <div class="g-status">${status}${g.broadcast ? `<div class="muted small">${esc(g.broadcast)}</div>` : ""}</div>
         ${scoreSide(g.home, g, true)}
       </div>
-      ${graphic}${sit}
-      <button type="button" class="g-expand" data-gtoggle aria-expanded="${open}"><span>${open ? "Hide" : "Players, stats & weather"}</span> <span class="caret">▾</span></button>
+      ${graphic}${sit}${lastPlay}
+      </div>
       <div class="collapse ${open ? "open" : ""}" ${open ? "" : "inert"}><div class="collapse-inner">
       ${g.state === "pre" ? "" : `<button type="button" class="bx-toggle ${state.boxUi[g.id]?.open ? "open" : ""}" data-bx="${esc(g.id)}" data-toggle="1" aria-expanded="${!!state.boxUi[g.id]?.open}">📊 Player stats <span class="caret">▾</span></button>`}
       ${state.boxUi[g.id]?.open ? boxPanel(g, rosteredBy) : ""}
       ${g.state === "post" ? "" : wxLine(wxGame(g.home.proId, L.sp))}
-      ${(() => {
-        if (g.state !== "in") return "";
-        const sp = shownPlay(g), stop = g.field?.lastPlay && playKind(g.field.lastPlay.type, g.lastPlay) === "stoppage";
-        return `${stop ? `<div class="g-last small"><strong>${esc(g.lastPlay)}</strong></div>` : ""}${sp?.text ? `<div class="g-last small muted">${sp.earlier ? "Last snap" : "Last play"}: ${esc(sp.text)}</div>` : !stop && g.lastPlay ? `<div class="g-last small muted">Last play: ${esc(g.lastPlay)}</div>` : ""}`;
-      })()}
       <div class="lv-players mx">${playerRows(g)}</div>
       </div></div>
     </div>`;
@@ -1765,8 +1742,7 @@ function renderLive() {
       state.liveOpen[id] = open;
       card.classList.toggle("open", open);
       setOpen(card.querySelector(":scope > .collapse"), open);
-      card.querySelectorAll("[data-gtoggle]").forEach((x) => x.setAttribute("aria-expanded", open));
-      card.querySelector(".g-expand > span").textContent = open ? "Hide" : "Players, stats & weather";
+      card.querySelectorAll("[data-gtoggle]").forEach((x) => { x.setAttribute("aria-expanded", open); x.title = open ? "Tap to close" : "Tap for players, stats & weather"; });
     };
     b.addEventListener("click", go);
     b.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); } });
@@ -2147,7 +2123,9 @@ function renderRoster() {
   let body = `<p class="muted">${esc(t.name)} has no lineup for week ${w.week}.</p>`;
   if (side) {
     const bench = side.bench.filter((p) => p.slotId !== IR), ir = side.bench.filter((p) => p.slotId === IR);
-    body = lineupCheck(side, w) + list("Starters", side.starters) + list("Bench", bench) + list("Injured reserve", ir) + rosterNews(side) + playoffSchedule(side);
+    const lc = lineupCheck(side, w);
+    const starters = `Starters${lc === LINEUP_OK ? ` <span class="lc-tick" title="Lineup is optimal by ESPN's week ${w.week} projections" aria-label="Lineup is optimal">✓</span>` : ""}`;
+    body = (lc === LINEUP_OK ? "" : lc) + list(starters, side.starters) + list("Bench", bench) + list("Injured reserve", ir) + rosterNews(side) + playoffSchedule(side);
   }
   const rosterValue = side && state.values?.byId?.size ? sum(side.players, (p) => valueOf(p.id) || 0) : null;
   const starterValue = side && state.values?.byId?.size ? sum(side.starters, (p) => valueOf(p.id) || 0) : null;
@@ -2338,7 +2316,7 @@ function tgtCell(p) {
 function usageBrief(id) {
   const u = usageOf(id);
   if (!u) return "";
-  return `<span data-tip="${usageTip(u)}">Snaps ${pctTxt(u.last.pct)}${usageTrend(u.last.pct, u.prior?.pct)}${u.pos !== "QB" && u.last.share != null ? ` · Tgt ${pctTxt(u.last.share)}` : ""} <span class="muted">(wk ${u.last.wk})</span></span>`;
+  return `<span data-tip="${usageTip(u)}">Snaps ${pctTxt(u.last.pct)}${usageTrend(u.last.pct, u.prior?.pct)}${u.pos !== "QB" && u.last.share != null ? ` · Tgt ${pctTxt(u.last.share)}` : ""}</span>`;
 }
 
 // ---------- Game-day weather (Open-Meteo) ----------

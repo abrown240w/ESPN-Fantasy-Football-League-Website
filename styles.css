@@ -840,10 +840,8 @@ table.data.bx-table th, table.data.bx-table td { padding: 6px 6px; font-size: .8
 .mc-onfield strong { color: var(--ink); }
 
 /* Live games: tap the header or this bar to show players, box score and weather */
-.card.game .g-head[data-gtoggle] { cursor: pointer; }
-.g-expand { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; margin-top: 8px; padding: 6px 10px; border: 0; border-top: 1px solid var(--grid); background: none; color: var(--muted); font: inherit; font-size: .8rem; font-weight: 700; cursor: pointer; }
-.g-expand .caret, .bx-toggle .caret { transition: transform .2s; }
-.card.game.open > .g-expand .caret { transform: rotate(180deg); }
+.card.game .g-top { cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.bx-toggle .caret { transition: transform .2s; }
 .card.game .collapse-inner > :first-child { margin-top: 6px; }
 /* An open matchup card and its breakdown read as one card that has grown downward */
 .mu-item .card.matchup { position: relative; z-index: 1; transition: border-radius .3s; }
@@ -860,3 +858,62 @@ table.data.bx-table th, table.data.bx-table td { padding: 6px 6px; font-size: .8
 .mu-pane.swap { animation: mu-fade .25s ease-out; }
 @keyframes mu-fade { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .mu-pane.swap { animation: none; } }
+
+/* Matchup breakdown rows, ESPN-style: every half the same shape. Name / game line / stat line each
+   on one line (cut off with … if needed), points + projection in a fixed column on the inside edge. */
+.card.detail .mx-side { align-items: center; min-height: 60px; padding: 7px 10px; }
+.card.detail .mx-name, .card.detail .mx-game, .card.detail .mx-stats { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.card.detail .mx-name { font-size: .9rem; line-height: 1.25; }
+.card.detail .mx-game, .card.detail .mx-stats { font-size: .74rem; line-height: 1.35; }
+.card.detail .mx-clock { font-weight: 600; }
+.card.detail .mx-pts { width: 46px; flex: none; }
+.card.detail .mx-score { font-size: 1.02rem; line-height: 1.2; }
+.card.detail .mx-proj { font-size: .72rem; }
+@media (max-width: 640px) {
+  .mu-item .card.detail.attached { padding-left: 0; padding-right: 0; padding-bottom: 6px; }
+  .card.detail .mx-side { padding: 6px 7px; gap: 6px; min-height: 56px; }
+  .card.detail .mx-name { font-size: .82rem; }
+  .card.detail .mx-game, .card.detail .mx-stats { font-size: .68rem; }
+  .card.detail .mx-pts { width: 38px; }
+  .card.detail .mx-score { font-size: .92rem; }
+  .card.detail .mx-proj { font-size: .66rem; }
+  .card.detail .mx-row { grid-template-columns: minmax(0, 1fr) 30px minmax(0, 1fr); }
+}
+
+/* Same uniform rows on Live games and Roster (and the upgrade list): each line on one line. */
+.lv-players .mx-side { align-items: center; min-height: 60px; padding: 7px 10px; }
+.lv-players .mx-name, .lv-players .mx-game, .lv-players .mx-stats,
+.pr-row .mx-name, .pr-row .mx-game, .pr-row .mx-stats, .pr-row .pr-details { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lv-players .mx-game.lv-owner { display: block; }
+.lv-players .lv-owner .logo { vertical-align: middle; }
+.lv-players .mx-name, .pr-row .mx-name { font-size: .9rem; line-height: 1.25; }
+.lv-players .mx-game, .lv-players .mx-stats, .pr-row .mx-game, .pr-row .mx-stats { font-size: .74rem; line-height: 1.35; }
+.pr-row .pr-details { display: block; font-size: .7rem; margin-top: 2px; }
+.lv-players .mx-clock, .pr-row .mx-clock { font-weight: 600; }
+.lv-players .mx-pts { width: 46px; flex: none; }
+.lv-players .mx-score, .pr-row .mx-score { font-size: 1.02rem; line-height: 1.2; }
+.lv-players .mx-proj, .pr-row .mx-proj { font-size: .72rem; }
+.pr-row { align-items: center; padding-top: 7px; padding-bottom: 7px; min-height: 64px; }
+.pr-row .pr-has-hs { align-items: center; }
+.pr-row .pr-label { padding-top: 0; }
+@media (max-width: 640px) {
+  .lv-players .mx-side { padding: 6px 7px; gap: 6px; min-height: 56px; }
+  .lv-players .mx-name, .pr-row .mx-name { font-size: .82rem; }
+  .lv-players .mx-game, .lv-players .mx-stats, .pr-row .mx-game, .pr-row .mx-stats { font-size: .68rem; }
+  .pr-row .pr-details { font-size: .64rem; }
+  .lv-players .mx-pts { width: 38px; }
+  .lv-players .mx-score, .pr-row .mx-score { font-size: .92rem; }
+  .lv-players .mx-proj, .pr-row .mx-proj { font-size: .66rem; }
+  .lv-row { grid-template-columns: minmax(0, 1fr) 4px minmax(0, 1fr); }
+  .pr-row { min-height: 58px; }
+}
+.pr-details .pd + .pd::before { content: "·"; margin: 0 5px; color: var(--axis); }
+@media (max-width: 640px) {
+  .pr-row .pr-oprk, .pr-row .pd:has(> .pd-rank), .pr-row .pr-details .trend { display: none; }
+  /* Fixed line heights so every roster row is exactly the same height. */
+  .pr-row .mx-name { height: 19px; line-height: 19px; }
+  .pr-row .mx-game { height: 17px; line-height: 17px; }
+  .pr-row .mx-stats, .pr-row .pr-details { height: 15px; line-height: 15px; margin-top: 0; }
+  .pr-row .mx-game .wx, .pr-row .mx-game .badge { line-height: 14px; }
+}
+.lc-tick { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; margin-left: 4px; border-radius: 50%; background: #16a34a; color: #fff; font-size: .75rem; font-weight: 900; vertical-align: 2px; }
