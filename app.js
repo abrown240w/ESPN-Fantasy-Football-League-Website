@@ -35,9 +35,9 @@ const state = {
   weekCache: {},
   openMatchup: null,
   players: {
-    view: "fa", q: "", pos: "ALL", team: "ALL", role: "starters", rSort: "pts",
-    faQ: "", faPos: "ALL", faStatus: "all", faSort: "own",
-    allQ: "", allPos: "ALL", allSort: "proj",
+    view: "fa", q: "", pos: "ALL", team: "ALL", role: "starters", rSort: { key: "pts", dir: -1 },
+    faQ: "", faPos: "ALL", faStatus: "all", faSort: { key: "own", dir: -1 },
+    allQ: "", allPos: "ALL", allSort: { key: "proj", dir: -1 }, utTeam: "", utMode: "snap",
   },
   managers: { sort: { key: "score", dir: -1 } },
   standings: { sort: { key: "rank", dir: 1 } },
@@ -386,7 +386,8 @@ function buildSeason() {
 }
 
 // ---------- Generic sortable table ----------
-function sortableTable(cols, rows, sortState, onSort) {
+// opts.rowClass(row) adds classes to each <tr>; opts.tableClass adds classes to the <table>.
+function sortableTable(cols, rows, sortState, onSort, opts = {}) {
   const col = cols.find((c) => c.key === sortState.key) || cols[0];
   const val = col.sort || ((r) => r[col.key]);
   const sorted = [...rows].sort((a, b) => {
@@ -397,15 +398,15 @@ function sortableTable(cols, rows, sortState, onSort) {
     return (typeof x === "string" ? x.localeCompare(y) : x - y) * sortState.dir;
   });
   const head = cols.map((c) => `<th class="${c.num ? "num " : ""}${c.cls || ""} ${c.key ? "sortable" : ""} ${c.key === sortState.key ? "sorted" + (sortState.dir > 0 ? " asc" : "") : ""}" data-key="${c.key || ""}" ${c.title ? `title="${esc(c.title)}"` : ""}>${c.label}</th>`).join("");
-  const body = sorted.map((r) => `<tr>${cols.map((c) => `<td class="${c.num ? "num " : ""}${c.cls || ""}">${c.render ? c.render(r) : esc(r[c.key])}</td>`).join("")}</tr>`).join("");
+  const body = sorted.map((r) => `<tr class="${opts.rowClass ? opts.rowClass(r) : ""}">${cols.map((c) => `<td class="${c.num ? "num " : ""}${c.cls || ""}">${c.render ? c.render(r) : esc(r[c.key])}</td>`).join("")}</tr>`).join("");
   const wrap = document.createElement("div");
   wrap.className = "table-wrap";
-  wrap.innerHTML = `<table class="data"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+  wrap.innerHTML = `<table class="data ${opts.tableClass || ""}"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
   wrap.querySelectorAll("th.sortable").forEach((th) => th.addEventListener("click", () => {
     const key = th.dataset.key;
     const c = cols.find((x) => x.key === key);
     if (sortState.key === key) sortState.dir *= -1;
-    else { sortState.key = key; sortState.dir = c.num ? -1 : 1; }
+    else { sortState.key = key; sortState.dir = c.dir || (c.num ? -1 : 1); }
     onSort();
   }));
   return wrap;
@@ -490,11 +491,15 @@ function ensureGameStatus() {
             };
           }
         }
+        const prev = state.gameStatus;
         state.gameStatus = { sp: w.sp, at: Date.now(), byPro, anyLive: d.games.some((g) => g.state === "in") };
+        // Nothing new (same scores, clock and possession): skip the redraw.
+        state.gameStatusSame = prev?.sp === w.sp && JSON.stringify(prev.byPro) === JSON.stringify(byPro);
       })
       .catch(() => { if (state.base === b) state.gameStatus = { sp: w.sp, at: Date.now(), byPro: {}, anyLive: false }; })
       .finally(() => {
         state.gameStatusLoading = false;
+        if (state.gameStatusSame) { state.gameStatusSame = false; return; }
         if (state.base === b && (state.tab === "matchups" || state.tab === "roster")) render();
       });
   }
@@ -553,7 +558,7 @@ function gsClass(p) {
 const ptsCell = (p, status) => (p.played ? ptsLink(p.id, state.week.sp, f1(p.actual)) : status === "final" ? f1(p.actual) : `<span class="muted">–</span>`);
 
 function showView(name) {
-  for (const v of ["roster", "matchups", "live", "players", "trade", "transactions", "managers", "season", "history"]) $(`view-${v}`).hidden = v !== name;
+  for (const v of ["roster", "matchups", "live", "players", "usage", "trade", "transactions", "managers", "season", "history"]) $(`view-${v}`).hidden = v !== name;
   document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
 }
 
@@ -691,6 +696,7 @@ function matchupInsights(m) {
 // ---------- Players ----------
 function renderPlayers() {
   ensureValues(); // trade values fill in when they arrive
+  ensureUsage(); // snap counts and targets fill in when they arrive
   ensureGameStatus(); // game lines and live highlighting
   const el = $("view-players"), f = state.players;
   const views = [["fa", "Free agents"], ["rostered", "Rostered players"], ["all", "All"]];
@@ -698,6 +704,7 @@ function renderPlayers() {
       ${views.map(([v, label]) => `<button data-v="${v}" role="tab" aria-selected="${f.view === v}" class="${f.view === v ? "active" : ""}">${label}</button>`).join("")}
     </div><div id="pf-body"></div>`;
   $("pf-view").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => { f.view = b.dataset.v; renderPlayers(); }));
+  if (!views.some(([v]) => v === f.view)) f.view = "fa";
   ({ fa: renderFreeAgents, rostered: renderRosteredPlayers, all: renderAllPlayers })[f.view]($("pf-body"));
 }
 
@@ -712,7 +719,7 @@ function faData() {
     fetchFreeAgents(sp)
       .then((x) => { if (state.base === base) cache[sp] = x; })
       .catch((e) => { if (state.base === base) cache[sp] = { error: e.message }; })
-      .finally(() => { if (state.base === base && (state.tab === "players" || state.tab === "roster")) render(); });
+      .finally(() => { if (state.base === base && ["players", "roster", "usage"].includes(state.tab)) render(); });
   }
   return null;
 }
@@ -765,6 +772,7 @@ function playerRow(p, { label, sp, action = "", owner = true } = {}) {
     p.pprRank && `PPR ${posRankHtml(p, p.pprRank)}`,
     p.posRank && `Rank ${posRankHtml(p, p.posRank)}`,
     v && `Value ${valueCell(p.id)}`,
+    usageBrief(p.id),
   ].filter(Boolean);
   return `<div class="pr-row ${gsState(p)}">
     <div class="pr-label">${esc(label ?? p.pos)}</div>
@@ -779,33 +787,57 @@ function playerRow(p, { label, sp, action = "", owner = true } = {}) {
   </div>`;
 }
 
+// ---------- Player tables (Players tab) ----------
+// Sortable columns. The Player cell keeps the matchup-style name, game line and stats,
+// and rows get the same highlighting (bold = playing, gold = on the field, red = red zone).
+function playerCell(p) {
+  return `<div class="pt-name">${plinkNm(p)}${injBadge(p)}</div>
+    <div class="mx-game">${gameLineHtml(p)}</div>
+    ${p.short ? `<div class="mx-stats" title="${esc(p.line)}">${esc(p.short)}</div>` : ""}`;
+}
+function ownerCell(p) {
+  if (p.owner) {
+    const t = team(p.owner);
+    return `<span class="pt-owner">${logoImg(t, 18)}<span class="nm-full">${esc(t.name)}</span><span class="nm-short">${esc(t.abbrev)}</span></span>`
+      + (p.slot ? ` <span class="role ${p.starter ? "start" : "bench"}">${p.starter ? esc(p.slot) : p.slotId === IR ? "IR" : "BN"}</span>` : "");
+  }
+  const label = p.status === "W" ? `<span class="badge wv" data-tip="${esc(waiverTip(p))}">W</span> Waivers` : `<span class="muted">Free agent</span>`;
+  return p.name ? `${label} ${addBtn(p, "xs")}` : label;
+}
+const DASH = `<span class="muted">–</span>`;
+const ownHtml = (p) => (p.own == null ? DASH
+  : `${f1(p.own)}%${Math.abs(p.ownChg || 0) >= 0.5 ? ` <span class="trend ${p.ownChg > 0 ? "pos" : "neg"}">${p.ownChg > 0 ? "▲" : "▼"}${f1(Math.abs(p.ownChg))}</span>` : ""}`);
+
+// Column definitions, picked per view. `dir` is the first-click sort direction (1 = low to high).
+const PCOLS = {
+  player: { key: "name", label: "Player", cls: "pt-player", dir: 1, render: playerCell },
+  pos: { key: "pos", label: "Pos", dir: 1, sort: (p) => POS_ORDER.indexOf(p.pos) },
+  owner: { key: "owner", label: "Team", cls: "pt-team", dir: 1, render: ownerCell, sort: (p) => (p.owner ? team(p.owner).name : p.status === "W" ? "~W" : "~~FA") },
+  opp: { key: "opp", label: "Opp", title: "Opponent and its rank against the position (1 = toughest)", dir: -1, render: oppHtml, sort: (p) => p.opp?.rank ?? null },
+  own: { key: "own", label: "% Rost", num: true, render: ownHtml },
+  proj: { key: "proj", label: "Proj", num: true, render: (p) => (p.proj == null ? DASH : f1(p.proj)) },
+  pts: { key: "pts", label: "Pts", num: true, cls: "pt-pts", render: (p, sp) => (p.pts == null ? DASH : ptsLink(p.id, sp, f1(p.pts))) },
+  diff: { key: "diff", label: "+/−", title: "Points vs projection", num: true, render: (p) => (p.played && p.diff != null ? `<span class="${clsSign(p.diff)}">${signed(p.diff)}</span>` : DASH), sort: (p) => (p.played ? p.diff : null) },
+  seasonPts: { key: "seasonPts", label: "Season", title: "Season fantasy points", num: true, render: (p) => (p.seasonPts == null ? DASH : f1(p.seasonPts)) },
+  pprRank: { key: "pprRank", label: "PPR rk", title: "ESPN PPR rank at the position", num: true, dir: 1, render: (p) => posRankHtml(p, p.pprRank) },
+  posRank: { key: "posRank", label: "Score rk", title: "Scoring rank at the position this season", num: true, dir: 1, render: (p) => posRankHtml(p, p.posRank) },
+  snap: { key: "snap", label: "Snap %", title: "Share of the team's offensive snaps in its last game (avg = season average)", num: true, render: snapCell, sort: (p) => usageOf(p.id)?.last.pct ?? null },
+  tgt: { key: "tgt", label: "Tgt %", title: "Share of the team's targets in its last game (avg = season average)", num: true, render: tgtCell, sort: (p) => { const u = usageOf(p.id); return u && u.pos !== "QB" ? u.last.share : null; } },
+  value: { key: "value", label: "Value", title: "FantasyCalc trade value", num: true, render: (p) => valueCell(p.id), sort: (p) => valueOf(p.id) },
+};
+// Draws a player table into `el`; header clicks re-sort it in place.
+function drawPlayerTable(el, keys, rows, sortState, sp, empty) {
+  if (!rows.length) { el.innerHTML = `<p class="muted pr-empty">${empty}</p>`; return; }
+  const cols = keys.map((k) => { const c = PCOLS[k]; return c.render ? { ...c, render: (r) => c.render(r, sp) } : c; });
+  const redraw = () => drawPlayerTable(el, keys, rows, sortState, sp, empty);
+  el.replaceChildren(sortableTable(cols, rows, sortState, redraw, { rowClass: gsState, tableClass: "pt-table" }));
+}
+
 // Legend for the row highlighting, shared by the player lists.
 const statusLegend = () => `<div class="gs-legend small muted"><span><i class="lg lg-live"></i><strong>Bold</strong> = playing now</span><span><i class="lg lg-poss"></i>Offense on the field</span><span><i class="lg lg-rz"></i>In the red zone</span></div>`;
-
-// Sort options: [key, label, value, direction]. Missing values sort last; ties go to the higher projection.
-const SORTS = {
-  proj: ["proj", "Projection", (p) => p.proj, -1],
-  pts: ["pts", "Points", (p) => p.pts, -1],
-  own: ["own", "% Rostered", (p) => p.own, -1],
-  seasonPts: ["seasonPts", "Season points", (p) => p.seasonPts, -1],
-  value: ["value", "Trade value", (p) => valueOf(p.id), -1],
-  pprRank: ["pprRank", "PPR rank", (p) => p.pprRank, 1],
-  posRank: ["posRank", "Scoring rank", (p) => p.posRank, 1],
-  name: ["name", "Name", (p) => p.name, 1],
-};
-function sortRows(rows, key) {
-  const [, , fn, dir] = SORTS[key] || SORTS.proj;
-  return [...rows].sort((a, b) => {
-    const x = fn(a), y = fn(b);
-    if (x == null || y == null) return x == null && y == null ? (b.proj || 0) - (a.proj || 0) : x == null ? 1 : -1;
-    const c = (typeof x === "string" ? x.localeCompare(y) : x - y) * dir;
-    return c || (b.proj || 0) - (a.proj || 0);
-  });
-}
-const sortSelect = (id, keys, current) => `<label class="sort-lbl small muted">Sort <select id="${id}">${keys.map((k) => `<option value="${k}" ${k === current ? "selected" : ""}>${SORTS[k][1]}</option>`).join("")}</select></label>`;
 const posOptions = (current) => ["ALL", ...POS_ORDER].map((p) => `<option ${current === p ? "selected" : ""}>${p}</option>`).join("");
 const injLegend = () => `<div class="inj-legend small muted"><span><span class="badge wv">W</span> On waivers</span>${Object.entries(INJURY).filter(([k]) => k !== "PROBABLE").map(([, [s, full, sev]]) => `<span><span class="badge ${sev ? "out" : "inj"}">${s}</span> ${full}</span>`).join("")}</div>`;
-const listOf = (rows, sp, empty) => rows.length ? rows.map((p) => playerRow(p, { sp })).join("") : `<p class="muted pr-empty">${empty}</p>`;
+const tableHint = () => `<p class="muted small pt-hint">Tap a column header to sort. Swipe sideways for more columns.</p>`;
 
 function renderFreeAgents(el) {
   const w = state.week, f = state.players;
@@ -818,16 +850,14 @@ function renderFreeAgents(el) {
       <input id="fa-q" type="search" placeholder="Search free agents…" value="${esc(f.faQ)}">
       <select id="fa-pos" aria-label="Position">${posOptions(f.faPos)}</select>
       <div class="seg" id="fa-status">${[["all", "All"], ["FA", "Free agents"], ["W", "On waivers"]].map(([k, l]) => `<button data-s="${k}" class="${f.faStatus === k ? "active" : ""}">${l}</button>`).join("")}</div>
-      ${sortSelect("fa-sort", ["own", "proj", "pts", "seasonPts", "value", "pprRank", "posRank", "name"], f.faSort)}
-    </div><div id="fa-list" class="pr-list mx"></div>${fcCredit()}`;
+    </div>${tableHint()}<div id="fa-list"></div>${fcCredit()}${nvCredit()}`;
   const draw = () => {
     const q = f.faQ.toLowerCase();
     const rows = all.filter((p) => (f.faPos === "ALL" || p.pos === f.faPos) && (f.faStatus === "all" || p.status === f.faStatus) && (!q || p.name.toLowerCase().includes(q)));
-    $("fa-list").innerHTML = listOf(sortRows(rows, f.faSort), w.sp, "No free agents match those filters.");
+    drawPlayerTable($("fa-list"), ["player", "pos", "owner", "opp", "own", "proj", "pts", "snap", "tgt", "seasonPts", "pprRank", "posRank", "value"], rows, f.faSort, w.sp, "No free agents match those filters.");
   };
   $("fa-q").addEventListener("input", (e) => { f.faQ = e.target.value; draw(); });
   $("fa-pos").addEventListener("change", (e) => { f.faPos = e.target.value; draw(); });
-  $("fa-sort").addEventListener("change", (e) => { f.faSort = e.target.value; draw(); });
   $("fa-status").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => {
     f.faStatus = b.dataset.s;
     $("fa-status").querySelectorAll("button").forEach((x) => x.classList.toggle("active", x === b));
@@ -855,18 +885,16 @@ function renderRosteredPlayers(el) {
       <select id="pf-pos" aria-label="Position">${posOptions(f.pos)}</select>
       <select id="pf-team" aria-label="Manager"><option value="ALL">All managers</option>${teamOpts}</select>
       <div class="seg" id="pf-role">${["starters", "bench", "all"].map((r) => `<button data-r="${r}" class="${f.role === r ? "active" : ""}">${r[0].toUpperCase() + r.slice(1)}</button>`).join("")}</div>
-      ${sortSelect("pf-sort", ["pts", "proj", "value", "pprRank", "posRank", "name"], f.rSort)}
-    </div><div id="pf-list" class="pr-list mx"></div>${fcCredit()}`;
+    </div>${tableHint()}<div id="pf-list"></div>${fcCredit()}${nvCredit()}`;
   const draw = () => {
     const q = f.q.toLowerCase();
     const rows = all.filter((p) => (f.pos === "ALL" || p.pos === f.pos) && (f.team === "ALL" || String(p.teamId) === String(f.team)) &&
       (f.role === "all" || (f.role === "starters" ? p.starter : !p.starter)) && (!q || p.name.toLowerCase().includes(q)));
-    $("pf-list").innerHTML = listOf(sortRows(rows, f.rSort), w.sp, "No players match those filters.");
+    drawPlayerTable($("pf-list"), ["player", "pos", "owner", "opp", "proj", "pts", "diff", "snap", "tgt", "pprRank", "posRank", "value"], rows, f.rSort, w.sp, "No players match those filters.");
   };
   $("pf-q").addEventListener("input", (e) => { f.q = e.target.value; draw(); });
   $("pf-pos").addEventListener("change", (e) => { f.pos = e.target.value; draw(); });
   $("pf-team").addEventListener("change", (e) => { f.team = e.target.value; draw(); });
-  $("pf-sort").addEventListener("change", (e) => { f.rSort = e.target.value; draw(); });
   $("pf-role").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => {
     f.role = b.dataset.r;
     $("pf-role").querySelectorAll("button").forEach((x) => x.classList.toggle("active", x === b));
@@ -884,23 +912,20 @@ function renderAllPlayers(el) {
   const seen = new Set(rostered.map((p) => p.id));
   const all = [...rostered, ...d.players.filter((p) => !seen.has(p.id)).map((p) => faRow(p, w))];
   el.innerHTML = `<div class="section-head"><h2>All players</h2><span class="muted small">Rostered players plus the top available free agents · week ${w.week}</span></div>
-    ${statusLegend()}
+    ${injLegend()}${statusLegend()}
     <div class="filters">
       <input id="all-q" type="search" placeholder="Search all players…" value="${esc(f.allQ)}">
       <select id="all-pos" aria-label="Position">${posOptions(f.allPos)}</select>
-      ${sortSelect("all-sort", ["proj", "pts", "value", "pprRank", "posRank", "name"], f.allSort)}
-    </div><div id="all-list" class="pr-list mx"></div>${fcCredit()}`;
+    </div>${tableHint()}<div id="all-list"></div>${fcCredit()}${nvCredit()}`;
   const draw = () => {
     const q = f.allQ.toLowerCase();
     const rows = all.filter((p) => (f.allPos === "ALL" || p.pos === f.allPos) && (!q || p.name.toLowerCase().includes(q)));
-    $("all-list").innerHTML = listOf(sortRows(rows, f.allSort), w.sp, "No players match those filters.");
+    drawPlayerTable($("all-list"), ["player", "pos", "owner", "opp", "own", "proj", "pts", "snap", "tgt", "seasonPts", "pprRank", "posRank", "value"], rows, f.allSort, w.sp, "No players match those filters.");
   };
   $("all-q").addEventListener("input", (e) => { f.allQ = e.target.value; draw(); });
   $("all-pos").addEventListener("change", (e) => { f.allPos = e.target.value; draw(); });
-  $("all-sort").addEventListener("change", (e) => { f.allSort = e.target.value; draw(); });
   draw();
 }
-
 // ---------- Logos & award icons ----------
 function logoImg(t, size = 28) {
   const clean = (s) => (s || "").replace(/[^A-Za-z0-9]/g, "");
@@ -1242,16 +1267,19 @@ async function refreshLive() {
     const data = await fetchLive();
     if (state.base !== base) return; // league changed while loading
     const prev = state.livePrev;
+    const same = state.live && !state.live.error && JSON.stringify({ ...state.live, updated: 0 }) === JSON.stringify({ ...data, updated: 0 });
     state.liveBumps = {};
     for (const p of data.players) {
       if (p.pts != null && prev[p.id] != null && p.pts !== prev[p.id]) state.liveBumps[p.id] = p.pts - prev[p.id];
       prev[p.id] = p.pts;
     }
     state.live = data;
+    state.liveSame = same;
   } catch (e) {
     if (!state.live || state.live.error) state.live = { error: e.message };
+    state.liveSame = false;
   }
-  if (state.tab === "live") renderLive();
+  if (state.tab === "live" && !state.liveSame) keepState($("view-live"), renderLive);
   const anyLive = state.live?.games?.some((g) => g.state === "in");
   state.liveTimer = setTimeout(() => {
     if (state.tab === "live" && document.visibilityState === "visible") refreshLive();
@@ -1583,6 +1611,7 @@ function upgradesFor(p, fa) {
 
 function renderRoster() {
   ensureValues(); // trade values fill in when they arrive
+  ensureUsage(); // snap counts and targets fill in when they arrive
   ensureGameStatus(); // game lines and live highlighting
   const w = state.week, el = $("view-roster");
   const ids = Object.keys(state.base.teams).sort((a, b) => team(a).name.localeCompare(team(b).name));
@@ -1632,7 +1661,8 @@ function renderRoster() {
   el.innerHTML = `<div class="section-head"><h2>Rosters</h2><label class="small muted ta-me">Team <select id="roster-team">${opts}</select></label></div>
     <div class="card roster-head">
       ${logoImg(t, 56)}
-      <div class="roster-id"><h3>${esc(t.name)}</h3><div class="muted">${esc(t.owner)}</div><div class="roster-match">${matchupLine}</div></div>
+      <div class="roster-id"><h3>${esc(t.name)}</h3><div class="muted">${esc(t.owner)}</div><div class="roster-match">${matchupLine}</div>
+        <div class="espn-row">${String(sel) === String(myTeamId()) ? espnBtn(espnTeamUrl(sel), "Set lineup in ESPN") : espnBtn(espnTeamUrl(sel), "Open team in ESPN")}${espnBtn(espnAddUrl(), "Free agents in ESPN")}</div></div>
       <div class="roster-stats">
         <div><span class="muted small">Record</span><strong>${recordStr(t)}</strong></div>
         <div><span class="muted small">Standing</span><strong>${ordinal(standing)}</strong></div>
@@ -1643,7 +1673,7 @@ function renderRoster() {
     <p class="small muted">Lineup for week ${w.week}. Change the week at the top to see other weeks.</p>
     ${statusLegend()}
     ${body}
-    ${fcCredit()}`;
+    ${fcCredit()}${nvCredit()}`;
   $("roster-team").addEventListener("change", (e) => { state.rosterTeam = e.target.value; store.set(key, e.target.value); renderRoster(); });
   el.querySelectorAll(".upg-btn[data-pid]").forEach((b) => b.addEventListener("click", () => {
     const p = side.players.find((x) => String(x.id) === b.dataset.pid);
@@ -1658,14 +1688,42 @@ function openUpgrades(p) {
   const ups = upgradesFor(p, fa).slice(0, 20);
   const rows = ups.map((u) => {
     const row = faRow(u, w);
-    return playerRow(row, { sp: w.sp, action: `<div class="upg-diff" title="Projected points more than ${esc(p.name)}">+${f1(u.proj - (p.proj || 0))}</div>` });
+    return playerRow(row, { sp: w.sp, action: `<div class="upg-act"><div class="upg-diff" title="Projected points more than ${esc(p.name)}">+${f1(u.proj - (p.proj || 0))}</div>${addBtn(row)}</div>` });
   }).join("");
   showModal(`<div class="pm-head"><h2 id="pl-modal-title">Upgrades for ${esc(p.name)}</h2>
       <div class="muted">${esc(p.pos)} · projected ${f1(p.proj)} in week ${w.week}</div></div>
     <p class="small muted" style="margin:10px 0">${upgradesFor(p, fa).length} available ${esc(p.pos)}${upgradesFor(p, fa).length > 1 ? "s" : ""} projected at least ${UPGRADE_MIN_GAIN} points higher this week${ups.length < upgradesFor(p, fa).length ? ` (top ${ups.length} shown)` : ""}, best first. The green number is how many more points each is projected to score.</p>
     <div class="pr-list mx">${rows}</div>
-    <p class="small muted" style="margin-top:10px">Free agents and players on waivers (<span class="badge wv">W</span>), using ESPN's week ${w.week} projections.</p>`);
+    <p class="small muted" style="margin-top:10px">Free agents and players on waivers (<span class="badge wv">W</span>), using ESPN's week ${w.week} projections. <strong>Add</strong> / <strong>Claim</strong> opens ESPN's free agent list with the player's name copied: paste it into the search, then add them and pick who to drop there.</p>`);
 }
+
+// ---------- Shortcuts into ESPN ----------
+// Buttons that open the matching ESPN screen (in the ESPN Fantasy app on phones when it's installed),
+// where the move is made and confirmed. Nothing is changed on ESPN from this site. When a button has
+// a player name, it's copied first so it can be pasted straight into ESPN's player search.
+const ESPN_FF = "https://fantasy.espn.com/football";
+const espnLeague = () => String(state.base?.raw?.id || state.leagueId || LEAGUES[0].id);
+const espnTeamUrl = (teamId) => `${ESPN_FF}/team?leagueId=${espnLeague()}&teamId=${teamId}&seasonId=${state.base.season}`;
+const espnAddUrl = () => `${ESPN_FF}/players/add?leagueId=${espnLeague()}`;
+const myTeamId = () => store.get(`ffb.myteam.${state.leagueId || "default"}`);
+const espnBtn = (href, label, copy = "", size = "") =>
+  `<a class="espn-btn ${size}" href="${esc(href)}" target="_blank" rel="noopener"${copy ? ` data-copy="${esc(copy)}"` : ""}>${label}<span class="espn-arrow" aria-hidden="true">↗</span></a>`;
+const addBtn = (p, size = "sm") => espnBtn(espnAddUrl(), p.status === "W" ? "Claim" : "Add", p.name, size);
+
+function toast(msg) {
+  let t = $("toast");
+  if (!t) { t = document.createElement("div"); t.id = "toast"; t.className = "toast"; t.setAttribute("role", "status"); document.body.appendChild(t); }
+  t.textContent = msg;
+  t.classList.add("show");
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(() => t.classList.remove("show"), 3500);
+}
+document.addEventListener("click", (e) => {
+  const a = e.target.closest("a.espn-btn[data-copy]");
+  if (!a || !navigator.clipboard) return;
+  const text = a.dataset.copy;
+  navigator.clipboard.writeText(text).then(() => toast(`Copied "${text}". Paste it into ESPN's search.`)).catch(() => {});
+});
 
 // ---------- Trade values (FantasyCalc) ----------
 // FantasyCalc's terms require a visible credit and link wherever their values appear.
@@ -1710,6 +1768,183 @@ function valueCell(id) {
   const t = v.trend;
   const trend = Math.abs(t) >= 50 ? ` <span class="trend ${t > 0 ? "pos" : "neg"}" data-tip="${esc(`<b>30-day trend</b>${t > 0 ? "Up" : "Down"} ${fmtVal(Math.abs(t))} in value`)}">${t > 0 ? "▲" : "▼"}${fmtVal(Math.abs(t))}</span>` : "";
   return `${fmtVal(v.value)}${trend}`;
+}
+
+// ---------- Snap counts & target share (nflverse) ----------
+// nflverse's license (CC BY 4.0) asks for credit wherever the data appears.
+const nvCredit = () => `<p class="fc-credit small muted">Snap counts and targets from <a href="https://github.com/nflverse/nflverse-data" target="_blank" rel="noopener">nflverse</a> (CC BY 4.0) · updated the day after games.</p>`;
+const NFL_NAMES = { ARI: "Arizona Cardinals", ATL: "Atlanta Falcons", BAL: "Baltimore Ravens", BUF: "Buffalo Bills", CAR: "Carolina Panthers", CHI: "Chicago Bears", CIN: "Cincinnati Bengals", CLE: "Cleveland Browns", DAL: "Dallas Cowboys", DEN: "Denver Broncos", DET: "Detroit Lions", GB: "Green Bay Packers", HOU: "Houston Texans", IND: "Indianapolis Colts", JAX: "Jacksonville Jaguars", KC: "Kansas City Chiefs", LV: "Las Vegas Raiders", LAC: "Los Angeles Chargers", LAR: "Los Angeles Rams", MIA: "Miami Dolphins", MIN: "Minnesota Vikings", NE: "New England Patriots", NO: "New Orleans Saints", NYG: "New York Giants", NYJ: "New York Jets", PHI: "Philadelphia Eagles", PIT: "Pittsburgh Steelers", SF: "San Francisco 49ers", SEA: "Seattle Seahawks", TB: "Tampa Bay Buccaneers", TEN: "Tennessee Titans", WSH: "Washington Commanders" };
+
+async function fetchUsage() {
+  if (state.demo) return window.DemoLeague.usage();
+  let res, body;
+  try {
+    res = await fetch(`/api/usage?season=${encodeURIComponent(state.base.season)}`);
+    body = await res.json();
+  } catch {
+    throw new ApiError("no_function", "Couldn't reach the snap counts function. Make sure netlify/functions/usage.mjs is uploaded.");
+  }
+  if (!res.ok) throw new ApiError(body.error, body.message || `Request failed (${res.status})`);
+  return body;
+}
+
+// Returns loaded usage data, or null while loading (the current tab re-renders when it arrives).
+function ensureUsage() {
+  if (state.usage && state.usage !== "loading") return state.usage;
+  if (!state.usage) {
+    state.usage = "loading";
+    const base = state.base;
+    fetchUsage()
+      .then((d) => {
+        if (state.base !== base) return;
+        const list = d.players.map(([id, name, pos, w]) => ({ id, name, pos, w }));
+        state.usage = { list, byId: new Map(list.filter((p) => typeof p.id === "number").map((p) => [p.id, p])), teams: d.teams, weeks: d.weeks, updated: d.updated, memo: new Map() };
+      })
+      .catch((e) => { if (state.base === base) state.usage = { error: e.message, list: [], byId: new Map(), teams: {}, weeks: [], memo: new Map() }; })
+      .finally(() => { if (state.base === base && state.week) render(); });
+  }
+  return null;
+}
+
+// A player's usage through week `sp`: their team's most recent game (0% if they didn't play in it),
+// the season average over games they played, and the average before that game (for trend arrows).
+function usageOf(id, sp = state.week?.sp) {
+  const U = state.usage;
+  if (!U?.byId || id == null) return null;
+  const key = `${id}:${sp}`;
+  if (!U.memo.has(key)) U.memo.set(key, usageCalc(U.byId.get(Number(id)), sp));
+  return U.memo.get(key);
+}
+function usageCalc(pl, sp) {
+  if (!pl) return null;
+  const T = state.usage.teams;
+  const wks = Object.keys(pl.w).map(Number).filter((w) => w <= sp).sort((a, b) => a - b);
+  if (!wks.length) return null;
+  const team = pl.w[wks.at(-1)][3];
+  const lastWk = Math.max(wks.at(-1), ...Object.keys(T[team] || {}).map(Number).filter((w) => w <= sp));
+  const teamOf = (wk, t) => T[t]?.[wk] || [0, 0];
+  const e = pl.w[lastWk];
+  const last = e ? { wk: lastWk, snaps: e[0], pct: e[1], tgt: e[2], teamSnaps: teamOf(lastWk, e[3])[0], share: teamOf(lastWk, e[3])[1] ? (e[2] / teamOf(lastWk, e[3])[1]) * 100 : null }
+    : { wk: lastWk, snaps: 0, pct: 0, tgt: 0, teamSnaps: teamOf(lastWk, team)[0], share: 0, out: true };
+  const avgOf = (list) => {
+    if (!list.length) return null;
+    const tgt = sum(list, (w) => pl.w[w][2]), teamTgt = sum(list, (w) => teamOf(w, pl.w[w][3])[1]);
+    return { pct: sum(list, (w) => pl.w[w][1]) / list.length, share: teamTgt ? (tgt / teamTgt) * 100 : null, tgt: tgt / list.length, games: list.length };
+  };
+  const played = wks.filter((w) => pl.w[w][0] > 0 || pl.w[w][2] > 0);
+  return { pos: pl.pos, team, last, avg: avgOf(played), prior: avgOf(played.filter((w) => w < lastWk)) };
+}
+const pctTxt = (n) => (n == null ? "–" : `${Math.round(n)}%`);
+const usageTrend = (now, before) => {
+  const d = now - before;
+  return before == null || Math.abs(d) < 12 ? "" : ` <span class="trend ${d > 0 ? "pos" : "neg"}">${d > 0 ? "▲" : "▼"}</span>`;
+};
+const usageTip = (u) => esc(`<b>Week ${u.last.wk}${u.last.out ? " · didn't play" : ""}</b>${u.last.snaps} of ${u.last.teamSnaps || "?"} offensive snaps · ${u.last.tgt} target${u.last.tgt === 1 ? "" : "s"}${u.last.share != null && u.pos !== "QB" ? ` (${pctTxt(u.last.share)} of team)` : ""}<br>Season: ${pctTxt(u.avg?.pct)} of snaps${u.pos !== "QB" ? `, ${pctTxt(u.avg?.share)} of targets` : ""} over ${u.avg?.games || 0} game${u.avg?.games === 1 ? "" : "s"}`);
+function snapCell(p) {
+  const u = usageOf(p.id);
+  if (!u) return DASH;
+  return `<span data-tip="${usageTip(u)}">${pctTxt(u.last.pct)}${usageTrend(u.last.pct, u.prior?.pct)}</span><div class="pt-sub">avg ${pctTxt(u.avg?.pct)}</div>`;
+}
+function tgtCell(p) {
+  const u = usageOf(p.id);
+  if (!u || u.pos === "QB") return DASH;
+  return `<span data-tip="${usageTip(u)}">${pctTxt(u.last.share)}${usageTrend(u.last.share ?? 0, u.prior?.share)}</span><div class="pt-sub">${u.last.tgt} tgt · avg ${pctTxt(u.avg?.share)}</div>`;
+}
+// One-line summary for player cards: "Snaps 84% · Tgt 22% (wk 5)".
+function usageBrief(id) {
+  const u = usageOf(id);
+  if (!u) return "";
+  return `<span data-tip="${usageTip(u)}">Snaps ${pctTxt(u.last.pct)}${usageTrend(u.last.pct, u.prior?.pct)}${u.pos !== "QB" && u.last.share != null ? ` · Tgt ${pctTxt(u.last.share)}` : ""} <span class="muted">(wk ${u.last.wk})</span></span>`;
+}
+
+// ---------- Team usage tab ----------
+// Every QB/RB/WR/TE on one NFL team, week by week, in one of three views:
+// share of offensive snaps, share of the team's targets, or share of the team's rushing attempts.
+// Week entries are [snaps, snap%, targets, team, carries]; team weeks are [snaps, targets, carries].
+const UT_MODES = {
+  snap: { label: "Snap share", count: 0, team: 0, unit: "snaps", what: "offensive snaps", full: 100, pos: ["QB", "RB", "WR", "TE"] },
+  tgt: { label: "Target share", count: 2, team: 1, unit: "tgt", what: "targets", full: 35, pos: ["RB", "WR", "TE"] },
+  rush: { label: "Rushing share", count: 4, team: 2, unit: "att", what: "rushing attempts", full: 70, pos: ["QB", "RB", "WR", "TE"] },
+};
+function renderUsage() {
+  ensureValues(); // trade values (used by the player popup) fill in when they arrive
+  const el = $("view-usage"), U = ensureUsage(), w = state.week, f = state.players;
+  if (!U) { el.innerHTML = `<div class="loading"><span class="spinner"></span> Loading snap counts…</div>`; return; }
+  if (U.error) { el.innerHTML = `<div class="banner">${esc(U.error)}</div>`; return; }
+  const teams = Object.keys(NFL_NAMES).filter((t) => U.teams[t]).sort((a, b) => NFL_NAMES[a].localeCompare(NFL_NAMES[b]));
+  if (!teams.length) { el.innerHTML = `<p class="muted">No snap counts yet for ${state.base.season}. nflverse posts them the day after games.</p>`; return; }
+  if (!teams.includes(f.utTeam)) f.utTeam = teams[0];
+  if (!UT_MODES[f.utMode]) f.utMode = "snap";
+  const T = f.utTeam, tw = U.teams[T], M = UT_MODES[f.utMode], snapMode = f.utMode === "snap";
+  const weeks = U.weeks.filter((wk) => wk <= w.sp);
+  const played = weeks.filter((wk) => tw[wk]);
+  // Fantasy owner of each player this week, or free agent / waivers.
+  const owners = new Map(w.sides.flatMap((s) => s.players).map((p) => [String(p.id), rosteredRow(p)]));
+  const fa = faData();
+  if (fa && !fa.error) for (const p of fa.players) if (!owners.has(String(p.id))) owners.set(String(p.id), { status: p.status, waiverDate: p.waiverDate });
+  const ownerOf = (id) => { const o = owners.get(String(id)); return o ? ownerCell(o) : `<span class="muted">${typeof id === "number" ? "Free agent" : "–"}</span>`; };
+
+  const teamTot = (wk) => tw[wk]?.[M.team] || 0;
+  const seasonTot = sum(played, teamTot);
+  const entry = (p, wk) => (p.w[wk]?.[3] === T ? p.w[wk] : null);
+  const count = (p, wk) => entry(p, wk)?.[M.count] || 0;
+  // Share for one week: snap % comes straight from the data; the others are count / team total.
+  const share = (p, wk) => {
+    const e = entry(p, wk);
+    if (!e) return 0;
+    return snapMode ? e[1] : teamTot(wk) ? (e[M.count] / teamTot(wk)) * 100 : 0;
+  };
+  const players = U.list.map((p) => {
+    const games = played.filter((wk) => entry(p, wk));
+    if (!games.length) return null;
+    const total = sum(games, (wk) => count(p, wk));
+    return !snapMode && !total ? null : { ...p, games, total };
+  }).filter(Boolean);
+  const heat = (pct) => `style="background:rgba(22,163,74,${(Math.min(pct / M.full, 1) * 0.4).toFixed(2)})"`;
+  const noGame = `<td class="num ut-none" title="No game (bye or not played yet)">–</td>`;
+  // ▲▼: the team's most recent game vs. the player's average in earlier games.
+  const lastWk = played.at(-1);
+  const trend = (p) => {
+    const before = p.games.filter((wk) => wk < lastWk);
+    return lastWk && before.length ? usageTrend(share(p, lastWk), sum(before, (wk) => share(p, wk)) / before.length) : "";
+  };
+  const seasonShare = (p) => (snapMode ? sum(p.games, (wk) => share(p, wk)) / p.games.length : seasonTot ? (p.total / seasonTot) * 100 : null);
+
+  const groups = [["QB", "Quarterbacks"], ["RB", "Running backs"], ["WR", "Wide receivers"], ["TE", "Tight ends"]].filter(([pos]) => M.pos.includes(pos)).map(([pos, label]) => {
+    const list = players.filter((p) => p.pos === pos).sort((a, b) => seasonShare(b) - seasonShare(a) || b.total - a.total);
+    if (!list.length) return "";
+    const groupShare = (wk) => (teamTot(wk) ? (sum(list, (p) => count(p, wk)) / teamTot(wk)) * 100 : null);
+    const head = `<tr class="ut-group"><td class="pt-player">${label}${snapMode ? "" : `<div class="pt-sub">Group share of team ${M.what}</div>`}</td>
+      ${weeks.map((wk) => (!tw[wk] ? noGame : `<td class="num">${snapMode ? "" : pctTxt(groupShare(wk))}</td>`)).join("")}
+      <td class="num">${!snapMode && seasonTot ? pctTxt((sum(list, (p) => p.total) / seasonTot) * 100) : ""}</td></tr>`;
+    const rows = list.map((p) => {
+      const cells = weeks.map((wk) => {
+        if (!tw[wk]) return noGame;
+        const e = entry(p, wk);
+        if (!e) return `<td class="num ut-dnp" title="Didn't play">0%</td>`;
+        const v = share(p, wk);
+        return `<td class="num" ${heat(v)} title="${e[M.count]} of ${teamTot(wk)} team ${M.what}">${pctTxt(v)}<div class="pt-sub">${e[M.count]} ${M.unit}</div></td>`;
+      }).join("");
+      const name = typeof p.id === "number" ? plinkNm({ id: p.id, name: p.name }) : `<span class="nm-full">${esc(p.name)}</span><span class="nm-short">${esc(shortName(p.name))}</span>`;
+      return `<tr><td class="pt-player"><div class="pt-name">${name}${trend(p)}</div><div class="ut-owner">${ownerOf(p.id)}</div></td>${cells}
+        <td class="num"><strong>${pctTxt(seasonShare(p))}</strong><div class="pt-sub">${p.total} ${M.unit}</div></td></tr>`;
+    }).join("");
+    return head + rows;
+  }).join("");
+
+  const tip = { snap: "Share of the team's offensive snaps each week.", tgt: "Share of all the team's targets each week.", rush: "Share of all the team's rushing attempts each week." }[f.utMode];
+  const whatCap = M.what[0].toUpperCase() + M.what.slice(1);
+  el.innerHTML = `<div class="section-head"><h2>Team usage</h2><span class="muted small">Week by week, from nflverse</span></div>
+    <div class="filters">
+      <select id="ut-team" aria-label="NFL team">${teams.map((t) => `<option value="${t}" ${t === T ? "selected" : ""}>${esc(NFL_NAMES[t])}</option>`).join("")}</select>
+      <div class="seg" id="ut-mode">${Object.entries(UT_MODES).map(([k, m]) => `<button data-m="${k}" class="${f.utMode === k ? "active" : ""}">${m.label}</button>`).join("")}</div>
+    </div>
+    <p class="muted small pt-hint">${tip} Darker green = bigger share. ▲▼ = the latest game is well above or below the player's earlier average. Swipe sideways for more weeks.</p>
+    ${players.length ? `<div class="table-wrap"><table class="data pt-table ut-table"><thead><tr><th class="pt-player">Player</th>${weeks.map((wk) => `<th class="num">Wk ${wk}</th>`).join("")}<th class="num">Season</th></tr></thead>
+      <tbody><tr class="ut-total"><td class="pt-player">Team total<div class="pt-sub">${whatCap}</div></td>${weeks.map((wk) => (!tw[wk] ? noGame : `<td class="num">${teamTot(wk)}</td>`)).join("")}<td class="num">${seasonTot}</td></tr>
+      ${groups}</tbody></table></div>` : `<p class="muted">No ${M.what} recorded for this team yet.</p>`}${nvCredit()}`;
+  $("ut-team").addEventListener("change", (e) => { f.utTeam = e.target.value; renderUsage(); });
+  $("ut-mode").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => { f.utMode = b.dataset.m; renderUsage(); }));
 }
 
 // The current week's rosters, loaded in the background if needed (re-renders when ready).
@@ -1800,6 +2035,7 @@ function bestPackage(pool, target) {
 function renderTradeAnalyzer() {
   const el = $("view-trade");
   const values = ensureValues();
+  ensureUsage(); // snap shares fill in when they arrive
   const week = ensureCurrentRosters();
   if (!values || !week) { el.innerHTML = `<div class="loading"><span class="spinner"></span> Loading rosters and trade values…</div>`; return; }
   if (values.error) { el.innerHTML = `<div class="banner">${esc(values.error)}</div>`; return; }
@@ -1910,8 +2146,16 @@ function renderTradeAnalyzer() {
   const A = ta.a, B = ta.b;
   const playersA = [...rosters[A]].sort((a, b) => b.value - a.value);
   const playersB = [...rosters[B]].sort((a, b) => b.value - a.value);
-  const pick = (list, chosen, name) => [0, 1, 2].map((i) => `<select data-side="${name}" data-i="${i}" aria-label="Player ${i + 1}"><option value="">${i ? "+ Add player" : "Choose a player"}</option>
-      ${list.map((p) => `<option value="${p.id}" ${String(chosen[i]) === String(p.id) ? "selected" : ""}>${esc(p.name)} (${p.pos}) · ${fmtVal(p.value)}</option>`).join("")}</select>`).join("");
+  // Chosen players show as chips (name, position · value, remove button); one "Add player" menu below them.
+  const pick = (list, chosen, name) => {
+    const ids = chosen.map(String);
+    const chips = ids.map((id) => list.find((p) => String(p.id) === id)).filter(Boolean).map((p) => `<div class="mock-chip">
+        <div class="mock-chip-info"><div class="mock-chip-nm">${esc(p.name)}</div><div class="mock-chip-sub">${esc(p.pos)} · ${fmtVal(p.value)}${usageOf(p.id) ? ` · ${pctTxt(usageOf(p.id).last.pct)} snaps` : ""}</div></div>
+        <button type="button" class="mock-rm" data-rm="${name}" data-id="${p.id}" aria-label="Remove ${esc(p.name)}">×</button></div>`).join("");
+    const add = ids.length >= 3 ? "" : `<select data-side="${name}" aria-label="Add player"><option value="">${ids.length ? "+ Add player" : "Choose a player"}</option>
+      ${list.filter((p) => !ids.includes(String(p.id))).map((p) => `<option value="${p.id}">${esc(p.name)} (${p.pos}) · ${fmtVal(p.value)}</option>`).join("")}</select>`;
+    return chips + add;
+  };
   const sendA = ta.give.map((id) => playersA.find((p) => String(p.id) === String(id))).filter(Boolean);
   const sendB = ta.get.map((id) => playersB.find((p) => String(p.id) === String(id))).filter(Boolean);
   let result = `<p class="muted">Pick players on both sides to see how the trade grades out.</p>`;
@@ -1937,7 +2181,9 @@ function renderTradeAnalyzer() {
     result = `<div class="trade-result">
       <div class="tr-totals"><div><span class="muted small">${nameA} sends</span><strong>${fmtVal(va)}</strong></div><div class="tr-arrow">⇄</div><div class="right"><span class="muted small">${nameB} sends</span><strong>${fmtVal(vb)}</strong></div></div>
       <div class="tr-verdict">${verdict}</div>
-      <div class="tr-impact">${impact(A, nameA, L.profiles[A], afterA)}${impact(B, nameB, L.profiles[B], afterB)}</div>${consolidation}</div>`;
+      <div class="tr-impact">${impact(A, nameA, L.profiles[A], afterA)}${impact(B, nameB, L.profiles[B], afterB)}</div>${consolidation}
+      <div class="espn-row">${espnBtn(espnTeamUrl(B), `Propose to ${nameB} in ESPN`, `${team(A).name} sends ${sendA.map((p) => p.name).join(", ")} · ${team(B).name} sends ${sendB.map((p) => p.name).join(", ")}`)}
+        <span class="small muted">Opens ${nameB}'s team on ESPN. Tap <strong>Propose Trade</strong> there and pick the same players (the trade is copied so you can paste it in a note).</span></div></div>`;
   }
 
   const teamOpts = (sel, exclude) => teamIds.filter((id) => id !== exclude).map((id) => `<option value="${id}" ${id === String(sel) ? "selected" : ""}>${esc(team(id).name)}</option>`).join("");
@@ -1966,7 +2212,7 @@ function renderTradeAnalyzer() {
     <p class="small muted">Free agents or players on waivers. FantasyCalc only values QB, RB, WR and TE.</p>
     <h3 class="ta-sub">Trade targets</h3>
     <div class="grid targets">${targetRows}</div>
-    ${fcCredit()}`;
+    ${fcCredit()}${nvCredit()}`;
 
   $("ta-my").addEventListener("change", (e) => { ta.my = e.target.value; store.set(myKey, ta.my); renderTradeAnalyzer(); });
   $("ta-a").addEventListener("change", (e) => {
@@ -1978,9 +2224,12 @@ function renderTradeAnalyzer() {
   });
   $("ta-b").addEventListener("change", (e) => { ta.b = e.target.value; ta.get = []; renderTradeAnalyzer(); });
   el.querySelectorAll("select[data-side]").forEach((s) => s.addEventListener("change", () => {
-    const arr = ta[s.dataset.side];
-    arr[+s.dataset.i] = s.value;
-    ta[s.dataset.side] = arr.filter((v, i, a) => v && a.indexOf(v) === i);
+    if (!s.value) return;
+    ta[s.dataset.side] = [...ta[s.dataset.side], s.value].filter((v, i, a) => v && a.indexOf(v) === i).slice(0, 3);
+    renderTradeAnalyzer();
+  }));
+  el.querySelectorAll("[data-rm]").forEach((b) => b.addEventListener("click", () => {
+    ta[b.dataset.rm] = ta[b.dataset.rm].filter((id) => String(id) !== b.dataset.id);
     renderTradeAnalyzer();
   }));
   el.querySelectorAll("[data-target]").forEach((b) => b.addEventListener("click", () => {
@@ -2234,24 +2483,36 @@ function renderPlayerModal(d, focusSp) {
   const games = weeks.length, total = d.seasonPts || sum(weeks, (w) => w.pts);
   const best = weeks.reduce((a, w) => (!a || w.pts > a.pts ? w : a), null);
   const val = state.values?.byId?.get(Number(p.id));
+  // Snap share and targets from nflverse, when loaded and matched to this player.
+  const U = state.usage?.byId ? state.usage : (ensureUsage(), null);
+  const ul = U?.byId.get(Number(p.id)), uAvg = ul ? usageOf(p.id, lastWeek) : null;
+  const ucols = ul ? 2 : 0;
+  const usageCells = (sp) => {
+    if (!ul) return "";
+    const e = ul.w[sp];
+    const tt = e ? U.teams[e[3]]?.[sp]?.[1] : 0;
+    if (!e) return `<td class="num muted">–</td><td class="num muted">–</td>`;
+    return `<td class="num" title="${e[0]} of ${U.teams[e[3]]?.[sp]?.[0] || "?"} offensive snaps">${e[1]}%</td>
+      <td class="num">${ul.pos === "QB" ? `<span class="muted">–</span>` : `${e[2]}${tt ? `<div class="pt-sub">${pctTxt((e[2] / tt) * 100)}</div>` : ""}`}</td>`;
+  };
   const rows = [];
   for (let sp = 1; sp <= lastWeek; sp++) {
     const w = bySp[sp];
     if (!w) {
       const why = p.bye === sp ? "BYE" : sp === state.base.current ? "Hasn't played yet" : "Did not play";
-      rows.push(`<tr class="muted"><td>${sp}</td><td colspan="2">${why}</td></tr>`);
+      rows.push(`<tr class="muted"><td>${sp}</td><td colspan="${2 + ucols}">${why}</td></tr>`);
       continue;
     }
     const opp = w.opp ? `${w.home ? "vs" : "@"} ${esc(PRO[w.opp] || "")}` : "";
     const open = focusSp === sp;
     rows.push(`<tr class="gl-row ${open ? "open" : ""}" data-sp="${sp}"><td>${sp}</td><td><strong>${opp || "–"}</strong><div class="gl-line">${esc(gameLine(p.posId, w.stats))}</div></td>
-      <td class="num"><button type="button" class="gl-pts" aria-expanded="${open}" aria-controls="gl-bd-${sp}">${f2(w.pts)} <span class="caret">▾</span></button></td></tr>
-      <tr class="gl-bd" id="gl-bd-${sp}" ${open ? "" : "hidden"}><td></td><td colspan="2">${breakdownHtml(w, p.posId)}</td></tr>`);
+      ${usageCells(sp)}<td class="num"><button type="button" class="gl-pts" aria-expanded="${open}" aria-controls="gl-bd-${sp}">${f2(w.pts)} <span class="caret">▾</span></button></td></tr>
+      <tr class="gl-bd" id="gl-bd-${sp}" ${open ? "" : "hidden"}><td></td><td colspan="${2 + ucols}">${breakdownHtml(w, p.posId)}</td></tr>`);
   }
   body.innerHTML = `<div class="pm-head">
       <div><h2 id="pl-modal-title">${esc(p.name)}${injBadge({ injury: p.injury })}</h2>
         <div class="muted">${pos}${p.proId ? ` · ${esc(PRO[p.proId] || "")}` : ""}${p.bye ? ` · Bye week ${p.bye}` : ""}</div>
-        <div class="pm-owner">${owner}</div></div>
+        <div class="pm-owner">${owner}${p.teamId ? espnBtn(espnTeamUrl(p.teamId), "Open team in ESPN", "", "sm") : addBtn({ name: p.name, status: state.fa?.[state.week?.sp]?.players?.find((x) => String(x.id) === String(p.id))?.status }, "sm")}</div></div>
     </div>
     <div class="pm-stats">
       <div><span class="muted small">Season points</span><strong>${f1(total)}</strong></div>
@@ -2259,11 +2520,14 @@ function renderPlayerModal(d, focusSp) {
       <div><span class="muted small">Per game</span><strong>${games ? f1(total / games) : "–"}</strong></div>
       <div><span class="muted small">Best week</span><strong>${best ? f1(best.pts) : "–"}</strong>${best ? `<span class="muted small">week ${best.sp}</span>` : ""}</div>
       ${d.seasonProj ? `<div><span class="muted small">ESPN season proj.</span><strong>${f1(d.seasonProj)}</strong></div>` : ""}
+      ${uAvg?.avg ? `<div><span class="muted small">Snap share</span><strong>${pctTxt(uAvg.avg.pct)}</strong><span class="muted small">season avg</span></div>` : ""}
+      ${uAvg?.avg && uAvg.pos !== "QB" ? `<div><span class="muted small">Target share</span><strong>${pctTxt(uAvg.avg.share)}</strong><span class="muted small">${f1(uAvg.avg.tgt)} tgt/game</span></div>` : ""}
       ${val ? `<div><span class="muted small">Trade value</span><strong>${fmtVal(val.value)}</strong><span class="muted small">FantasyCalc</span></div>` : ""}
     </div>
     ${focusSp && !bySp[focusSp] ? `<p class="muted small">No stats yet for week ${focusSp}.</p>` : ""}
     <h3 class="pm-sub">${state.base.season} game log <span class="muted small">· tap points to see how they were scored</span></h3>
-    <div class="table-wrap"><table class="data gamelog"><thead><tr><th>Wk</th><th>Game</th><th class="num">Pts</th></tr></thead><tbody>${rows.join("")}</tbody></table></div>`;
+    <div class="table-wrap"><table class="data gamelog"><thead><tr><th>Wk</th><th>Game</th>${ul ? `<th class="num" title="Share of the team's offensive snaps">Snap</th><th class="num" title="Targets and share of the team's targets">Tgt</th>` : ""}<th class="num">Pts</th></tr></thead><tbody>${rows.join("")}</tbody></table></div>
+    ${ul ? nvCredit() : ""}`;
   body.querySelectorAll(".gl-pts").forEach((b) => b.addEventListener("click", () => {
     const row = b.closest("tr"), bd = $(`gl-bd-${row.dataset.sp}`);
     bd.hidden = !bd.hidden;
@@ -2294,10 +2558,40 @@ function initTooltip() {
 function setLoading(on) { $("loading").hidden = !on; }
 function banner(msg) { $("banner").hidden = !msg; $("banner").innerHTML = msg || ""; }
 
+// Redraw a tab without the visible "blink" of a rebuild: logos that are already loaded are moved
+// into the new markup instead of being downloaded and decoded again, and sideways-scrolled tables,
+// the page scroll position and a focused search box are put back where they were.
+function keepState(el, draw) {
+  if (!el) return draw();
+  const imgs = new Map();
+  el.querySelectorAll("img").forEach((i) => { if (i.complete && i.naturalWidth) { const k = i.getAttribute("src"); (imgs.get(k) || imgs.set(k, []).get(k)).push(i); } });
+  const scrolls = [...el.querySelectorAll(".table-wrap")].map((n) => [n.scrollLeft, n.scrollTop]);
+  const a = document.activeElement, focusId = el.contains(a) && a.id ? a.id : null;
+  const sel = focusId && typeof a.selectionStart === "number" ? [a.selectionStart, a.selectionEnd] : null;
+  const y = window.scrollY;
+  draw();
+  el.querySelectorAll("img").forEach((i) => {
+    const old = imgs.get(i.getAttribute("src"))?.shift();
+    if (!old || old === i) return;
+    for (const { name } of [...old.attributes]) if (!i.hasAttribute(name)) old.removeAttribute(name);
+    for (const { name, value } of [...i.attributes]) if (old.getAttribute(name) !== value) old.setAttribute(name, value);
+    i.replaceWith(old);
+  });
+  el.querySelectorAll(".table-wrap").forEach((n, i) => { if (scrolls[i]) [n.scrollLeft, n.scrollTop] = scrolls[i]; });
+  if (focusId && $(focusId) && document.activeElement !== $(focusId)) {
+    $(focusId).focus({ preventScroll: true });
+    if (sel) try { $(focusId).setSelectionRange(...sel); } catch {}
+  }
+  if (Math.abs(window.scrollY - y) > 1) window.scrollTo(0, y);
+}
+
 function render() {
   if (!state.week) return;
   showView(state.tab);
-  ({ roster: renderRoster, matchups: renderMatchups, live: renderLive, players: renderPlayers, managers: renderManagers, season: renderSeason, history: renderHistory, trade: renderTradeAnalyzer, transactions: renderTransactions })[state.tab]();
+  keepState($(`view-${state.tab}`), () => renderTab());
+}
+function renderTab() {
+  ({ roster: renderRoster, matchups: renderMatchups, live: renderLive, players: renderPlayers, usage: renderUsage, managers: renderManagers, season: renderSeason, history: renderHistory, trade: renderTradeAnalyzer, transactions: renderTransactions })[state.tab]();
 }
 
 // Fetch (or reuse) one week's data without touching the screen.
@@ -2332,6 +2626,17 @@ async function loadWeek(week, force) {
   render();
 }
 
+// Re-fetch the shown week behind the scenes and redraw in place (no spinner, no blank page).
+async function refreshWeekQuietly() {
+  const wk = state.week?.week, base = state.base;
+  try {
+    const w = await getWeek(wk, true);
+    if (state.base !== base || state.week?.week !== wk) return;
+    state.week = w;
+    render();
+  } catch { /* keep showing what we have; the next refresh will try again */ }
+}
+
 // Switch to another league: forget everything loaded for the previous one.
 async function switchLeague(leagueId, season) {
   state.leagueId = leagueId;
@@ -2343,7 +2648,7 @@ async function switchLeague(leagueId, season) {
   Object.assign(state, {
     base: null, week: null, weekCache: {}, awardTally: null, activity: null, history: null,
     live: null, livePrev: {}, liveBumps: {}, openMatchup: null,
-    values: null, ta: null, rostersLoading: false, playerCache: null, fa: null, rosterTeam: null,
+    values: null, usage: null, ta: null, rostersLoading: false, playerCache: null, fa: null, rosterTeam: null,
   });
   state.players.team = state.txFilter.team = state.liveFilter.team = "ALL";
   state.historySel = "all";
@@ -2425,6 +2730,7 @@ function bindUi() {
     state.activity = null;
     state.history = null;
     state.values = null;
+    state.usage = null;
     state.fa = null;
     await loadLeague(wk);
   });
@@ -2436,11 +2742,11 @@ function bindUi() {
   }, 30000);
   // Catch up on live games when the page comes back into view.
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible" && state.tab === "live" && state.liveStale) renderLive();
+    if (document.visibilityState === "visible" && state.tab === "live" && state.liveStale) keepState($("view-live"), renderLive);
   });
   // Keep live weeks fresh.
   setInterval(() => {
-    if (document.visibilityState === "visible" && state.week?.status === "live" && !state.demo) loadWeek(state.week.week, true);
+    if (document.visibilityState === "visible" && state.week?.status === "live" && !state.demo) refreshWeekQuietly();
   }, 120000);
 }
 

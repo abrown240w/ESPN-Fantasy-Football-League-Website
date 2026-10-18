@@ -421,5 +421,46 @@
     return { sp, updated: Date.now(), players };
   }
 
-  window.DemoLeague = { response, activity, nfl, live, values, player, freeAgents };
+  // Same shape as /api/usage: weekly snap counts and targets (nflverse). Uses its own hash-based
+  // noise so it doesn't disturb the shared random sequence used elsewhere in the demo.
+  function usage() {
+    const abbr = (id) => (typeof PRO !== "undefined" && PRO[id]) || "";
+    const noise = (a, b) => (((a * 2654435761) ^ (b * 40503)) >>> 0) % 1000 / 1000;
+    const posName = (id) => ({ 1: "QB", 2: "RB", 3: "WR", 4: "TE" })[id];
+    const people = allPlayers.filter((p) => posName(p.defaultPositionId)).map((p) => ({ id: p.id, name: p.fullName, pos: posName(p.defaultPositionId), proId: p.proTeamId, base: p.base }));
+    for (const p of freeAgents(1).players) if (posName(p.posId)) people.push({ id: p.id, name: p.name, pos: posName(p.posId), proId: p.proId, base: p.proj * 0.9, fa: true });
+    const weeks = [...Array(CURRENT_WEEK - 1).keys()].map((i) => i + 1);
+    const teams = {};
+    for (const id of Object.keys(PRO_IDS)) {
+      const t = abbr(Number(id));
+      teams[t] = {};
+      for (const wk of weeks) if (Number(id) % 13 !== wk) teams[t][wk] = [58 + Math.round(noise(Number(id), wk) * 18), 0, 0];
+    }
+    const players = people.map((p) => {
+      const t = abbr(p.proId), w = {};
+      for (const wk of weeks) {
+        const tw = teams[t]?.[wk];
+        if (!tw) continue;
+        const n = noise(p.id, wk);
+        // A few free agents see their role jump in the latest week (shows the ▲ trend).
+        const riser = p.fa && p.id % 3 === 0 && wk === weeks.at(-1);
+        let pct = p.pos === "QB" ? (n < 0.9 ? 100 : 0) : Math.min(100, Math.round((p.pos === "RB" ? 22 : 35) + p.base * 3.2 + (n - 0.5) * 24));
+        if (p.fa && !riser) pct = Math.round(pct * 0.55);
+        if (riser) pct = Math.min(96, pct + 40);
+        if (pct <= 0) continue;
+        const tgt = p.pos === "QB" ? 0 : Math.max(0, Math.round((pct / 100) * (p.pos === "RB" ? 4 : p.pos === "TE" ? 6 : 8) * (0.6 + n)));
+        const att = p.pos === "RB" ? Math.round((pct / 100) * 20 * (0.6 + n)) : p.pos === "QB" ? Math.round(n * 6) : 0;
+        tw[1] += tgt;
+        tw[2] += att;
+        w[wk] = [Math.round((tw[0] * pct) / 100), pct, tgt, t, att];
+      }
+      return [p.id, p.name, p.pos, w];
+    });
+    // Unrostered teammates soak up the rest of each team's targets and carries.
+    for (const t of Object.keys(teams)) for (const wk of weeks) if (teams[t][wk]) { teams[t][wk][1] += 18 + Math.round(noise(t.length * 7 + t.charCodeAt(0), wk) * 10); teams[t][wk][2] += 3 + Math.round(noise(t.charCodeAt(0), wk) * 5); }
+    return { season: SEASON, updated: Date.now(), weeks, teams, players };
+  }
+  const PRO_IDS = Object.fromEntries([...Array(30).keys()].map((i) => [i + 1, 1]).concat([[33, 1], [34, 1]]));
+
+  window.DemoLeague = { response, activity, nfl, live, values, player, freeAgents, usage };
 })();

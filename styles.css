@@ -310,6 +310,12 @@ table.data tr:last-child td { border-bottom: 0; }
 .mock .card { display: grid; gap: 8px; align-content: start; min-width: 0; }
 .mock select { width: 100%; min-width: 0; }
 .mock-sends { font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin-bottom: -2px; }
+.mock-chip { display: flex; align-items: center; gap: 6px; padding: 6px 4px 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); min-width: 0; }
+.mock-chip-info { flex: 1; min-width: 0; }
+.mock-chip-nm { font-weight: 700; font-size: .9rem; line-height: 1.2; overflow-wrap: anywhere; }
+.mock-chip-sub { font-size: .75rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.mock-rm { flex: none; width: 28px; height: 28px; border: 0; border-radius: 50%; background: transparent; color: var(--muted); font-size: 1.2rem; line-height: 1; cursor: pointer; }
+.mock-rm:hover { background: var(--grid); color: var(--ink); }
 .tr-totals .right { text-align: right; }
 .tr-impact { grid-template-columns: 1fr 1fr; gap: 12px; }
 .tr-team { display: grid; gap: 4px; align-content: start; }
@@ -489,8 +495,37 @@ table.data.roster-table td.r-sub { display: none; }
 .pr-row.is-poss { background: #fdf0d5; box-shadow: inset 4px 0 0 #c98a00; }
 .pr-row.is-rz { background: #fde4e4; box-shadow: inset 4px 0 0 #d32f2f; }
 .pr-empty { padding: 12px; margin: 0; }
-.sort-lbl { display: inline-flex; align-items: center; gap: 6px; }
-.sort-lbl select { padding: 7px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--ink); }
+
+/* Player tables (Players tab): sortable columns with the matchup-style Player cell and row highlighting.
+   The Player column stays pinned on the left while the rest scroll sideways. */
+.pt-hint { margin: -4px 0 8px; }
+.table-wrap:has(> .pt-table) { max-height: 75vh; overflow: auto; }
+table.data.pt-table td { vertical-align: top; }
+table.data.pt-table th { z-index: 2; }
+.pt-table .pt-player { position: sticky; left: 0; z-index: 1; background: var(--surface); min-width: 190px; max-width: 260px; white-space: normal; box-shadow: inset -1px 0 0 var(--grid); }
+.pt-table th.pt-player { z-index: 3; }
+.pt-name { display: flex; align-items: center; flex-wrap: wrap; gap: 2px 4px; font-weight: 600; }
+.pt-owner { display: inline-flex; align-items: center; gap: 5px; vertical-align: middle; }
+.pt-table td.pt-pts { font-weight: 700; }
+.pt-table tbody tr:hover td.pt-player { background: var(--surface-2); }
+.pt-table tr.is-live .pt-name .pl-link { font-weight: 800; color: var(--ink); }
+.pt-table tr.is-poss td, .pt-table tr.is-poss td.pt-player { background: #fdf0d5; }
+.pt-table tr.is-rz td, .pt-table tr.is-rz td.pt-player { background: #fde4e4; }
+.pt-table tr.is-poss td.pt-player { box-shadow: inset 4px 0 0 #c98a00, inset -1px 0 0 var(--grid); }
+.pt-table tr.is-rz td.pt-player { box-shadow: inset 4px 0 0 #d32f2f, inset -1px 0 0 var(--grid); }
+.pt-table .nm-short { display: none; }
+.pt-sub { font-size: .72rem; color: var(--muted); font-weight: 400; white-space: nowrap; }
+.pt-player .pt-sub { white-space: normal; }
+#ut-mode button { white-space: nowrap; }
+/* Team usage (Players tab): weekly snap share heat map grouped by position */
+.ut-table td.num { min-width: 52px; }
+.ut-table tr.ut-group td { background: var(--surface-2); font-weight: 700; font-size: .8rem; border-top: 2px solid var(--grid); }
+.ut-table tr.ut-group td.pt-player { background: var(--surface-2); }
+.ut-table tr.ut-total td { font-weight: 600; }
+.ut-table td.ut-dnp { color: var(--muted); }
+.ut-table td.ut-none { color: var(--axis); }
+.ut-owner { margin-top: 2px; font-size: .74rem; color: var(--ink-2); display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.ut-owner .logo { width: 14px; height: 14px; }
 .upg-btn { align-self: center; border: 1px solid #16a34a; background: #e8f7ee; color: #15803d; font: inherit; font-weight: 800; font-size: .8rem; border-radius: 999px; padding: 4px 10px; cursor: pointer; white-space: nowrap; }
 .upg-btn:hover { background: #d3f0dd; }
 .upg-btn.sample { cursor: default; padding: 1px 6px; font-size: .7rem; }
@@ -548,8 +583,12 @@ td.gs-cell-final .nm, tr.gs-cell-final td .pl-link { color: var(--ink-2); }
   .lv-row, .mx-row.lv-head { grid-template-columns: 1fr 4px 1fr; }
   /* Mock trade stays side by side on phones. */
   .mock { gap: 6px; }
-  .mock .card { padding: 8px; gap: 6px; }
-  .mock select, .ta-me select { font-size: .78rem; padding: 6px 4px; }
+  .mock .card { padding: 10px 8px; gap: 6px; }
+  .mock select, .ta-me select { font-size: .82rem; padding: 8px 6px; }
+  .mock-chip { padding: 5px 2px 5px 8px; gap: 2px; }
+  .mock-chip-nm { font-size: .82rem; }
+  .mock-chip-sub { font-size: .72rem; }
+  .mock-rm { width: 26px; height: 26px; }
   .mock-head { gap: 4px; }
   .mock-head .logo { display: none; }
   .tr-impact { gap: 8px; font-size: .8rem; }
@@ -559,6 +598,11 @@ td.gs-cell-final .nm, tr.gs-cell-final td .pl-link { color: var(--ink-2); }
   .pr-row .mx-pts { min-width: 40px; }
   .upg-btn { padding: 4px 8px; }
   .pr-sum-key { margin-left: 0; }
+  /* Player tables on phones: short names and team abbreviations, narrower pinned column. */
+  .pt-table .nm-full { display: none; }
+  .pt-table .nm-short { display: inline; }
+  table.data.pt-table th, table.data.pt-table td { padding: 7px 7px; font-size: .82rem; }
+  .pt-table .pt-player { min-width: 128px; max-width: 150px; }
   .lv-players { padding: 8px 6px 10px; }
   .mx-row.lv-head > div { padding: 0 6px; }
   .mx-side { padding: 7px 6px; gap: 4px; }
@@ -581,3 +625,14 @@ td.gs-cell-final .nm, tr.gs-cell-final td .pl-link { color: var(--ink-2); }
   .h2h .slot { width: 40px; }
   .hide-sm { display: none; }
 }
+
+/* Shortcut buttons that open ESPN (where the move is made) */
+.espn-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 8px; }
+.espn-btn { display: inline-flex; align-items: center; gap: 4px; padding: 6px 12px; border-radius: 999px; border: 1px solid #c8102e; color: #c8102e; background: #fff5f6; font-weight: 700; font-size: .85rem; text-decoration: none; white-space: nowrap; }
+.espn-btn:hover { background: #ffe5e9; }
+.espn-arrow { font-size: .8em; }
+.espn-btn.sm { padding: 3px 9px; font-size: .75rem; }
+.espn-btn.xs { padding: 1px 7px; font-size: .7rem; margin-left: 2px; vertical-align: middle; }
+.upg-act { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; align-self: center; }
+.toast { position: fixed; left: 50%; bottom: calc(18px + env(safe-area-inset-bottom)); transform: translate(-50%, 20px); background: #1f2328; color: #fff; padding: 10px 16px; border-radius: 10px; font-size: .85rem; max-width: calc(100vw - 32px); box-shadow: 0 6px 20px rgba(0,0,0,.25); opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s; z-index: 60; }
+.toast.show { opacity: 1; transform: translate(-50%, 0); }
