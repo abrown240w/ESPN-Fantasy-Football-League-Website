@@ -2724,6 +2724,7 @@ function renderLeagueSelect() {
   sel.innerHTML = LEAGUES.map((l) => `<option value="${l.id}" ${l.id === current ? "selected" : ""}>${esc(l.label)}</option>`).join("")
     + (known ? "" : `<option value="${esc(current)}" selected>League ${esc(current)}</option>`);
   sel.hidden = state.demo;
+  $("league-name").hidden = !state.demo; // the dropdown doubles as the title
 }
 
 let pendingWeek = parseInt(params.get("week")) || null;
@@ -2751,7 +2752,8 @@ async function loadLeague(week) {
 function renderHeader() {
   const b = state.base, wk = state.week?.week;
   $("league-name").textContent = b.name;
-  $("league-meta").textContent = `${b.season || ""} season · ${Object.keys(b.teams).length} teams`;
+  const label = LEAGUES.find((l) => l.id === (state.leagueId || LEAGUES[0].id))?.label;
+  $("league-meta").textContent = [!state.demo && label && b.name !== label ? b.name : "", `${b.season || ""} season`, `${Object.keys(b.teams).length} teams`].filter(Boolean).join(" · ");
   document.title = `${b.name} · Weekly Breakdown`;
   $("week-select").innerHTML = Array.from({ length: b.weeks }, (_, i) => i + 1)
     .map((w) => `<option value="${w}">Week ${w}${w > b.regWeeks ? " (playoffs)" : ""}${w === b.current ? " · current" : ""}</option>`).join("");
@@ -2878,10 +2880,14 @@ function initSwipeTabs() {
     }
     return false;
   };
+  let onHeader = false;
   document.addEventListener("touchstart", (e) => {
     armed = false;
     if (e.touches.length !== 1 || !state.week || document.body.classList.contains("modal-open")) return;
-    if (e.target.closest("input, select, textarea, .topbar") || scrollsSideways(e.target)) return;
+    // Swipes on the league header (above the tabs) switch leagues; anywhere below switches tabs.
+    onHeader = !!e.target.closest(".topbar-inner");
+    if (onHeader && state.demo) return;
+    if (e.target.closest("input, textarea") || (!onHeader && (e.target.closest("select, .topbar") || scrollsSideways(e.target)))) return;
     sx = e.touches[0].clientX;
     sy = e.touches[0].clientY;
     t0 = Date.now();
@@ -2892,6 +2898,17 @@ function initSwipeTabs() {
     armed = false;
     const t = e.changedTouches[0], dx = t.clientX - sx, dy = t.clientY - sy;
     if (Math.abs(dx) < 70 || Math.abs(dx) < Math.abs(dy) * 2 || Date.now() - t0 > 700) return;
+    if (onHeader) {
+      const i = LEAGUES.findIndex((l) => l.id === (state.leagueId || LEAGUES[0].id));
+      const next = LEAGUES[i + (dx < 0 ? 1 : -1)];
+      if (!next) return;
+      const brand = document.querySelector(".brand");
+      brand.classList.remove("slide-left", "slide-right");
+      void brand.offsetWidth;
+      brand.classList.add(dx < 0 ? "slide-left" : "slide-right");
+      switchLeague(next.id, "");
+      return;
+    }
     const tabs = [...document.querySelectorAll("#tabs button[data-tab]")];
     const next = tabs[tabs.findIndex((b) => b.dataset.tab === state.tab) + (dx < 0 ? 1 : -1)];
     if (next) switchTab(next.dataset.tab, dx < 0 ? "left" : "right");
