@@ -654,7 +654,6 @@ function matchupDetail(m) {
   return `<div class="card detail mx">
     <div class="mx-head">${headSide(home, H, false)}${headSide(away, A, true)}</div>
     <div class="mx-wps">${wpBar(wpH, "var(--home)", false)}<span class="mx-wp-label">${st === "final" ? "Final" : "Win probability"}</span>${wpBar(wpA, "var(--away)", true)}</div>
-    <div class="gs-legend small muted"><span><i class="lg lg-live"></i><strong>Bold</strong> = playing now</span><span><i class="lg lg-poss"></i>Offense on the field</span><span><i class="lg lg-rz"></i>In the red zone</span></div>
     <div class="mx-rows">${rows.map((r) => row(r, false)).join("")}</div>
     ${bn ? `<div class="mx-bench-head">Bench</div><div class="mx-rows">${benchRows.map((r) => row(r, true)).join("")}</div>` : ""}
     <h3 style="margin-top:16px">Key takeaways</h3>
@@ -832,10 +831,7 @@ function drawPlayerTable(el, keys, rows, sortState, sp, empty) {
   el.replaceChildren(sortableTable(cols, rows, sortState, redraw, { rowClass: gsState, tableClass: "pt-table" }));
 }
 
-// Legend for the row highlighting, shared by the player lists.
-const statusLegend = () => `<div class="gs-legend small muted"><span><i class="lg lg-live"></i><strong>Bold</strong> = playing now</span><span><i class="lg lg-poss"></i>Offense on the field</span><span><i class="lg lg-rz"></i>In the red zone</span></div>`;
 const posOptions = (current) => ["ALL", ...POS_ORDER].map((p) => `<option ${current === p ? "selected" : ""}>${p}</option>`).join("");
-const injLegend = () => `<div class="inj-legend small muted"><span><span class="badge wv">W</span> On waivers</span>${Object.entries(INJURY).filter(([k]) => k !== "PROBABLE").map(([, [s, full, sev]]) => `<span><span class="badge ${sev ? "out" : "inj"}">${s}</span> ${full}</span>`).join("")}</div>`;
 const tableHint = () => `<p class="muted small pt-hint">Tap a column header to sort. Swipe sideways for more columns.</p>`;
 
 function renderFreeAgents(el) {
@@ -844,7 +840,6 @@ function renderFreeAgents(el) {
   if (!d) return;
   const all = d.players.map((p) => faRow(p, w));
   el.innerHTML = `<div class="section-head"><h2>Available free agents</h2><span class="muted small">Unrostered in your league now · week ${w.week} projections</span></div>
-    ${injLegend()}${statusLegend()}
     <div class="filters">
       <input id="fa-q" type="search" placeholder="Search free agents…" value="${esc(f.faQ)}">
       <select id="fa-pos" aria-label="Position">${posOptions(f.faPos)}</select>
@@ -878,7 +873,6 @@ function renderRosteredPlayers(el) {
   el.innerHTML = `<div class="section-head"><h2>Week ${w.week} ${showPts ? "top scorers" : "top projections"} by position</h2></div>
     <div class="grid grid-awards">${leaders.map(({ pos, p }) => `<div class="card award"><div class="label">${pos}</div><div class="value">${f1(showPts ? p.actual : p.proj)}</div><div class="who">${plink(p.id, p.name)}${injBadge(p)}</div><div class="why">${esc(team(p.teamId).name)} · ${p.starter ? "started" : "on bench"}${p.diff != null ? ` · ${signed(p.diff)} vs proj` : ""}</div></div>`).join("")}</div>
     <div class="section-head"><h2>All rostered players</h2></div>
-    ${injLegend()}${statusLegend()}
     <div class="filters">
       <input id="pf-q" type="search" placeholder="Search players…" value="${esc(f.q)}">
       <select id="pf-pos" aria-label="Position">${posOptions(f.pos)}</select>
@@ -911,7 +905,6 @@ function renderAllPlayers(el) {
   const seen = new Set(rostered.map((p) => p.id));
   const all = [...rostered, ...d.players.filter((p) => !seen.has(p.id)).map((p) => faRow(p, w))];
   el.innerHTML = `<div class="section-head"><h2>All players</h2><span class="muted small">Rostered players plus the top available free agents · week ${w.week}</span></div>
-    ${injLegend()}${statusLegend()}
     <div class="filters">
       <input id="all-q" type="search" placeholder="Search all players…" value="${esc(f.allQ)}">
       <select id="all-pos" aria-label="Position">${posOptions(f.allPos)}</select>
@@ -956,7 +949,7 @@ const AWARD_ICONS = {
   unlucky: `<path d="M16.4 20.6c2.6 0 4.1-1.6 3.5-4.3" stroke="#151515" stroke-width="1.8" fill="none" stroke-linecap="round" class="edge-stroke"/><path class="edge" d="M7 21c-.6-3 .2-6.2 2.2-8.2-1-1.2-1.4-2.6-1.2-4l-.7-3.6 2.6 1.9a5 5 0 0 1 2.8 0l2.6-1.9-.7 3.6c.2 1.4-.2 2.8-1.2 4 2 2 2.8 5.2 2.2 8.2z" fill="#151515"/><circle cx="10" cy="9.8" r=".75" fill="#f2d33a"/><circle cx="12.6" cy="9.8" r=".75" fill="#f2d33a"/>`,
 };
 const AWARD_ORDER = ["top", "low", "bench", "lineup", "blowout", "lucky", "unlucky"];
-const AWARD_NAMES = { top: "Top score", low: "Lowest score", bench: "Most bench points wasted", lineup: "Best lineup", blowout: "Biggest blowout", lucky: "Luckiest win", unlucky: "Unluckiest loss" };
+const AWARD_NAMES = { top: "Top score", low: "Lowest score", bench: "Most bench points wasted", lineup: "Optimal lineup", blowout: "Biggest blowout", lucky: "Luckiest win", unlucky: "Unluckiest loss" };
 const awardIcon = (key, size = 16) => `<svg class="aw-icon" viewBox="0 0 24 24" width="${size}" height="${size}" aria-hidden="true">${AWARD_ICONS[key]}</svg>`;
 
 // Weekly awards; shared by the Managers tab and the season tally.
@@ -978,7 +971,7 @@ function weekAwards(w) {
   // Lineup, margin and luck awards only mean something once the week is over.
   if (final) {
     const eff = best((s) => s.efficiency ?? 0);
-    add("lineup", "Best lineup", pct(eff.efficiency ?? 0), eff, `Only ${f1(eff.benchLeft)} pts left on the bench`);
+    add("lineup", "Optimal lineup", pct(eff.efficiency ?? 0), eff, `Only ${f1(eff.benchLeft)} pts left on the bench`);
     if (games.length) {
       const blow = [...games].sort((a, b) => margin(b) - margin(a))[0];
       const close = [...games].sort((a, b) => margin(a) - margin(b))[0];
@@ -1040,7 +1033,7 @@ function renderManagers() {
 
   el.innerHTML = `<div class="section-head"><h2>Week ${w.week} awards${so} ${statusBadge(w.status)}</h2></div>
     <div class="grid grid-awards">${awards.map((a) => `<div class="card award"><div class="label">${AWARD_ICONS[a.key] ? awardIcon(a.key) + " " : ""}${a.label}</div><div class="value">${a.value}</div><div class="who">${teamName(a.side.teamId, 20)}</div><div class="why">${esc(team(a.side.teamId).owner)}${a.why ? " · " + a.why : ""}</div></div>`).join("")}</div>
-    <div class="section-head"><h2>Manager report card</h2><span class="muted small">Optimal = best lineup possible from that roster this week</span></div>
+    <div class="section-head"><h2>Manager report card</h2><span class="muted small">Optimal = the highest-scoring lineup possible from that roster this week</span></div>
     <div id="mg-table"></div>`;
   const cols = [
     { key: "name", label: "Team", sort: (s) => team(s.teamId).name, render: (s) => `<div class="team-cell">${logoImg(team(s.teamId), 30)}<div><strong>${esc(team(s.teamId).name)}</strong><div class="small muted">${esc(team(s.teamId).owner)}</div></div></div>` },
@@ -1624,19 +1617,7 @@ function renderRoster() {
 
   const t = team(sel);
   const side = w.sides.find((s) => String(s.teamId) === String(sel));
-  const m = w.matchups.find((x) => String(x.home?.teamId) === String(sel) || String(x.away?.teamId) === String(sel));
-  const opp = m && (String(m.home.teamId) === String(sel) ? m.away : m.home);
-  const myWp = m?.away && (String(m.home.teamId) === String(sel) ? m.wp : 1 - m.wp);
   const standing = 1 + Object.values(state.base.teams).filter((o) => o.seed < t.seed).length;
-  const played = w.status !== "upcoming";
-
-  let matchupLine = `<span class="muted">No matchup in week ${w.week}.</span>`;
-  if (side && opp) {
-    const score = played ? `${f2(side.score)} – ${f2(opp.score)}` : `proj ${f1(side.proj)} – ${f1(opp.proj)}`;
-    const result = w.status === "final" ? (side.score > opp.score ? `<span class="badge live">W</span>` : side.score < opp.score ? `<span class="badge out">L</span>` : `<span class="badge">T</span>`)
-      : `<span class="muted small">${pct(myWp)} win chance</span>`;
-    matchupLine = `Week ${w.week} vs ${teamName(opp.teamId, 22)} · <strong>${score}</strong> ${result}`;
-  }
 
   // Upgrade button: how many available players at the same position are projected higher this week.
   const fa = faData();
@@ -1653,26 +1634,27 @@ function renderRoster() {
   let body = `<p class="muted">${esc(t.name)} has no lineup for week ${w.week}.</p>`;
   if (side) {
     const bench = side.bench.filter((p) => p.slotId !== IR), ir = side.bench.filter((p) => p.slotId === IR);
-    const starterValue = state.values?.byId ? fmtVal(sum(side.starters, (p) => valueOf(p.id) || 0)) : null;
-    body = `<div class="pr-sum small"><span><span class="muted">Starters proj</span> <strong>${f1(side.proj)}</strong></span><span><span class="muted">Points</span> <strong>${played ? f2(side.score) : "–"}</strong></span>${starterValue ? `<span><span class="muted">Starters value</span> <strong>${starterValue}</strong></span>` : ""}<span class="muted pr-sum-key"><span class="upg-btn sample">▲</span> = free agents projected ${UPGRADE_MIN_GAIN}+ pts higher</span></div>`
-      + list("Starters", side.starters) + list("Bench", bench) + list("Injured reserve", ir);
+    body = list("Starters", side.starters) + list("Bench", bench) + list("Injured reserve", ir);
   }
   const rosterValue = side && state.values?.byId?.size ? sum(side.players, (p) => valueOf(p.id) || 0) : null;
+  const starterValue = side && state.values?.byId?.size ? sum(side.starters, (p) => valueOf(p.id) || 0) : null;
+  // Team header: who it is and this week's score (or projection) — the opponent lives on the Matchups tab.
+  const st = w.status;
+  const card = `<div class="rh-top">${logoImg(t, 44)}
+      <div class="rh-id"><strong class="mc-name">${esc(t.name)}</strong><span class="mc-owner">${esc(t.owner)} · ${recordStr(t)}</span></div>
+      ${side ? `<div class="rh-score"><span class="mc-score">${st === "upcoming" ? f1(side.proj) : f2(side.score)}</span><small class="mc-proj">${st === "upcoming" ? `week ${w.week} projection` : `proj ${f1(st === "live" ? side.liveProj : side.proj)}`}</small></div>` : ""}
+    </div>`;
+  const stats = [
+    `<span><strong>${ordinal(standing)}</strong> place</span>`,
+    `<span><strong>${f1(t.pf)}</strong> PF</span>`,
+    rosterValue != null && `<span><strong>${fmtVal(rosterValue)}</strong> roster value</span>`,
+    starterValue != null && `<span><strong>${fmtVal(starterValue)}</strong> starters value</span>`,
+    side && st !== "upcoming" && `<span><strong>${f1(side.benchLeft)}</strong> pts left on bench</span>`,
+  ].filter(Boolean).join("");
   const opts = ids.map((id) => `<option value="${id}" ${id === String(sel) ? "selected" : ""}>${esc(team(id).name)} (${esc(team(id).owner)})</option>`).join("");
 
   el.innerHTML = `<div class="section-head"><h2>Rosters</h2><label class="small muted ta-me">Team <select id="roster-team">${opts}</select></label></div>
-    <div class="card roster-head">
-      ${logoImg(t, 56)}
-      <div class="roster-id"><h3>${esc(t.name)}</h3><div class="muted">${esc(t.owner)}</div><div class="roster-match">${matchupLine}</div></div>
-      <div class="roster-stats">
-        <div><span class="muted small">Record</span><strong>${recordStr(t)}</strong></div>
-        <div><span class="muted small">Standing</span><strong>${ordinal(standing)}</strong></div>
-        <div><span class="muted small">Points for</span><strong>${f1(t.pf)}</strong></div>
-        ${rosterValue != null ? `<div><span class="muted small">Roster value</span><strong>${fmtVal(rosterValue)}</strong></div>` : ""}
-      </div>
-    </div>
-    <p class="small muted">Lineup for week ${w.week}. Change the week at the top to see other weeks.</p>
-    ${statusLegend()}
+    <div class="card roster-head">${card}<div class="rh-stats">${stats}</div></div>
     ${body}
     ${fcCredit()}${nvCredit()}${wxCredit()}`;
   $("roster-team").addEventListener("change", (e) => { state.rosterTeam = e.target.value; store.set(key, e.target.value); renderRoster(); });
@@ -1999,7 +1981,7 @@ function renderUsage() {
       <select id="ut-team" aria-label="NFL team">${teams.map((t) => `<option value="${t}" ${t === T ? "selected" : ""}>${esc(NFL_NAMES[t])}</option>`).join("")}</select>
       <div class="seg" id="ut-mode">${Object.entries(UT_MODES).map(([k, m]) => `<button data-m="${k}" class="${f.utMode === k ? "active" : ""}">${m.label}</button>`).join("")}</div>
     </div>
-    <p class="muted small pt-hint">${tip} Darker green = bigger share. ▲▼ = the latest game is well above or below the player's earlier average. Swipe sideways for more weeks.</p>
+    <p class="muted small pt-hint">${tip}</p>
     ${players.length ? `<div class="table-wrap"><table class="data pt-table ut-table"><thead><tr><th class="pt-player">Player</th>${weeks.map((wk) => `<th class="num">Wk ${wk}</th>`).join("")}<th class="num">Season</th></tr></thead>
       <tbody><tr class="ut-total"><td class="pt-player">Team total<div class="pt-sub">${whatCap}</div></td>${weeks.map((wk) => (!tw[wk] ? noGame : `<td class="num">${teamTot(wk)}</td>`)).join("")}<td class="num">${seasonTot}</td></tr>
       ${groups}</tbody></table></div>` : `<p class="muted">No ${M.what} recorded for this team yet.</p>`}${nvCredit()}`;
@@ -2759,17 +2741,97 @@ async function loadLeague(week) {
   }
   setLoading(false);
   const b = state.base;
+  renderHeader();
+  // A ?week= link applies to the first load only.
+  const wk = Math.min(Math.max(week || pendingWeek || b.current, 1), b.weeks);
+  pendingWeek = null;
+  await loadWeek(wk);
+}
+
+function renderHeader() {
+  const b = state.base, wk = state.week?.week;
   $("league-name").textContent = b.name;
   $("league-meta").textContent = `${b.season || ""} season · ${Object.keys(b.teams).length} teams`;
   document.title = `${b.name} · Weekly Breakdown`;
   $("week-select").innerHTML = Array.from({ length: b.weeks }, (_, i) => i + 1)
     .map((w) => `<option value="${w}">Week ${w}${w > b.regWeeks ? " (playoffs)" : ""}${w === b.current ? " · current" : ""}</option>`).join("");
+  if (wk) $("week-select").value = wk;
   $("week-nav").hidden = false;
   $("tabs").hidden = false;
-  // A ?week= link applies to the first load only.
-  const wk = Math.min(Math.max(week || pendingWeek || b.current, 1), b.weeks);
-  pendingWeek = null;
-  await loadWeek(wk);
+}
+
+// Pull-to-refresh: re-fetch the league and the shown week behind the scenes, then redraw in place
+// (no spinner over the page, no blank screen). Everything else reloads as its tab needs it.
+async function refreshAll() {
+  const wk = state.week?.week;
+  if (!wk || !state.base) return loadLeague(wk);
+  try {
+    const base = buildBase(await api(["mTeam", "mSettings", "mStatus", "mMatchupScore"]));
+    Object.assign(state, {
+      base, weekCache: {}, awardTally: null, activity: null, history: null, values: null, usage: null,
+      weather: null, fa: null, gameStatus: null, playerCache: null,
+    });
+    state.week = await getWeek(wk, true);
+    renderHeader();
+    if (!state.demo) banner(""); // clear any earlier "couldn't refresh" message
+    render();
+    if (state.tab === "live") await refreshLive();
+  } catch {
+    if (!state.demo) banner("Couldn't refresh. Check your connection and pull down to try again.");
+  }
+}
+
+// Refresh button (computers): spins while refreshing. Hidden on touch screens, which pull to refresh.
+function initRefreshButton() {
+  const b = $("refresh");
+  if (!b) return;
+  b.addEventListener("click", async () => {
+    if (b.classList.contains("busy")) return;
+    b.classList.add("busy");
+    try { await refreshAll(); } finally { b.classList.remove("busy"); }
+  });
+}
+
+function initPullToRefresh() {
+  if (!("ontouchstart" in window)) return;
+  const ind = document.createElement("div");
+  ind.className = "ptr";
+  ind.setAttribute("aria-hidden", "true");
+  ind.innerHTML = `<span class="ptr-icon">↻</span>`;
+  document.body.appendChild(ind);
+  const TRIGGER = 60, MAX = 90;
+  let startY = null, startX = 0, dy = 0, pulling = false, busy = false;
+  const place = (y, turn) => { ind.style.transform = `translate(-50%, ${y}px)`; ind.firstChild.style.transform = `rotate(${turn}deg)`; };
+  const reset = () => { ind.classList.remove("show", "ready", "busy"); place(0, 0); pulling = false; startY = null; };
+  document.addEventListener("touchstart", (e) => {
+    startY = null;
+    if (busy || window.scrollY > 0 || e.touches.length > 1 || document.body.classList.contains("modal-open")) return;
+    startY = e.touches[0].clientY;
+    startX = e.touches[0].clientX;
+  }, { passive: true });
+  document.addEventListener("touchmove", (e) => {
+    if (startY == null) return;
+    const y = e.touches[0].clientY - startY, x = e.touches[0].clientX - startX;
+    if (!pulling) {
+      // Only a mostly-downward drag from the very top counts (sideways table swipes don't).
+      if (y < -4 || Math.abs(x) > 12) { startY = null; return; }
+      if (y < 10 || Math.abs(x) > y || window.scrollY > 0) return;
+      pulling = true;
+      ind.classList.add("show");
+    }
+    dy = Math.min(MAX, (y - 10) * 0.5);
+    place(dy, dy * 4);
+    ind.classList.toggle("ready", dy >= TRIGGER);
+  }, { passive: true });
+  document.addEventListener("touchend", async () => {
+    if (!pulling) { startY = null; return; }
+    if (dy < TRIGGER) return reset();
+    busy = true;
+    ind.classList.add("busy");
+    place(56, 0);
+    try { await refreshAll(); } finally { busy = false; reset(); }
+  });
+  document.addEventListener("touchcancel", () => { if (!busy) reset(); });
 }
 
 // Shown when a league fails to load. Only the leagues in LEAGUES can be viewed, so there's no form here.
@@ -2790,30 +2852,61 @@ function setUrl() {
   history.replaceState(null, "", `${location.pathname}${q.toString() ? "?" + q.toString().replace("demo=", "demo") : ""}`);
 }
 
+// Show a tab. `from` ("left"/"right") slides the new tab in after a swipe.
+function switchTab(tab, from) {
+  state.tab = tab;
+  store.set("ffb.tab", tab);
+  render();
+  document.querySelector(`#tabs button[data-tab="${tab}"]`)?.scrollIntoView({ inline: "center", block: "nearest", behavior: "smooth" });
+  if (from) {
+    const v = $(`view-${tab}`);
+    v.classList.remove("slide-left", "slide-right");
+    void v.offsetWidth; // restart the animation
+    v.classList.add(from === "left" ? "slide-left" : "slide-right");
+    window.scrollTo(0, 0);
+  }
+}
+
+// Phones: swipe left / right to move to the next / previous tab. Swipes that start on something that
+// scrolls sideways (wide tables, the tab bar), on a form control, or while a popup is open are left alone.
+function initSwipeTabs() {
+  if (!("ontouchstart" in window)) return;
+  let sx = 0, sy = 0, t0 = 0, armed = false;
+  const scrollsSideways = (el) => {
+    for (; el && el !== document.body; el = el.parentElement) {
+      if (el.scrollWidth > el.clientWidth + 2 && /auto|scroll/.test(getComputedStyle(el).overflowX)) return true;
+    }
+    return false;
+  };
+  document.addEventListener("touchstart", (e) => {
+    armed = false;
+    if (e.touches.length !== 1 || !state.week || document.body.classList.contains("modal-open")) return;
+    if (e.target.closest("input, select, textarea, .topbar") || scrollsSideways(e.target)) return;
+    sx = e.touches[0].clientX;
+    sy = e.touches[0].clientY;
+    t0 = Date.now();
+    armed = true;
+  }, { passive: true });
+  document.addEventListener("touchend", (e) => {
+    if (!armed) return;
+    armed = false;
+    const t = e.changedTouches[0], dx = t.clientX - sx, dy = t.clientY - sy;
+    if (Math.abs(dx) < 70 || Math.abs(dx) < Math.abs(dy) * 2 || Date.now() - t0 > 700) return;
+    const tabs = [...document.querySelectorAll("#tabs button[data-tab]")];
+    const next = tabs[tabs.findIndex((b) => b.dataset.tab === state.tab) + (dx < 0 ? 1 : -1)];
+    if (next) switchTab(next.dataset.tab, dx < 0 ? "left" : "right");
+  }, { passive: true });
+}
+
 function bindUi() {
   $("tabs").addEventListener("click", (e) => {
     const b = e.target.closest("button[data-tab]");
-    if (!b) return;
-    state.tab = b.dataset.tab;
-    store.set("ffb.tab", state.tab);
-    render();
+    if (b) switchTab(b.dataset.tab);
   });
   const go = async (w) => { state.openMatchup = null; await loadWeek(w); setUrl(); };
   $("week-select").addEventListener("change", (e) => go(+e.target.value));
   $("prev-week").addEventListener("click", () => state.week && go(state.week.week - 1));
   $("next-week").addEventListener("click", () => state.week && go(state.week.week + 1));
-  $("refresh").addEventListener("click", async () => {
-    const wk = state.week?.week;
-    state.weekCache = {};
-    state.awardTally = null;
-    state.activity = null;
-    state.history = null;
-    state.values = null;
-    state.usage = null;
-    state.weather = null;
-    state.fa = null;
-    await loadLeague(wk);
-  });
   $("retry").addEventListener("click", () => loadLeague());
   $("league-select").addEventListener("change", (e) => switchLeague(e.target.value, ""));
   // Keep final / live / on-field markers current while games are being played.
@@ -2847,14 +2940,92 @@ function watchForUpdates() {
   siteVersion().then((v) => { version = v; });
   document.addEventListener("visibilitychange", async () => {
     if (document.visibilityState === "hidden") { hiddenAt = Date.now(); return; }
+    if (state.reloadPending) return freshReload();
     if (!version || Date.now() - hiddenAt < 30000) return;
     const now = await siteVersion();
-    if (now && now !== version) location.reload();
+    if (now && now !== version) freshReload();
   });
+}
+// Reload onto the newest version: the offline copy is refreshed first so the reload doesn't
+// come back up on the old one.
+async function freshReload() {
+  const sw = navigator.serviceWorker?.controller;
+  if (sw) {
+    await new Promise((done) => {
+      const ch = new MessageChannel();
+      ch.port1.onmessage = done;
+      sw.postMessage({ type: "refresh" }, [ch.port2]);
+      setTimeout(done, 5000);
+    });
+  }
+  location.reload();
+}
+
+// ---------- Offline support ----------
+// sw.js keeps a copy of the site and the last data loaded. It tells the page when it had to fall
+// back to saved data (no signal) and when a newer version of the site has been published.
+function initOffline() {
+  if (!("serviceWorker" in navigator)) return;
+  navigator.serviceWorker.register("/sw.js").catch(() => {});
+  const opened = Date.now();
+  navigator.serviceWorker.addEventListener("message", (e) => {
+    const m = e.data || {};
+    if (m.type === "offline") showOffline(m.at);
+    else if (m.type === "online") showOffline(null);
+    else if (m.type === "updated") {
+      // Just opened: switch to the new version right away. Otherwise wait until the app is reopened.
+      if (Date.now() - opened < 10000 && document.visibilityState === "visible") freshReload();
+      else state.reloadPending = true;
+    }
+  });
+  addEventListener("online", () => showOffline(null));
+}
+function showOffline(at) {
+  let n = $("offline-note");
+  if (at === null) { if (n) n.hidden = true; return; }
+  if (!n) {
+    n = document.createElement("div");
+    n.id = "offline-note";
+    n.className = "offline-note";
+    n.setAttribute("role", "status");
+    $("banner").before(n);
+  }
+  const when = at ? new Date(at).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" }) : "earlier";
+  n.innerHTML = `<strong>No connection</strong> · showing data saved ${esc(when)}. It updates when you're back online.`;
+  n.hidden = false;
+}
+
+// ---------- ESPN sign-in check ----------
+// The ESPN cookies in Netlify (ESPN_S2 / SWID) expire every so often. When ESPN clearly says they
+// no longer work, show how to replace them. Can be dismissed for a few days.
+async function checkEspnSignIn() {
+  if (state.demo) return;
+  const dismissed = Number(store.get("ffb.authDismissed") || 0);
+  if (Date.now() - dismissed < 3 * 864e5) return;
+  let d;
+  try { d = await (await fetch("/api/auth")).json(); } catch { return; }
+  if (d.status !== "expired" && d.status !== "bad_swid") return;
+  const n = document.createElement("div");
+  n.className = "banner auth-note";
+  n.innerHTML = `<strong>The site's ESPN sign-in has ${d.status === "expired" ? "expired" : "a problem"}.</strong>
+    Private leagues and past seasons may not load until it's refreshed.
+    <details><summary>How to fix it (about 2 minutes)</summary><ol>
+      <li>On a computer, sign in at <a href="https://fantasy.espn.com/football/" target="_blank" rel="noopener">fantasy.espn.com</a>.</li>
+      <li>Open the browser's developer tools (F12) › Application › Cookies › espn.com, and copy the values of <code>espn_s2</code> and <code>SWID</code>.</li>
+      <li>In Netlify: Site configuration › Environment variables. Paste them into <code>ESPN_S2</code> and <code>SWID</code>.</li>
+      <li>Deploys › Trigger deploy › Deploy site, so the new values take effect.</li>
+    </ol></details>
+    <button type="button" class="link-btn auth-dismiss">Hide for now</button>`;
+  $("banner").before(n);
+  n.querySelector(".auth-dismiss").addEventListener("click", () => { store.set("ffb.authDismissed", String(Date.now())); n.remove(); });
 }
 
 initTooltip();
 initPlayerModal();
+initOffline();
+initPullToRefresh();
+initSwipeTabs();
+initRefreshButton();
 watchForUpdates();
 bindUi();
-loadLeague();
+loadLeague().then(checkEspnSignIn);

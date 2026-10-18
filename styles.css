@@ -640,3 +640,44 @@ td.gs-cell-final .nm, tr.gs-cell-final td .pl-link { color: var(--ink-2); }
 .wx-roof { font-weight: 600; }
 .wx-roof.closed { color: var(--ink); }
 .g-at { font-weight: 600; color: var(--muted); margin-right: 2px; }
+
+/* Offline note and ESPN sign-in warning */
+.offline-note { margin: 10px 0; padding: 8px 12px; border-radius: 10px; background: #fff7e0; border: 1px solid #f0d58a; color: #6b4e00; font-size: .85rem; }
+.auth-note details { margin-top: 6px; }
+.auth-note summary { cursor: pointer; font-weight: 600; }
+.auth-note ol { margin: 6px 0 4px 18px; padding: 0; }
+.auth-note li { margin: 3px 0; }
+.auth-note code { font-size: .85em; background: rgba(0,0,0,.06); padding: 0 4px; border-radius: 4px; }
+.auth-note .auth-dismiss { margin-top: 4px; }
+
+/* Pull-to-refresh (phones): drag down from the top of the page */
+html, body { overscroll-behavior-y: contain; }
+.ptr { position: fixed; top: -44px; left: 50%; z-index: 70; width: 40px; height: 40px; border-radius: 50%; background: var(--surface); border: 1px solid var(--border); box-shadow: 0 4px 14px rgba(0,0,0,.18); display: flex; align-items: center; justify-content: center; opacity: 0; transform: translate(-50%, 0); pointer-events: none; }
+.ptr.show { opacity: 1; }
+.ptr:not(.show) { transition: transform .2s, opacity .2s; }
+.ptr-icon { font-size: 1.3rem; font-weight: 700; color: var(--muted); line-height: 1; }
+.ptr.ready .ptr-icon { color: #c8102e; }
+.ptr.busy { transition: transform .15s; }
+.ptr.busy .ptr-icon { color: #c8102e; animation: ptr-spin .8s linear infinite; }
+@keyframes ptr-spin { to { transform: rotate(360deg); } }
+
+/* Refresh button: computers only (touch screens pull down to refresh) */
+@media (hover: none) and (pointer: coarse) { .refresh-btn { display: none; } }
+.refresh-btn.busy { animation: ptr-spin .8s linear infinite; }
+
+/* Roster header: matchup card + one row of team stats */
+.card.roster-head { display: block; padding: 12px 14px; }
+.rh-stats { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--grid); font-size: .82rem; color: var(--muted); }
+.rh-stats strong { color: var(--ink); font-variant-numeric: tabular-nums; }
+.rh-top { display: flex; align-items: center; gap: 12px; }
+.rh-id { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.rh-score { display: flex; flex-direction: column; align-items: flex-end; text-align: right; }
+.rh-score .mc-score { margin-top: 0; }
+
+/* Swiping between tabs (phones): the new tab slides in from the side */
+main.wrap { overflow-x: clip; }
+.view.slide-left { animation: slide-from-right .22s ease-out; }
+.view.slide-right { animation: slide-from-left .22s ease-out; }
+@keyframes slide-from-right { from { transform: translateX(32px); opacity: .3; } to { transform: none; opacity: 1; } }
+@keyframes slide-from-left { from { transform: translateX(-32px); opacity: .3; } to { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .view.slide-left, .view.slide-right { animation: none; } }

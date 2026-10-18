@@ -54,7 +54,7 @@ export default async (req) => {
   }
 
   if (res.status === 401 || res.status === 403) {
-    return json(401, { error: "private", message: "ESPN says this league is private. Make it public in League Settings, or add ESPN_S2 and SWID env vars." });
+    return json(401, { error: "private", message: process.env.ESPN_S2 && process.env.SWID ? "ESPN didn't allow access to this league. The ESPN sign-in saved in Netlify (ESPN_S2 / SWID) may have expired, or that account isn't in this league." : "ESPN says this league is private. Make it public in League Settings, or add ESPN_S2 and SWID env vars." });
   }
   if (res.status === 404) {
     return json(404, { error: "not_found", message: `League ${leagueId} wasn't found for the ${season} season.` });
