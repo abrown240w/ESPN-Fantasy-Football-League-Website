@@ -522,5 +522,25 @@
     };
   }
 
-  window.DemoLeague = { response, activity, nfl, live, values, player, freeAgents, usage, weather, box };
+  // Same shape as /api/news: a couple of recent updates for some players.
+  function news(ids) {
+    const lines = [
+      ["was limited in practice Wednesday with a hamstring injury.", "He's considered questionable for Sunday; check back before kickoff."],
+      ["caught five of seven targets for 64 yards in Sunday's win.", "He has seen at least six targets in three straight games."],
+      ["is expected to handle lead-back duties with the starter sidelined.", "Coaches said the workload will be split, but he should see most early-down snaps."],
+      ["was a full participant in practice and has no injury designation.", "He's on track to play his usual role."],
+    ];
+    const players = {};
+    ids.forEach((id, i) => {
+      const n = Number(id);
+      if (n % 3 === 0) return;
+      const pl = allPlayers.find((p) => p.id === n);
+      const name = pl ? pl.fullName : "He";
+      const [head, story] = lines[(n + i) % lines.length];
+      players[id] = [{ headline: `${name} ${head}`, story: `${name} ${head} ${story}`, published: new Date(Date.now() - ((n % 40) + 1) * 3600e3).toISOString() }];
+    });
+    return { updated: Date.now(), players };
+  }
+
+  window.DemoLeague = { response, activity, nfl, live, values, player, freeAgents, usage, weather, box, news };
 })();
