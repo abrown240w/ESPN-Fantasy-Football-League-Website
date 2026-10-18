@@ -187,9 +187,9 @@ function compactLine(posId, s) {
   const n = (id) => Math.round(s[id] || 0);
   const count = (k, label) => (k > 1 ? `${k} ${label}` : k === 1 ? label : "");
   if (posId === 5) return `${n(83)}/${n(84)} FG, ${n(86)}/${n(87)} XP`;
-  if (posId === 16) return [count(n(99), "SK"), count(n(95), "INT"), count(n(96), "FR"), s[120] != null ? `${n(120)} PA` : ""].filter(Boolean).join(", ");
+  if (posId === 16) return [s[120] != null ? `${n(120)} PA` : "", s[127] != null ? `${n(127)} YA` : "", count(n(99), "SK"), count(n(95), "INT"), count(n(96), "FR"), count(n(106), "FF")].filter(Boolean).join(", ");
   if (posId === 1) return [`${n(3)} YDS`, count(n(4) + n(25), "TD"), count(n(20), "INT")].filter(Boolean).join(", ");
-  if (posId === 2) return [`${n(24) + n(42)} YDS`, count(n(25) + n(43), "TD"), n(53) ? `${n(53)} REC` : ""].filter(Boolean).join(", ");
+  if (posId === 2) return [`${n(24)} YDS`, count(n(25) + n(43), "TD"), n(53) ? `${n(53)} REC` : ""].filter(Boolean).join(", ");
   if (posId === 3 || posId === 4) return [`${n(53)} REC`, `${n(42) + n(24)} YDS`, count(n(43) + n(25), "TD")].filter(Boolean).join(", ");
   return "";
 }
@@ -487,7 +487,7 @@ function ensureGameStatus() {
             const poss = g.state === "in" && g.possession === me.proId;
             const oppPoss = g.state === "in" && !!g.possession && g.possession === them.proId;
             byPro[me.proId] = {
-              state: g.state, detail: g.detail, date: g.date, poss, redZone: poss && !!g.redZone,
+              id: g.id, state: g.state, detail: g.detail, date: g.date, poss, redZone: poss && !!g.redZone,
               oppPoss, oppRedZone: oppPoss && !!g.redZone,
               home: me === g.home, oppAbbr: them.abbr, score: me.score, oppScore: them.score,
             };
@@ -573,47 +573,69 @@ function renderMatchups() {
   const w = state.week, el = $("view-matchups");
   if (!w.matchups.length) { el.innerHTML = `<p class="muted">No matchups scheduled for week ${w.week}.</p>`; return; }
   const label = w.status === "final" ? "Final scores" : w.status === "live" ? "Live scores · win chance from ESPN" : "Projected · win chance from ESPN";
-  const head = `<div class="section-head"><h2>Week ${w.week} matchups ${statusBadge(w.status)}</h2><span class="muted small">${label}. ${MU_SPLIT.matches ? "Click" : "Tap"} a matchup for the full breakdown.</span></div>`;
-
-  // Desktop: matchups stacked on the left, the selected one's full breakdown beside them
-  // (starts on your own matchup). Phones: each card expands in place.
-  if (MU_SPLIT.matches) {
-    const mine = w.matchups.find((m) => [m.home?.teamId, m.away?.teamId].map(String).includes(String(myTeamId())));
-    if (!w.matchups.some((m) => m.id === state.openMatchup && m.away)) state.openMatchup = (mine?.away ? mine : w.matchups.find((m) => m.away))?.id ?? null;
-    const sel = w.matchups.find((m) => m.id === state.openMatchup);
-    el.innerHTML = `${head}<div class="mu-split">
-      <div class="mu-list">${w.matchups.map(matchupCard).join("")}</div>
-      <div class="mu-pane" id="mu-pane">${sel ? matchupDetail(sel, true) : `<p class="muted">Pick a matchup.</p>`}</div></div>`;
-    el.querySelectorAll(".matchup").forEach((c) => c.addEventListener("click", () => {
-      const m = w.matchups.find((x) => x.id === +c.dataset.id);
-      if (!m?.away || state.openMatchup === m.id) return;
-      state.openMatchup = m.id;
-      el.querySelectorAll(".matchup").forEach((b) => b.classList.toggle("open", b === c));
-      const pane = $("mu-pane");
-      pane.innerHTML = matchupDetail(m, true);
-      pane.scrollTop = 0;
-      pane.classList.remove("swap");
-      void pane.offsetWidth; // restart the fade
-      pane.classList.add("swap");
-    }));
-    return;
-  }
-  el.innerHTML = `${head}
-    <div class="grid grid-2 mu-grid" id="mu-grid">${w.matchups.map((m) => `<div class="mu-item">${matchupCard(m)}
-      ${m.away ? `<div class="collapse ${state.openMatchup === m.id ? "open" : ""}" data-mu="${m.id}" ${state.openMatchup === m.id ? "" : "inert"}><div class="collapse-inner">${matchupDetail(m, false)}</div></div>` : ""}</div>`).join("")}</div>`;
-  // Open/close slides (no redraw); only one breakdown open at a time.
-  const toggle = (id) => {
-    state.openMatchup = state.openMatchup === id ? null : id;
-    el.querySelectorAll(".collapse[data-mu]").forEach((c) => setOpen(c, +c.dataset.mu === state.openMatchup));
-    el.querySelectorAll(".matchup").forEach((b) => b.classList.toggle("open", +b.dataset.id === state.openMatchup));
-    const card = el.querySelector(`.matchup[data-id="${id}"]`);
-    if (card && card.getBoundingClientRect().top < 60) card.scrollIntoView({ behavior: "smooth", block: "start" });
-  };
-  el.querySelectorAll(".matchup").forEach((c) => c.addEventListener("click", () => toggle(+c.dataset.id)));
+  // Every matchup as a small tile up top (phones: a grid; desktop: a column on the left); the selected
+  // one fills the rest of the screen. Starts on your own matchup.
+  const mine = w.matchups.find((m) => [m.home?.teamId, m.away?.teamId].map(String).includes(String(myTeamId())));
+  if (!w.matchups.some((m) => m.id === state.openMatchup && m.away)) state.openMatchup = (mine?.away ? mine : w.matchups.find((m) => m.away))?.id ?? null;
+  const sel = w.matchups.find((m) => m.id === state.openMatchup);
+  const split = MU_SPLIT.matches;
+  el.innerHTML = `<div class="section-head"><h2>Week ${w.week} matchups ${statusBadge(w.status)}</h2><span class="muted small">${label}</span></div>
+    <div class="${split ? "mu-split" : "mu-stack"}">
+      <div class="${split ? "mu-list" : "mt-grid"}">${w.matchups.map(matchupTile).join("")}</div>
+      <div class="${split ? "mu-pane" : "mu-detail"}" id="mu-pane">${sel ? matchupDetail(sel, true) : `<p class="muted">Pick a matchup.</p>`}</div>
+    </div>`;
+  el.querySelectorAll(".mini-tile[data-mu]").forEach((c) => c.addEventListener("click", () => {
+    const m = w.matchups.find((x) => x.id === +c.dataset.mu);
+    if (!m?.away || state.openMatchup === m.id) return;
+    state.openMatchup = m.id;
+    el.querySelectorAll(".mini-tile[data-mu]").forEach((b) => b.classList.toggle("selected", b === c));
+    const pane = $("mu-pane");
+    pane.innerHTML = matchupDetail(m, true);
+    pane.scrollTop = 0;
+    pane.classList.remove("swap");
+    void pane.offsetWidth; // restart the fade
+    pane.classList.add("swap");
+    updateStickies();
+  }));
+  updateStickies();
 }
+// Small matchup tile: both fantasy teams with their scores (projections before kickoff) and the win chance.
+function matchupTile(m) {
+  const st = state.week.status;
+  if (!m.away) return `<button type="button" class="mini-tile bye" disabled><div class="mt-row"><span class="mt-team">${logoImg(team(m.home.teamId), 18)}${esc(team(m.home.teamId).abbrev)}</span><span class="mt-score">Bye</span></div></button>`;
+  const val = (sd) => (st === "upcoming" ? f1(sd.proj) : f2(sd.score));
+  const lead = st === "upcoming" ? null : m.home.score > m.away.score ? "home" : m.away.score > m.home.score ? "away" : null;
+  const row = (sd, key) => `<div class="mt-row ${lead === key ? "lead" : lead ? "trail" : ""}"><span class="mt-team">${logoImg(team(sd.teamId), 18)}<span>${esc(team(sd.teamId).abbrev)}</span></span><span class="mt-score">${val(sd)}</span></div>`;
+  const foot = st === "final" ? "Final" : `<span class="mt-wp"><i style="width:${m.wp * 100}%"></i></span>${pct(m.wp)}–${pct(1 - m.wp)}`;
+  return `<button type="button" class="mini-tile ${state.openMatchup === m.id ? "selected" : ""}" data-mu="${m.id}">${row(m.home, "home")}${row(m.away, "away")}<div class="mt-foot">${foot}</div></button>`;
+}
+// ---------- Sticky condensed score bar (phones) ----------
+// While you scroll down an open matchup or live game, a slim score bar sticks under the top bar until
+// that matchup/game has scrolled past. The bar sits in a zero-height sticky holder right after the
+// full header; it shows once that header is out of view.
+const stickBar = (html) => `<div class="stick-anchor"><div class="stick-bar">${html}</div></div>`;
+let stickyRaf = 0;
+function updateStickies() {
+  cancelAnimationFrame(stickyRaf);
+  stickyRaf = requestAnimationFrame(() => {
+    const topH = document.querySelector(".topbar")?.getBoundingClientRect().height || 0;
+    document.documentElement.style.setProperty("--top-h", `${Math.round(topH)}px`);
+    if (MU_SPLIT.matches) return;
+    document.querySelectorAll(".view:not([hidden]) .stick-anchor").forEach((a) => {
+      const src = a.previousElementSibling, box = a.parentElement;
+      if (!src || !box) return;
+      const open = !box.classList.contains("game") || box.classList.contains("open");
+      const show = open && src.getBoundingClientRect().bottom < topH && box.getBoundingClientRect().bottom > topH + 48;
+      a.classList.toggle("show", show);
+    });
+  });
+}
+addEventListener("scroll", updateStickies, { passive: true });
+addEventListener("resize", updateStickies);
+
 // Wide screens get the side-by-side Matchups layout; redraw when crossing the breakpoint.
 const MU_SPLIT = matchMedia("(min-width: 900px)");
-MU_SPLIT.addEventListener?.("change", () => { if (state.tab === "matchups" && state.week) render(); });
+MU_SPLIT.addEventListener?.("change", () => { if ((state.tab === "matchups" || state.tab === "live") && state.week) render(); });
 
 // Slide a .collapse panel open or closed; closed panels can't be tabbed into.
 function setOpen(panel, open) {
@@ -635,7 +657,7 @@ function cardSide(s, color, status, isWinner, right) {
   </div>`;
 }
 
-// Live matchup card: under each team, how many starters are playing now and how many have yet to play.
+// Live matchup breakdown: under each team, how many starters are playing now and how many have yet to play.
 // (Players on bye or ruled out don't count as "yet to play".)
 function onFieldLine(m) {
   const counts = (s) => {
@@ -650,24 +672,6 @@ function onFieldLine(m) {
   return `<div class="mc-onfield"><div>${counts(m.home)}</div><div class="right">${counts(m.away)}</div></div>`;
 }
 
-function matchupCard(m) {
-  const st = state.week.status;
-  const playoff = m.playoff ? `<div class="small muted" style="margin-bottom:6px">${m.tier === "WINNERS_BRACKET" ? "🏆 Playoffs" : "Consolation"}</div>` : "";
-  if (!m.away) return `<button class="card matchup" data-id="${m.id}">${playoff}<div class="mc-teams">${cardSide(m.home, "var(--home)", st, null, false)}</div><p class="muted small">Bye week</p></button>`;
-  const hw = st === "final" ? m.winner === "HOME" : null;
-  const wp = m.wp;
-  return `<button class="card matchup ${state.openMatchup === m.id ? "open" : ""}" data-id="${m.id}">${playoff}
-    <div class="mc-teams">
-      ${cardSide(m.home, "var(--home)", st, hw === null ? null : hw, false)}
-      <span class="mc-vs" aria-hidden="true">vs</span>
-      ${cardSide(m.away, "var(--away)", st, hw === null ? null : !hw, true)}
-    </div>
-    ${st !== "final" ? `<div class="wp"><div class="wp-bar" aria-label="Win chance"><div style="width:${wp * 100}%;background:var(--home)"></div><div style="width:${(1 - wp) * 100}%;background:var(--away)"></div></div>
-      <div class="wp-labels"><span>${pct(wp)} ${esc(team(m.home.teamId).abbrev)}</span><span>win chance</span><span>${esc(team(m.away.teamId).abbrev)} ${pct(1 - wp)}</span></div></div>
-      ${st === "live" ? onFieldLine(m) : ""}`
-    : `<div class="wp-labels"><span>Margin ${f2(Math.abs(m.home.score - m.away.score))}</span><span>${esc(team((hw ? m.home : m.away).teamId).abbrev)} wins</span></div>`}
-  </button>`;
-}
 
 // withHead = false when the breakdown opens under its matchup card, which already shows the teams,
 // scores and win chance.
@@ -712,8 +716,10 @@ function matchupDetail(m, withHead = true) {
   const wpBar = (v, color, right) => `<div class="mx-wp ${right ? "right" : ""}"><span class="mx-wp-pct">${pct(v)}</span><div class="mx-wp-track"><div style="width:${v * 100}%;background:${color}"></div></div></div>`;
 
   return `<div class="card detail mx ${withHead ? "" : "attached"}">
-    ${withHead ? `<div class="mx-head">${headSide(home, H, false)}${headSide(away, A, true)}</div>
-    <div class="mx-wps">${wpBar(wpH, "var(--home)", false)}<span class="mx-wp-label">${st === "final" ? "Final" : "Win probability"}</span>${wpBar(wpA, "var(--away)", true)}</div>` : ""}
+    ${withHead ? `<div class="mx-top"><div class="mx-head">${headSide(home, H, false)}${headSide(away, A, true)}</div>
+    <div class="mx-wps">${wpBar(wpH, "var(--home)", false)}<span class="mx-wp-label">${st === "final" ? "Final" : "Win probability"}</span>${wpBar(wpA, "var(--away)", true)}</div>
+    ${st === "live" ? onFieldLine(m) : ""}</div>
+    ${stickBar(`<span class="sb-team">${logoImg(H, 18)}${esc(H.abbrev)}</span><strong>${st === "upcoming" ? f1(home.proj) : f2(home.score)}</strong><span class="sb-mid">${st === "final" ? "Final" : `${pct(wpH)}–${pct(wpA)}`}</span><strong>${st === "upcoming" ? f1(away.proj) : f2(away.score)}</strong><span class="sb-team">${esc(A.abbrev)}${logoImg(A, 18)}</span>`)}` : ""}
     <div class="mx-rows">${rows.map((r) => row(r, false)).join("")}</div>
     ${bn ? `<div class="mx-bench-head">Bench</div><div class="mx-rows">${benchRows.map((r) => row(r, true)).join("")}</div>` : ""}
   </div>`;
@@ -1558,7 +1564,7 @@ function fieldGraphic(g) {
   const arrowWord = dir > 0 ? "←" : dir < 0 ? "→" : "";
   const label = `${poss ? `${poss.abbr} ball ` : ""}${g.downDistance || ""}`.trim();
   return `<div class="field-wrap">
-    <svg class="field ${narrow ? "narrow" : ""}" viewBox="0 0 ${W} 160" role="img" aria-label="${esc(label || "Field position")}">
+    <svg class="field ${narrow ? "narrow" : ""}" viewBox="0 ${narrow ? 26 : 0} ${W} ${narrow ? 128 : 160}" role="img" aria-label="${esc(label || "Field position")}">
       <defs>${[["arrow", "#fff"], ["arrowy", "#fdd835"], ["arrowr", "#ef5350"]].map(([id, fill]) => `<marker id="${id}-${esc(g.id)}" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="${fill}"/></marker>`).join("")}</defs>
       ${parts.join("")}
     </svg>
@@ -1688,21 +1694,23 @@ function renderLive() {
       <div class="g-score">${g.state === "pre" ? "" : s.score ?? ""}${g.state === "in" && s.timeouts != null ? `<div class="g-to" title="${s.timeouts} timeout${s.timeouts === 1 ? "" : "s"} left">${[0, 1, 2].map((i) => `<i class="${i < s.timeouts ? "on" : ""}"></i>`).join("")}</div>` : ""}</div>
     </div>`;
   };
-  const gameCard = (g) => {
+  // pinned = shown in the desktop side pane (always open, nothing to toggle).
+  const gameCard = (g, pinned = false) => {
     const status = g.state === "in" ? `<span class="badge live">LIVE</span> <strong>${esc(g.detail)}</strong>`
       : g.state === "post" ? `<span class="badge final">FINAL</span>` : `<strong>${esc(kickoff(g))}</strong>`;
     // The field graphic shows down & distance itself; fall back to text when ESPN sends no field position.
     const graphic = g.state === "in" ? fieldGraphic(g) : "";
     const sit = g.state === "in" && (g.downDistance || g.redZone)
       ? `<div class="g-sit">${graphic ? "" : g.downDistance ? esc(g.downDistance) : ""}${g.redZone ? ` <span class="badge out">RED ZONE</span>` : ""}</div>` : "";
-    const open = !!state.liveOpen?.[g.id];
+    const open = pinned || !!state.liveOpen?.[g.id];
     const lastPlay = `${(() => {
         if (g.state !== "in") return "";
         const sp = shownPlay(g), stop = g.field?.lastPlay && playKind(g.field.lastPlay.type, g.lastPlay) === "stoppage";
         return `${stop ? `<div class="g-last small"><strong>${esc(g.lastPlay)}</strong></div>` : ""}${sp?.text ? `<div class="g-last small muted">${sp.earlier ? "Last snap" : "Last play"}: ${esc(sp.text)}</div>` : !stop && g.lastPlay ? `<div class="g-last small muted">Last play: ${esc(g.lastPlay)}</div>` : ""}`;
       })()}`;
-    return `<div class="card game state-${g.state} ${open ? "open" : ""}" data-game="${esc(g.id)}">
-      <div class="g-top" data-gtoggle role="button" tabindex="0" aria-expanded="${open}" title="${open ? "Tap to close" : "Tap for players, stats & weather"}">
+    const sbScore = (sd) => (g.state === "pre" ? "" : sd.score ?? "");
+    return `<div class="card game state-${g.state} ${open ? "open" : ""} ${pinned ? "pinned" : ""}" data-game="${esc(g.id)}">
+      <div class="g-top" ${pinned ? "" : `data-gtoggle role="button" tabindex="0" aria-expanded="${open}" title="${open ? "Tap to close" : "Tap for players, stats & weather"}"`}>
       <div class="g-head">
         ${scoreSide(g.away, g, false)}
         <div class="g-status">${status}${g.broadcast ? `<div class="muted small">${esc(g.broadcast)}</div>` : ""}</div>
@@ -1710,6 +1718,7 @@ function renderLive() {
       </div>
       ${graphic}${sit}${lastPlay}
       </div>
+      ${pinned ? "" : stickBar(`<span class="sb-team"><img src="${esc(g.away.logo)}" alt="" width="18" height="18">${esc(g.away.abbr)}</span><strong>${sbScore(g.away)}</strong><span class="sb-mid">${g.state === "in" ? esc(g.detail) : g.state === "post" ? "Final" : esc(kickoff(g))}${g.state === "in" && g.downDistance ? ` · ${esc(g.downDistance.replace(/ at .*/, ""))}` : ""}</span><strong>${sbScore(g.home)}</strong><span class="sb-team">${esc(g.home.abbr)}<img src="${esc(g.home.logo)}" alt="" width="18" height="18"></span>`)}
       <div class="collapse ${open ? "open" : ""}" ${open ? "" : "inert"}><div class="collapse-inner">
       ${g.state === "pre" ? "" : `<button type="button" class="bx-toggle ${state.boxUi[g.id]?.open ? "open" : ""}" data-bx="${esc(g.id)}" data-toggle="1" aria-expanded="${!!state.boxUi[g.id]?.open}">📊 Player stats <span class="caret">▾</span></button>`}
       ${state.boxUi[g.id]?.open ? boxPanel(g, rosteredBy) : ""}
@@ -1721,6 +1730,18 @@ function renderLive() {
 
   const teamOpts = Object.values(state.base.teams).sort((a, b) => a.name.localeCompare(b.name))
     .map((t) => `<option value="${t.id}" ${String(f.team) === String(t.id) ? "selected" : ""}>${esc(t.name)}</option>`).join("");
+  // Desktop list tile: both teams and scores, game status, who has the ball.
+  const gameTile = (g) => {
+    const row = (sd, key) => {
+      const won = g.state === "post" && sd.score > (key === "home" ? g.away.score : g.home.score);
+      return `<div class="mt-row ${g.state === "post" ? (won ? "lead" : "trail") : ""}"><span class="mt-team"><img src="${esc(sd.logo)}" alt="" width="18" height="18"><span>${key === "home" ? "@" : ""}${esc(sd.abbr)}</span>${g.possession === sd.proId ? ` <span class="poss">🏈</span>` : ""}</span><span class="mt-score">${g.state === "pre" ? "" : sd.score ?? ""}</span></div>`;
+    };
+    const foot = g.state === "in" ? `<span class="badge live">LIVE</span> ${esc(g.detail)}${g.redZone ? ` <span class="badge out">RZ</span>` : ""}` : g.state === "post" ? "Final" : esc(kickoff(g));
+    return `<button type="button" class="mini-tile game-tile state-${g.state} ${state.liveSel === g.id ? "selected" : ""}" data-gsel="${esc(g.id)}">${row(g.away, "away")}${row(g.home, "home")}<div class="mt-foot">${foot}</div></button>`;
+  };
+  const split = MU_SPLIT.matches;
+  if (split && !games.some((g) => g.id === state.liveSel)) state.liveSel = (games.find((g) => g.state === "in") || games[0])?.id;
+  const selGame = games.find((g) => g.id === state.liveSel);
   const summary = [counts.in && `${counts.in} live`, counts.pre && `${counts.pre} upcoming`, counts.post && `${counts.post} final`].filter(Boolean).join(" · ");
   const updated = new Date(L.updated).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit", second: "2-digit" });
 
@@ -1731,9 +1752,19 @@ function renderLive() {
       <select id="lv-team" aria-label="Fantasy team"><option value="ALL">All fantasy teams</option>${teamOpts}</select>
     </div>
     ${L.byes?.length ? `<p class="muted small">On bye: ${L.byes.map(esc).join(", ")}</p>` : ""}
-    <div class="games">${games.map(gameCard).join("") || `<p class="muted">No NFL games found for this week.</p>`}</div>${games.some((g) => g.state !== "post") ? wxCredit() : ""}`;
+    ${!games.length ? `<p class="muted">No NFL games found for this week.</p>`
+      : split ? `<div class="mu-split lv-split"><div class="mu-list">${games.map(gameTile).join("")}</div><div class="mu-pane" id="lv-pane">${selGame ? gameCard(selGame, true) : ""}</div></div>`
+      : `<div class="games">${games.map((g) => gameCard(g)).join("")}</div>`}${games.some((g) => g.state !== "post") ? wxCredit() : ""}`;
   $("lv-show").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => { f.show = b.dataset.s; renderLive(); }));
   $("lv-team").addEventListener("change", (e) => { f.team = e.target.value; renderLive(); });
+  // Desktop: pick a game from the list.
+  el.querySelectorAll("[data-gsel]").forEach((b) => b.addEventListener("click", () => {
+    if (state.liveSel === b.dataset.gsel) return;
+    state.liveSel = b.dataset.gsel;
+    renderLive();
+    const pane = $("lv-pane");
+    if (pane) { pane.scrollTop = 0; pane.classList.add("swap"); }
+  }));
   // Open/close a game (slides; no redraw). Games start collapsed: header and field only.
   state.liveOpen ||= {};
   el.querySelectorAll("[data-gtoggle]").forEach((b) => {
@@ -1743,6 +1774,7 @@ function renderLive() {
       card.classList.toggle("open", open);
       setOpen(card.querySelector(":scope > .collapse"), open);
       card.querySelectorAll("[data-gtoggle]").forEach((x) => { x.setAttribute("aria-expanded", open); x.title = open ? "Tap to close" : "Tap for players, stats & weather"; });
+      setTimeout(updateStickies, 320);
     };
     b.addEventListener("click", go);
     b.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); } });
@@ -1757,6 +1789,7 @@ function renderLive() {
   }));
   // Only flash a score change once.
   state.liveBumps = {};
+  updateStickies();
 }
 
 // ---------- Game box score (Live games tab) ----------
@@ -1775,7 +1808,7 @@ async function fetchBox(id) {
   return body;
 }
 // Load (or refresh, while the game is live) an open box score; the Live games tab redraws when it arrives.
-function ensureBox(g) {
+function ensureBox(g, onReady) {
   const boxes = (state.boxes ||= {}), d = boxes[g.id];
   const stale = !d || d === "loading" ? !d : g.state === "in" && Date.now() - d.at > 25000;
   if (!stale || d === "loading" || state.boxLoading?.[g.id]) return;
@@ -1785,7 +1818,12 @@ function ensureBox(g) {
   fetchBox(g.id)
     .then((x) => { if (state.base === base) boxes[g.id] = { ...x, at: Date.now() }; })
     .catch((e) => { if (state.base === base && (!d || d === "loading")) boxes[g.id] = { error: e.message, at: Date.now() }; })
-    .finally(() => { state.boxLoading[g.id] = false; if (state.base === base && state.tab === "live") keepState($("view-live"), renderLive); });
+    .finally(() => {
+      state.boxLoading[g.id] = false;
+      if (state.base !== base) return;
+      if (state.tab === "live") keepState($("view-live"), renderLive);
+      onReady?.();
+    });
 }
 
 function boxPanel(g, rosteredBy) {
@@ -2965,6 +3003,8 @@ function scoringLines(w, posId) {
     let label;
     if (PA_TIERS[n]) label = `Points allowed: ${fmtNum(Number(w.stats[120] ?? 0))} (${PA_TIERS[n]} tier)`;
     else if (YA_TIERS[n]) label = `Yards allowed: ${fmtNum(Number(w.stats[127] ?? 0))} (${YA_TIERS[n]} tier)`;
+    else if (n === 117) label = `Kickoff return yards: ${fmtNum(Number(w.stats[114] ?? 0))} <span class="muted">(1 pt per 25)</span>`;
+    else if (n === 119) label = `Punt return yards: ${fmtNum(Number(w.stats[115] ?? 0))} <span class="muted">(1 pt per 25)</span>`;
     else if (STAT_TIERS[n]) label = STAT_TIERS[n];
     else if (STAT_NAMES[n]) {
       const each = count ? Math.round((pts / count) * 100) / 100 : null;
@@ -2984,7 +3024,7 @@ function breakdownHtml(w, posId) {
 
 function gameLine(posId, s) {
   if (posId === 5) return `FG ${s[83] || 0}/${s[84] || 0}, XP ${s[86] || 0}/${s[87] || 0}`;
-  if (posId === 16) return [s[99] && `${fmtNum(s[99])} sacks`, s[95] && `${s[95]} INT`, s[96] && `${s[96]} fumble rec`, s[120] != null && `${s[120]} pts allowed`].filter(Boolean).join(", ");
+  if (posId === 16) return [s[120] != null && `${s[120]} pts allowed`, s[127] != null && `${s[127]} yds allowed`, s[99] && `${fmtNum(s[99])} sacks`, s[95] && `${s[95]} INT`, s[96] && `${s[96]} fumble rec`, s[106] && `${s[106]} forced fumbles`].filter(Boolean).join(", ");
   return statLine(posId, s) || "No stats";
 }
 
@@ -3059,6 +3099,18 @@ async function openPlayer(id, focusSp) {
   renderPlayerModal(cache[id].data, focusSp);
 }
 
+// Jump from a player popup to their game on Live games: open the game with the box score on their team.
+function goLiveGame(id, side) {
+  document.querySelector("#pl-modal .modal-close")?.click();
+  (state.liveOpen ||= {})[id] = true;
+  state.liveSel = id;
+  (state.boxUi ||= {})[id] = { open: true, view: "players", side: side || "away" };
+  switchTab("live");
+  const scrollTo = () => document.querySelector(`.card.game[data-game="${CSS.escape(id)}"]`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  setTimeout(scrollTo, 350);
+  setTimeout(scrollTo, 1600); // again once the live data has loaded
+}
+
 function renderPlayerModal(d, focusSp) {
   const body = $("pl-modal-body");
   const p = d.player, pos = POS[p.posId] || "";
@@ -3115,6 +3167,24 @@ function renderPlayerModal(d, focusSp) {
     </div>
     ${focusSp && !bySp[focusSp] ? `<p class="muted small">No stats yet for week ${focusSp}.</p>` : ""}
     ${(() => {
+      // This week's game (live or final): every box-score line for this player — passing (C/ATT),
+      // rushing (carries), receiving (targets), defense, kicking — plus a jump to the game.
+      const g = gameStatusOf({ proId: p.proId });
+      if (!g?.id || (g.state !== "in" && g.state !== "post")) return "";
+      ensureBox({ id: g.id, state: g.state }, () => { if (!$("pl-modal").hidden && state.newsFor === String(p.id)) renderPlayerModal(d, focusSp); });
+      const box = state.boxes?.[g.id];
+      let lines = `<div class="loading small"><span class="spinner"></span> Loading game stats…</div>`, side = g.home ? "home" : "away";
+      if (box && box !== "loading" && !box.error) {
+        const cats = ["away", "home"].flatMap((sd) => (box.players[sd] || []).map((c) => ({ ...c, sd, row: c.rows.find((r) => String(r.id) === String(p.id)) }))).filter((c) => c.row);
+        if (cats[0]) side = cats[0].sd;
+        lines = cats.length ? `<div class="pg-cats">${cats.map((c) => `<div class="pg-cat"><div class="pg-title">${esc(c.title)}</div>
+          <table class="pg-table"><thead><tr>${c.labels.map((l) => `<th>${esc(l)}</th>`).join("")}</tr></thead><tbody><tr>${c.row.stats.map((v) => `<td>${esc(v)}</td>`).join("")}</tr></tbody></table></div>`).join("")}</div>`
+          : `<p class="muted small">No stats in this game yet.</p>`;
+      } else if (box?.error) lines = `<p class="muted small">${esc(box.error)}</p>`;
+      return `<h3 class="pm-sub">This week <span class="pg-line">${gameLineHtml({ proId: p.proId, opp: null })}</span></h3>${lines}
+        <button type="button" class="pg-go" data-golive="${esc(g.id)}" data-side="${side}">${g.state === "in" ? "Watch the live game" : "Open the game"} on Live games ›</button>`;
+    })()}
+    ${(() => {
       const nd = ensureNews([p.id], () => { if (!$("pl-modal").hidden && state.newsFor === String(p.id)) renderPlayerModal(d, focusSp); });
       state.newsFor = String(p.id);
       const items = nd?.players?.[p.id] || [];
@@ -3126,6 +3196,7 @@ function renderPlayerModal(d, focusSp) {
     <h3 class="pm-sub">${state.base.season} game log <span class="muted small">· tap points to see how they were scored</span></h3>
     <div class="table-wrap"><table class="data gamelog"><thead><tr><th>Wk</th><th>Game</th>${ul ? `<th class="num" title="Share of the team's offensive snaps">Snap</th><th class="num" title="Targets and share of the team's targets">Tgt</th>` : ""}<th class="num">Pts</th></tr></thead><tbody>${rows.join("")}</tbody></table></div>
     ${ul ? nvCredit() : ""}`;
+  body.querySelector("[data-golive]")?.addEventListener("click", (e) => goLiveGame(e.currentTarget.dataset.golive, e.currentTarget.dataset.side));
   body.querySelectorAll(".gl-pts").forEach((b) => b.addEventListener("click", () => {
     const row = b.closest("tr"), bd = $(`gl-bd-${row.dataset.sp}`);
     bd.hidden = !bd.hidden;
@@ -3183,7 +3254,7 @@ function keepState(el, draw) {
   if (!el) return draw();
   const imgs = new Map();
   el.querySelectorAll("img").forEach((i) => { if (i.complete && i.naturalWidth) { const k = i.getAttribute("src"); (imgs.get(k) || imgs.set(k, []).get(k)).push(i); } });
-  const scrolls = [...el.querySelectorAll(".table-wrap")].map((n) => [n.scrollLeft, n.scrollTop]);
+  const scrolls = [...el.querySelectorAll(".table-wrap, .mu-pane")].map((n) => [n.scrollLeft, n.scrollTop]);
   const a = document.activeElement, focusId = el.contains(a) && a.id ? a.id : null;
   const sel = focusId && typeof a.selectionStart === "number" ? [a.selectionStart, a.selectionEnd] : null;
   const y = window.scrollY;
@@ -3195,7 +3266,7 @@ function keepState(el, draw) {
     for (const { name, value } of [...i.attributes]) if (old.getAttribute(name) !== value) old.setAttribute(name, value);
     i.replaceWith(old);
   });
-  el.querySelectorAll(".table-wrap").forEach((n, i) => { if (scrolls[i]) [n.scrollLeft, n.scrollTop] = scrolls[i]; });
+  el.querySelectorAll(".table-wrap, .mu-pane").forEach((n, i) => { if (scrolls[i]) [n.scrollLeft, n.scrollTop] = scrolls[i]; });
   if (focusId && $(focusId) && document.activeElement !== $(focusId)) {
     $(focusId).focus({ preventScroll: true });
     if (sel) try { $(focusId).setSelectionRange(...sel); } catch {}
