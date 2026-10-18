@@ -817,3 +817,32 @@ table.data.bx-table th, table.data.bx-table td { padding: 6px 6px; font-size: .8
 /* Last-play labels on the field graphic */
 .field .lp-pen { fill: #fdd835; }
 .field .lp-to { fill: #ff8a80; }
+
+/* Sliding open/close panels (Matchups breakdowns, Live games) */
+.collapse { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .3s ease; }
+.collapse.open { grid-template-rows: 1fr; }
+.collapse > .collapse-inner { overflow: hidden; min-height: 0; }
+@media (prefers-reduced-motion: reduce) { .collapse { transition: none; } }
+
+/* Matchups: each breakdown opens right under its card */
+.mu-grid { align-items: start; }
+.mu-item { min-width: 0; }
+.mu-item .collapse.open > .collapse-inner { padding-top: 10px; }
+.mu-item .card.detail { margin: 0; }
+.mx-head[role="button"] { cursor: pointer; }
+.card.matchup .caret-hint { display: none; }
+
+/* On-field labels: offense has the ball (gold) / inside the 20 (red) */
+.fs { display: inline-block; font-size: .66rem; font-weight: 800; letter-spacing: .02em; border-radius: 4px; padding: 0 5px; margin-left: 4px; vertical-align: middle; white-space: nowrap; }
+.fs-poss { background: #fdf0d5; color: #8a5a00; border: 1px solid #e3c278; }
+.fs-rz { background: #fde4e4; color: #b42318; border: 1px solid #f2a7a7; text-transform: uppercase; }
+.mc-onfield { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 8px; }
+.mc-onfield .right { text-align: right; }
+.mc-onfield .fs { margin: 2px 2px 0 0; text-transform: none; }
+
+/* Live games: tap the header or this bar to show players, box score and weather */
+.card.game .g-head[data-gtoggle] { cursor: pointer; }
+.g-expand { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; margin-top: 8px; padding: 6px 10px; border: 0; border-top: 1px solid var(--grid); background: none; color: var(--muted); font: inherit; font-size: .8rem; font-weight: 700; cursor: pointer; }
+.g-expand .caret, .bx-toggle .caret { transition: transform .2s; }
+.card.game.open > .g-expand .caret { transform: rotate(180deg); }
+.card.game .collapse-inner > :first-child { margin-top: 6px; }

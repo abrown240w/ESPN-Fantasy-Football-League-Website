@@ -568,15 +568,23 @@ function renderMatchups() {
   if (!w.matchups.length) { el.innerHTML = `<p class="muted">No matchups scheduled for week ${w.week}.</p>`; return; }
   const label = w.status === "final" ? "Final scores" : w.status === "live" ? "Live scores · win chance from ESPN" : "Projected · win chance from ESPN";
   el.innerHTML = `<div class="section-head"><h2>Week ${w.week} matchups ${statusBadge(w.status)}</h2><span class="muted small">${label}. Tap a matchup for the full breakdown.</span></div>
-    <div class="grid grid-2" id="mu-grid">${w.matchups.map(matchupCard).join("")}</div>
-    <div id="mu-detail"></div>`;
-  el.querySelectorAll(".matchup").forEach((c) => c.addEventListener("click", () => {
-    state.openMatchup = state.openMatchup === +c.dataset.id ? null : +c.dataset.id;
-    renderMatchups();
-    if (state.openMatchup) $("mu-detail").scrollIntoView({ behavior: "smooth", block: "start" });
-  }));
-  const open = w.matchups.find((m) => m.id === state.openMatchup);
-  if (open) $("mu-detail").innerHTML = matchupDetail(open);
+    <div class="grid grid-2 mu-grid" id="mu-grid">${w.matchups.map((m) => `<div class="mu-item">${matchupCard(m)}
+      ${m.away ? `<div class="collapse ${state.openMatchup === m.id ? "open" : ""}" data-mu="${m.id}" ${state.openMatchup === m.id ? "" : "inert"}><div class="collapse-inner">${matchupDetail(m)}</div></div>` : ""}</div>`).join("")}</div>`;
+  // Open/close slides (no redraw); only one breakdown open at a time.
+  const toggle = (id) => {
+    state.openMatchup = state.openMatchup === id ? null : id;
+    el.querySelectorAll(".collapse[data-mu]").forEach((c) => setOpen(c, +c.dataset.mu === state.openMatchup));
+    el.querySelectorAll(".matchup").forEach((b) => b.classList.toggle("open", +b.dataset.id === state.openMatchup));
+    const card = el.querySelector(`.matchup[data-id="${id}"]`);
+    if (card && card.getBoundingClientRect().top < 60) card.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+  el.querySelectorAll(".matchup").forEach((c) => c.addEventListener("click", () => toggle(+c.dataset.id)));
+  el.querySelectorAll(".collapse[data-mu] .mx-head").forEach((h) => h.addEventListener("click", () => toggle(+h.closest(".collapse").dataset.mu)));
+}
+// Slide a .collapse panel open or closed; closed panels can't be tabbed into.
+function setOpen(panel, open) {
+  panel.classList.toggle("open", open);
+  panel.toggleAttribute("inert", !open);
 }
 
 // One team's half of a matchup card. The home team sits on the left (over the left end of
@@ -593,6 +601,14 @@ function cardSide(s, color, status, isWinner, right) {
   </div>`;
 }
 
+// Live matchup card: each team's starters whose offense has the ball right now.
+function onFieldLine(m) {
+  const list = (s) => s.starters.filter((p) => gameStatusOf(p)?.state === "in" && gameStatusOf(p)?.poss)
+    .map((p) => `<span class="fs ${gameStatusOf(p).redZone ? "fs-rz" : "fs-poss"}">${gameStatusOf(p).redZone ? "RZ" : "🏈"} ${esc(shortName(p.name))}</span>`).join("");
+  const h = list(m.home), a = list(m.away);
+  return h || a ? `<div class="mc-onfield"><div>${h}</div><div class="right">${a}</div></div>` : "";
+}
+
 function matchupCard(m) {
   const st = state.week.status;
   const playoff = m.playoff ? `<div class="small muted" style="margin-bottom:6px">${m.tier === "WINNERS_BRACKET" ? "🏆 Playoffs" : "Consolation"}</div>` : "";
@@ -606,7 +622,8 @@ function matchupCard(m) {
       ${cardSide(m.away, "var(--away)", st, hw === null ? null : !hw, true)}
     </div>
     ${st !== "final" ? `<div class="wp"><div class="wp-bar" aria-label="Win chance"><div style="width:${wp * 100}%;background:var(--home)"></div><div style="width:${(1 - wp) * 100}%;background:var(--away)"></div></div>
-      <div class="wp-labels"><span>${pct(wp)} ${esc(team(m.home.teamId).abbrev)}</span><span>win chance</span><span>${esc(team(m.away.teamId).abbrev)} ${pct(1 - wp)}</span></div></div>`
+      <div class="wp-labels"><span>${pct(wp)} ${esc(team(m.home.teamId).abbrev)}</span><span>win chance</span><span>${esc(team(m.away.teamId).abbrev)} ${pct(1 - wp)}</span></div></div>
+      ${st === "live" ? onFieldLine(m) : ""}`
     : `<div class="wp-labels"><span>Margin ${f2(Math.abs(m.home.score - m.away.score))}</span><span>${esc(team((hw ? m.home : m.away).teamId).abbrev)} wins</span></div>`}
   </button>`;
 }
@@ -652,7 +669,7 @@ function matchupDetail(m) {
   const wpBar = (v, color, right) => `<div class="mx-wp ${right ? "right" : ""}"><span class="mx-wp-pct">${pct(v)}</span><div class="mx-wp-track"><div style="width:${v * 100}%;background:${color}"></div></div></div>`;
 
   return `<div class="card detail mx">
-    <div class="mx-head">${headSide(home, H, false)}${headSide(away, A, true)}</div>
+    <div class="mx-head" title="Tap to close" role="button" tabindex="0">${headSide(home, H, false)}${headSide(away, A, true)}</div>
     <div class="mx-wps">${wpBar(wpH, "var(--home)", false)}<span class="mx-wp-label">${st === "final" ? "Final" : "Win probability"}</span>${wpBar(wpA, "var(--away)", true)}</div>
     <div class="mx-rows">${rows.map((r) => row(r, false)).join("")}</div>
     ${bn ? `<div class="mx-bench-head">Bench</div><div class="mx-rows">${benchRows.map((r) => row(r, true)).join("")}</div>` : ""}
@@ -1533,8 +1550,7 @@ function fieldGraphic(g) {
       <defs>${[["arrow", "#fff"], ["arrowy", "#fdd835"], ["arrowr", "#ef5350"]].map(([id, fill]) => `<marker id="${id}-${esc(g.id)}" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="${fill}"/></marker>`).join("")}</defs>
       ${parts.join("")}
     </svg>
-    <div class="field-caption">${poss ? `<strong>${esc(poss.abbr)}</strong> ball ${arrowWord} · ` : ""}${esc(g.downDistance || f.possText || "")}${f.driveDesc ? ` <span class="muted">· Drive: ${esc(f.driveDesc)}</span>` : ""}
-      <span class="field-key"><i class="k-los"></i>Line of scrimmage <i class="k-fd"></i>First down</span></div>
+    <div class="field-caption">${poss ? `<strong>${esc(poss.abbr)}</strong> ball ${arrowWord} · ` : ""}${esc(g.downDistance || f.possText || "")}${f.driveDesc ? ` <span class="muted">· Drive: ${esc(f.driveDesc)}</span>` : ""}</div>
   </div>`;
 }
 
@@ -1666,21 +1682,26 @@ function renderLive() {
     const graphic = g.state === "in" ? fieldGraphic(g) : "";
     const sit = g.state === "in" && (g.downDistance || g.redZone)
       ? `<div class="g-sit">${graphic ? "" : g.downDistance ? esc(g.downDistance) : ""}${g.redZone ? ` <span class="badge out">RED ZONE</span>` : ""}</div>` : "";
-    return `<div class="card game state-${g.state}">
-      <div class="g-head">
+    const open = !!state.liveOpen?.[g.id];
+    return `<div class="card game state-${g.state} ${open ? "open" : ""}" data-game="${esc(g.id)}">
+      <div class="g-head" data-gtoggle role="button" tabindex="0" aria-expanded="${open}">
         ${scoreSide(g.away, g, false)}
         <div class="g-status">${status}${g.broadcast ? `<div class="muted small">${esc(g.broadcast)}</div>` : ""}</div>
         ${scoreSide(g.home, g, true)}
       </div>
+      ${graphic}${sit}
+      <button type="button" class="g-expand" data-gtoggle aria-expanded="${open}"><span>${open ? "Hide" : "Players, stats & weather"}</span> <span class="caret">▾</span></button>
+      <div class="collapse ${open ? "open" : ""}" ${open ? "" : "inert"}><div class="collapse-inner">
       ${g.state === "pre" ? "" : `<button type="button" class="bx-toggle ${state.boxUi[g.id]?.open ? "open" : ""}" data-bx="${esc(g.id)}" data-toggle="1" aria-expanded="${!!state.boxUi[g.id]?.open}">📊 Player stats <span class="caret">▾</span></button>`}
       ${state.boxUi[g.id]?.open ? boxPanel(g, rosteredBy) : ""}
       ${g.state === "post" ? "" : wxLine(wxGame(g.home.proId, L.sp))}
-      ${graphic}${sit}${(() => {
+      ${(() => {
         if (g.state !== "in") return "";
         const sp = shownPlay(g), stop = g.field?.lastPlay && playKind(g.field.lastPlay.type, g.lastPlay) === "stoppage";
         return `${stop ? `<div class="g-last small"><strong>${esc(g.lastPlay)}</strong></div>` : ""}${sp?.text ? `<div class="g-last small muted">${sp.earlier ? "Last snap" : "Last play"}: ${esc(sp.text)}</div>` : !stop && g.lastPlay ? `<div class="g-last small muted">Last play: ${esc(g.lastPlay)}</div>` : ""}`;
       })()}
       <div class="lv-players mx">${playerRows(g)}</div>
+      </div></div>
     </div>`;
   };
 
@@ -1699,6 +1720,20 @@ function renderLive() {
     <div class="games">${games.map(gameCard).join("") || `<p class="muted">No NFL games found for this week.</p>`}</div>${games.some((g) => g.state !== "post") ? wxCredit() : ""}`;
   $("lv-show").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => { f.show = b.dataset.s; renderLive(); }));
   $("lv-team").addEventListener("change", (e) => { f.team = e.target.value; renderLive(); });
+  // Open/close a game (slides; no redraw). Games start collapsed: header and field only.
+  state.liveOpen ||= {};
+  el.querySelectorAll("[data-gtoggle]").forEach((b) => {
+    const go = () => {
+      const card = b.closest(".card.game"), id = card.dataset.game, open = !state.liveOpen[id];
+      state.liveOpen[id] = open;
+      card.classList.toggle("open", open);
+      setOpen(card.querySelector(":scope > .collapse"), open);
+      card.querySelectorAll("[data-gtoggle]").forEach((x) => x.setAttribute("aria-expanded", open));
+      card.querySelector(".g-expand > span").textContent = open ? "Hide" : "Players, stats & weather";
+    };
+    b.addEventListener("click", go);
+    b.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); } });
+  });
   // Box score: open/close, Player/Team stats, and which team's players.
   el.querySelectorAll("[data-bx]").forEach((b) => b.addEventListener("click", () => {
     const ui = (state.boxUi[b.dataset.bx] ||= { open: false, view: "players", side: "away" });
