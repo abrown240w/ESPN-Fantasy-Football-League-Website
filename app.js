@@ -1298,6 +1298,9 @@ function renderLive() {
   for (const g of games) counts[g.state]++;
   const byPro = {};
   for (const p of L.players) (byPro[p.proId] ||= []).push(p);
+  // Fantasy owners of players in the box scores.
+  const rosteredBy = new Map(L.players.filter((p) => p.teamId).map((p) => [String(p.id), p.teamId]));
+  state.boxUi ||= {};
 
   const kickoff = (g) => new Date(g.date).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" });
   // Fantasy owner and lineup slot: full on desktop ("Gridiron Gurus · Starting · QB"), short on phones ("GG · QB").
@@ -1362,6 +1365,8 @@ function renderLive() {
         <div class="g-status">${status}${g.broadcast ? `<div class="muted small">${esc(g.broadcast)}</div>` : ""}</div>
         ${scoreSide(g.home, g, true)}
       </div>
+      ${g.state === "pre" ? "" : `<button type="button" class="bx-toggle ${state.boxUi[g.id]?.open ? "open" : ""}" data-bx="${esc(g.id)}" data-toggle="1" aria-expanded="${!!state.boxUi[g.id]?.open}">📊 Player stats <span class="caret">▾</span></button>`}
+      ${state.boxUi[g.id]?.open ? boxPanel(g, rosteredBy) : ""}
       ${g.state === "post" ? "" : wxLine(wxGame(g.home.proId, L.sp))}
       ${graphic}${sit}${g.state === "in" && g.lastPlay ? `<div class="g-last small muted">Last play: ${esc(g.lastPlay)}</div>` : ""}
       <div class="lv-players mx">${playerRows(g)}</div>
@@ -1383,8 +1388,78 @@ function renderLive() {
     <div class="games">${games.map(gameCard).join("") || `<p class="muted">No NFL games found for this week.</p>`}</div>${games.some((g) => g.state !== "post") ? wxCredit() : ""}`;
   $("lv-show").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => { f.show = b.dataset.s; renderLive(); }));
   $("lv-team").addEventListener("change", (e) => { f.team = e.target.value; renderLive(); });
+  // Box score: open/close, Player/Team stats, and which team's players.
+  el.querySelectorAll("[data-bx]").forEach((b) => b.addEventListener("click", () => {
+    const ui = (state.boxUi[b.dataset.bx] ||= { open: false, view: "players", side: "away" });
+    if (b.dataset.toggle) ui.open = !ui.open;
+    if (b.dataset.view) ui.view = b.dataset.view;
+    if (b.dataset.side) ui.side = b.dataset.side;
+    keepState(el, renderLive);
+  }));
   // Only flash a score change once.
   state.liveBumps = {};
+}
+
+// ---------- Game box score (Live games tab) ----------
+// "Player stats" on a game card opens ESPN's box score: player stats by category for either team,
+// or team stats side by side. While the game is live it refreshes along with the scores.
+async function fetchBox(id) {
+  if (state.demo) return window.DemoLeague.box(id, state.live?.sp);
+  let res, body;
+  try {
+    res = await fetch(`/api/boxscore?event=${encodeURIComponent(id)}`);
+    body = await res.json();
+  } catch {
+    throw new ApiError("no_function", "Couldn't reach the box score function. Make sure netlify/functions/boxscore.mjs is uploaded.");
+  }
+  if (!res.ok) throw new ApiError(body.error, body.message || `Request failed (${res.status})`);
+  return body;
+}
+// Load (or refresh, while the game is live) an open box score; the Live games tab redraws when it arrives.
+function ensureBox(g) {
+  const boxes = (state.boxes ||= {}), d = boxes[g.id];
+  const stale = !d || d === "loading" ? !d : g.state === "in" && Date.now() - d.at > 25000;
+  if (!stale || d === "loading" || state.boxLoading?.[g.id]) return;
+  (state.boxLoading ||= {})[g.id] = true;
+  if (!d) boxes[g.id] = "loading";
+  const base = state.base;
+  fetchBox(g.id)
+    .then((x) => { if (state.base === base) boxes[g.id] = { ...x, at: Date.now() }; })
+    .catch((e) => { if (state.base === base && (!d || d === "loading")) boxes[g.id] = { error: e.message, at: Date.now() }; })
+    .finally(() => { state.boxLoading[g.id] = false; if (state.base === base && state.tab === "live") keepState($("view-live"), renderLive); });
+}
+
+function boxPanel(g, rosteredBy) {
+  const ui = state.boxUi[g.id];
+  ensureBox(g);
+  const d = state.boxes?.[g.id];
+  const tab = (view, label) => `<button type="button" data-bx="${esc(g.id)}" data-view="${view}" class="${ui.view === view ? "active" : ""}">${label}</button>`;
+  let body;
+  if (!d || d === "loading") body = `<div class="loading small"><span class="spinner"></span> Loading box score…</div>`;
+  else if (d.error) body = `<p class="small muted">${esc(d.error)}</p>`;
+  else if (ui.view === "team") {
+    const num = (v) => parseFloat(String(v).replace(/[^\d.-]/g, "")) || 0;
+    body = `<div class="bx-team-head"><span><img src="${esc(g.away.logo)}" alt="" width="22" height="22"> ${esc(g.away.abbr)}</span><span class="muted small">Team stats</span><span>${esc(g.home.abbr)} <img src="${esc(g.home.logo)}" alt="" width="22" height="22"></span></div>
+      ${d.teamStats.map((r) => {
+        const a = num(r.away), h = num(r.home), tot = a + h;
+        return `<div class="bx-stat ${r.bar ? "has-bar" : ""}"><span>${esc(r.away)}</span><span class="bx-stat-label">${esc(r.label)}</span><span>${esc(r.home)}</span>
+          ${r.bar ? `<div class="bx-bar"><i style="width:${tot ? (a / tot) * 100 : 50}%;background:${esc(g.away.color || "#41506b")}"></i><i style="width:${tot ? (h / tot) * 100 : 50}%;background:${esc(g.home.color || "#2a78d6")}"></i></div>` : ""}</div>`;
+      }).join("")}`;
+  } else {
+    const side = ui.side, cats = d.players[side] || [];
+    const teamTab = (sd) => `<button type="button" data-bx="${esc(g.id)}" data-side="${sd}" class="${side === sd ? "active" : ""}">${esc(g[sd].name || g[sd].abbr)}</button>`;
+    body = `<div class="bx-sides">${teamTab("away")}${teamTab("home")}</div>
+      ${cats.length ? cats.map((c) => `<h4 class="bx-cat">${esc(c.title)}</h4>
+        <div class="table-wrap bx-wrap"><table class="data bx-table"><thead><tr><th class="bx-player">Player</th>${c.labels.map((l) => `<th class="num">${esc(l)}</th>`).join("")}</tr></thead>
+        <tbody>${c.rows.map((r) => {
+          const owner = r.id && rosteredBy.get(String(r.id));
+          const nm = `<span class="nm-full">${esc(r.name)}</span><span class="nm-short">${esc(r.short || shortName(r.name))}</span>`;
+          return `<tr><td class="bx-player"><span class="bx-jersey">${esc(r.jersey)}</span>${r.headshot ? `<img class="bx-face" src="${esc(r.headshot)}" alt="" width="28" height="28" loading="lazy">` : ""}
+            ${r.id ? `<button type="button" class="pl-link" data-pid="${r.id}">${nm}</button>` : nm}${owner ? ` <span class="bx-owner" title="${esc(team(owner).name)}">${esc(team(owner).abbrev)}</span>` : ""}</td>
+            ${r.stats.map((v) => `<td class="num">${esc(v)}</td>`).join("")}</tr>`;
+        }).join("")}</tbody></table></div>`).join("") : `<p class="small muted">No player stats yet.</p>`}`;
+  }
+  return `<div class="bx-panel"><div class="bx-tabs">${tab("players", "Player stats")}${tab("team", "Team stats")}</div>${body}</div>`;
 }
 
 // ---------- League history ----------

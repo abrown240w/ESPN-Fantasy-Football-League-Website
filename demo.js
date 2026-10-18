@@ -488,5 +488,39 @@
     return { sp, updated: Date.now(), games };
   }
 
-  window.DemoLeague = { response, activity, nfl, live, values, player, freeAgents, usage, weather };
+  // Same shape as /api/boxscore, built from the demo's live players for one game.
+  function box(id, sp) {
+    const L = live(sp || CURRENT_WEEK), g = L.games.find((x) => x.id === id);
+    if (!g) return { event: id, state: "pre", updated: Date.now(), teams: {}, teamStats: [], players: { away: [], home: [] } };
+    const forTeam = (proId) => L.players.filter((p) => p.proId === proId && p.pts != null);
+    const row = (p, stats) => ({ id: p.id, name: p.name, short: p.name.replace(/^(\w)\w*\s/, "$1. "), jersey: String(10 + (p.id % 80)), headshot: "", stats });
+    const cats = (proId) => {
+      const ps = forTeam(proId), out = [];
+      const qbs = ps.filter((p) => p.posId === 1 && p.stats[3] != null);
+      if (qbs.length) out.push({ key: "passing", title: "Passing", labels: ["C/ATT", "YDS", "TD", "INT"], rows: qbs.map((p) => { const att = Math.max(1, Math.round(p.stats[3] / 7.5)); return row(p, [`${Math.round(att * 0.65)}/${att}`, String(p.stats[3]), String(p.stats[4] || 0), String(p.stats[20] || 0)]); }) });
+      const rush = ps.filter((p) => p.stats[24]);
+      if (rush.length) out.push({ key: "rushing", title: "Rushing", labels: ["CAR", "YDS", "AVG", "TD"], rows: rush.map((p) => { const car = Math.max(1, Math.round(p.stats[24] / 4.4)); return row(p, [String(car), String(p.stats[24]), (p.stats[24] / car).toFixed(1), String(p.stats[25] || 0)]); }) });
+      const rec = ps.filter((p) => p.stats[53] != null || p.stats[42]);
+      if (rec.length) out.push({ key: "receiving", title: "Receiving", labels: ["REC", "YDS", "TD", "TGTS"], rows: rec.map((p) => row(p, [String(p.stats[53] || 0), String(p.stats[42] || 0), String(p.stats[43] || 0), String(p.stats[58] || (p.stats[53] || 0) + 1)])) });
+      return out;
+    };
+    const tot = (proId, k) => forTeam(proId).reduce((s, p) => s + (p.stats[k] || 0), 0);
+    const ts = (label, a, h, bar) => ({ label, away: String(a), home: String(h), bar: !!bar });
+    const A = g.away.proId, H = g.home.proId;
+    return {
+      event: id, state: g.state, updated: Date.now(),
+      teams: { away: { proId: A, abbr: g.away.abbr, name: g.away.name }, home: { proId: H, abbr: g.home.abbr, name: g.home.name } },
+      teamStats: [
+        ts("Total yards", tot(A, 3) + tot(A, 24), tot(H, 3) + tot(H, 24), true),
+        ts("Passing yards", tot(A, 3), tot(H, 3), true),
+        ts("Rushing yards", tot(A, 24), tot(H, 24), true),
+        ts("First downs", Math.round((tot(A, 3) + tot(A, 24)) / 16), Math.round((tot(H, 3) + tot(H, 24)) / 16)),
+        ts("Turnovers", tot(A, 20), tot(H, 20)),
+        ts("Time of possession", "29:12", "30:48"),
+      ],
+      players: { away: cats(A), home: cats(H) },
+    };
+  }
+
+  window.DemoLeague = { response, activity, nfl, live, values, player, freeAgents, usage, weather, box };
 })();
