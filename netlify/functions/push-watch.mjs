@@ -7,6 +7,8 @@
 //   waiver             every 10 minutes: once a waiver run finishes, one summary of what you got
 //                      (missed claims only for the site owner: other teams' failed claims are private)
 //   lineup             Sundays at 10:30 Central: bench players projected to outscore your starters
+//   adds               every 10 minutes: another team in your league picks up or drops a player
+//                      (free-agent moves one at a time; a waiver run as one summary)
 // The first time it sees a league it just records the current state, so nothing old is announced.
 
 import { store, allSubs, sendPush, espn, playerNames } from "../lib/push-common.mjs";
@@ -141,7 +143,9 @@ async function transactionAlerts(lid, season, st, teams, out) {
   for (const pg of pages) for (const t of pg.transactions || []) byId.set(t.id, t);
   const all = [...byId.values()];
   const first = !st.seenTrades;
-  const seenTrades = new Set(st.seenTrades || []), seenWaivers = new Set(st.seenWaivers || []);
+  const seenTrades = new Set(st.seenTrades || []), seenWaivers = new Set(st.seenWaivers || []), seenMoves = new Set(st.seenMoves || []);
+  const faMoves = all.filter((t) => t.type === "FREEAGENT" && t.status === "EXECUTED" && !seenMoves.has(t.id));
+  for (const t of faMoves) seenMoves.add(t.id);
   const proposalOf = (t) => { let id = t.relatedTransactionId || t.id; for (let i = 0; i < 5; i++) { const r = byId.get(id); if (!r || r.type !== "TRADE_ACCEPT") return id; id = r.relatedTransactionId; } return id; };
 
   // Trades: the first time we see one accepted (or processed), tell both teams.
@@ -162,11 +166,25 @@ async function transactionAlerts(lid, season, st, teams, out) {
   if (waiverReady || first) for (const t of fresh) seenWaivers.add(t.id);
   st.seenTrades = keepLast([...seenTrades]);
   st.seenWaivers = keepLast([...seenWaivers]);
+  st.seenMoves = keepLast([...seenMoves]);
   if (first) return;
 
-  const ids = [...new Set([...trades.flatMap((x) => x.items.map((i) => i.playerId)), ...(waiverReady ? fresh.flatMap((t) => (t.items || []).map((i) => i.playerId)) : [])])];
+  const ids = [...new Set([...trades.flatMap((x) => x.items.map((i) => i.playerId)), ...(waiverReady ? fresh.flatMap((t) => (t.items || []).map((i) => i.playerId)) : []),
+    ...faMoves.flatMap((t) => (t.items || []).map((i) => i.playerId))])];
   const names = await playerNames(season, ids);
   const nm = (id) => names[id]?.[0] || "a player";
+  const teamName = (id) => st.teamNames?.[id] || `Team ${id}`;
+  // Adds & drops by other teams: league-wide, sent to everyone except the team that made the move.
+  for (const t of faMoves) {
+    const adds = (t.items || []).filter((i) => i.type === "ADD").map((i) => nm(i.playerId)), drops = (t.items || []).filter((i) => i.type === "DROP").map((i) => nm(i.playerId));
+    if (!adds.length && !drops.length) continue;
+    out.push({
+      league: true, actor: String(t.teamId), kinds: ["adds"], tag: `move-${t.id}`,
+      title: `📥 ${teamName(t.teamId)}`,
+      body: [adds.length ? `Added ${adds.join(", ")}` : "", drops.length ? `dropped ${drops.join(", ")}` : ""].filter(Boolean).join(", "),
+      url: `/?league=${lid}&tab=transactions`,
+    });
+  }
   for (const tr of trades) {
     const sides = [...new Set(tr.items.flatMap((i) => [i.fromTeamId, i.toTeamId]))].map(String);
     for (const team of sides) {
@@ -182,6 +200,13 @@ async function transactionAlerts(lid, season, st, teams, out) {
     }
   }
   if (!waiverReady) return;
+  // The waiver run for the whole league, as one summary (successful claims are public).
+  const wonAll = fresh.filter((t) => t.status === "EXECUTED");
+  if (wonAll.length) {
+    const lines = wonAll.map((t) => { const add = (t.items || []).find((i) => i.type === "ADD"); return `${teamName(t.teamId)}: ${add ? nm(add.playerId) : "a player"}`; });
+    out.push({ league: true, actor: "", actors: wonAll.map((t) => String(t.teamId)), kinds: ["adds"], tag: `waiver-run-${lastProcessed}`,
+      title: "📥 Waiver claims processed", body: lines.join(" · "), url: `/?league=${lid}&tab=transactions` });
+  }
   const byTeam = {};
   for (const t of fresh) (byTeam[t.teamId] ||= []).push(t);
   for (const [team, list] of Object.entries(byTeam)) {
@@ -258,7 +283,8 @@ export default async () => {
     const out = [];
     try {
       if (!st.sp || st.season !== season || now - (st.spAt || 0) > 3600e3) {
-        const info = await espn(lid, season, ["mStatus", "mSettings"]);
+        const info = await espn(lid, season, ["mStatus", "mSettings", "mTeam"]);
+        st.teamNames = Object.fromEntries((info.teams || []).map((t) => [t.id, t.name || t.abbrev || `Team ${t.id}`]));
         st.sp = info.scoringPeriodId || info.status?.latestScoringPeriod || 1;
         st.scoring = (info.settings?.scoringSettings?.scoringItems || []).map((i) => ({ statId: i.statId, points: i.points, ...(i.pointsOverrides ? { pointsOverrides: i.pointsOverrides } : {}) }));
         st.season = season; st.spAt = now;
@@ -276,7 +302,8 @@ export default async () => {
     // Deliver: your team only, the kinds you left on, private details only for the owner.
     for (const n of out) {
       for (const sub of list) {
-        if (String(sub.teamId) !== n.teamId || !n.kinds.some((k) => sub.prefs?.[k] !== false)) continue;
+        if (!n.kinds.some((k) => sub.prefs?.[k] !== false)) continue;
+        if (n.league ? String(sub.teamId) === n.actor : String(sub.teamId) !== n.teamId) continue;
         const body = n.publicBody !== undefined && !sub.owner ? n.publicBody : n.body;
         if (!body) continue;
         await sendPush(sub, { title: n.title, body, url: n.url, tag: n.tag });

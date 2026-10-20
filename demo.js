@@ -100,6 +100,10 @@
     const w = p.weeks[wk];
     const stats = [{ scoringPeriodId: wk, statSourceId: 1, statSplitTypeId: 1, appliedTotal: w.proj, stats: statsFor(p.defaultPositionId, w.proj) }];
     if (w.actual !== null) stats.push({ scoringPeriodId: wk, statSourceId: 0, statSplitTypeId: 1, appliedTotal: w.actual, stats: statsFor(p.defaultPositionId, w.actual) });
+    // Season total and last week, like ESPN's roster entries (for the Roster tab's Scoring view).
+    const played = Object.entries(p.weeks).filter(([k, x]) => Number(k) < Math.min(wk, CURRENT_WEEK) && x.actual != null).map(([, x]) => x.actual);
+    if (played.length) stats.push({ seasonId: SEASON, scoringPeriodId: 0, statSourceId: 0, statSplitTypeId: 0, appliedTotal: played.reduce((a, b) => a + b, 0), appliedAverage: played.reduce((a, b) => a + b, 0) / played.length });
+    if (p.weeks[wk - 1]?.actual != null) stats.push({ scoringPeriodId: wk - 1, statSourceId: 0, statSplitTypeId: 1, appliedTotal: p.weeks[wk - 1].actual });
     return {
       lineupSlotId: slot, playerId: p.id,
       playerPoolEntry: {
@@ -109,7 +113,8 @@
           ownership: { percentOwned: Math.min(99.9, 40 + (p.id * 37) % 60), percentStarted: Math.min(99, 10 + (p.id * 53) % 85) },
           ...(withInjury ? {
             injuryStatus: p.injuryStatus, injured: p.injuryStatus !== "ACTIVE",
-            rankings: { [wk]: [{ rankType: "PPR", rankSourceId: 0, averageRank: pprRank(p, wk) + Math.round(rand() * 4) / 2 }] },
+            rankings: { [wk]: [{ rankType: "PPR", rankSourceId: 0, averageRank: pprRank(p, wk) + Math.round(rand() * 4) / 2 },
+              ...[3, 5, 6, 7, 10].map((src) => ({ rankType: "PPR", rankSourceId: src, rank: Math.max(1, pprRank(p, wk) + Math.round((rand() - 0.5) * 8)) }))] },
           } : {}) },
       },
     };
