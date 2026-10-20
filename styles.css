@@ -1041,3 +1041,64 @@ table.data.bx-table th, table.data.bx-table td { padding: 6px 6px; font-size: .8
 .inj-table td { vertical-align: top; }
 .inj-owner { display: inline-block; font-size: .64rem; font-weight: 800; border-radius: 4px; padding: 0 4px; background: #e8f0fc; color: var(--accent-ink); vertical-align: middle; }
 .inj-owner.fa { background: #e8f5ec; color: #146c2e; }
+
+/* Phones: content runs to the screen edges; text outside cards keeps a small inset */
+@media (max-width: 640px) {
+  main.wrap { padding-left: 0; padding-right: 0; }
+  main .card, main .table-wrap, main .mini-tile { border-radius: 0; border-left-width: 0; border-right-width: 0; }
+  main .card { padding: 10px 8px; }
+  main .view > :is(.section-head, .filters, p, h2, h3, .seg, .loading, .banner, .inj-legend, .riv-pick),
+  main #pf-body > :is(.section-head, .filters, p, .loading),
+  main .view > div > :is(.section-head, .filters) { padding-left: 10px; padding-right: 10px; }
+  main .view > .seg, main #pf-view { margin-left: 10px; margin-right: 10px; padding: 0; }
+  main .grid { gap: 6px; }
+  .mt-grid { padding: 0 6px; }
+}
+
+/* Button-bar filters (Players tab, injury report) */
+.filters .seg { flex-wrap: wrap; }
+.pos-seg button { min-width: 40px; }
+@media (max-width: 640px) {
+  .filters .seg button { padding: 7px 10px; }
+  .filters input { flex-basis: 100%; }
+}
+
+/* Live games: down & distance and ball spot under the clock */
+.g-dd { font-size: .74rem; margin-top: 2px; white-space: nowrap; color: var(--ink-2); }
+.g-dd strong { color: var(--ink); }
+.pm-dd { margin: 6px 0 0; }
+
+/* Player card: stat sheet */
+.modal-card { padding: 16px; }
+.pm-sheet { display: grid; grid-template-columns: repeat(4, 1fr); border: 1px solid var(--grid); border-radius: 8px; overflow: hidden; margin: 4px 0 8px; }
+.pm-sheet > div { display: flex; flex-direction: column; align-items: center; padding: 6px 2px; border-right: 1px solid var(--grid); border-bottom: 1px solid var(--grid); margin: 0 -1px -1px 0; min-width: 0; }
+.pm-sheet span { font-size: .62rem; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.pm-sheet strong { font-size: 1rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pm-sheet small { font-size: .62rem; color: var(--muted); font-weight: 600; margin-left: 3px; }
+.pm-season { margin: 0 0 6px; }
+.pm-hint { margin: 0 0 6px; }
+.pm-pane .pm-sub { margin: 14px 0 6px; font-size: .92rem; }
+
+/* Player card: condensed game log (fits a phone without sideways scrolling) */
+.gl-compact { width: 100%; table-layout: fixed; font-size: .8rem; }
+.gl-compact th, .gl-compact td { padding: 5px 3px; vertical-align: top; }
+.gl-compact th { font-size: .66rem; text-transform: uppercase; letter-spacing: .03em; }
+.gl-compact .gl-wk { width: 30px; color: var(--muted); }
+.gl-compact.with-u th:nth-child(n+3):not(:last-child) { width: 44px; }
+.gl-compact th:last-child { width: 56px; }
+.gl-compact .gl-game strong { font-size: .8rem; }
+.gl-compact .gl-line { font-size: .72rem; line-height: 1.25; color: var(--ink-2); margin-top: 1px; }
+.gl-compact td.num { font-variant-numeric: tabular-nums; }
+.gl-compact .pt-sub { font-size: .62rem; }
+.gl-compact .gl-pts { padding: 2px 5px; font-size: .8rem; }
+.gl-compact tr.gl-empty td { font-size: .74rem; padding-top: 3px; padding-bottom: 3px; }
+.gl-compact tr.gl-bd td { padding: 4px 6px 8px; }
+
+/* Player card: depth chart */
+.dc-table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: .8rem; }
+.dc-table th, .dc-table td { padding: 6px 4px; border-bottom: 1px solid var(--grid); text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dc-table thead th { font-size: .66rem; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); }
+.dc-table tbody th { width: 34px; font-size: .72rem; color: var(--muted); }
+.dc-table td.me { background: #fff7e0; font-weight: 700; }
+.dc-table td.dc-out .pl-link { color: var(--muted); text-decoration: line-through; }
+.dc-table .badge { font-size: .58rem; padding: 0 3px; }

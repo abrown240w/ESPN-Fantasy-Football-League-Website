@@ -1090,7 +1090,15 @@ function drawPlayerTable(el, keys, rows, sortState, sp, empty) {
   el.replaceChildren(sortableTable(cols, rows, sortState, redraw, { rowClass: gsState, tableClass: "pt-table" }));
 }
 
-const posOptions = (current) => ["ALL", ...POS_ORDER].map((p) => `<option ${current === p ? "selected" : ""}>${p}</option>`).join("");
+// Position filter as a row of buttons (same feel as the injury report).
+const posSeg = (id, current) => `<div class="seg pos-seg" id="${id}" role="group" aria-label="Position">${["ALL", ...POS_ORDER].map((p) => `<button type="button" data-p="${esc(p)}" class="${current === p ? "active" : ""}">${p === "ALL" ? "All" : esc(p)}</button>`).join("")}</div>`;
+function bindPosSeg(id, set, draw) {
+  $(id).querySelectorAll("button").forEach((b) => b.addEventListener("click", () => {
+    set(b.dataset.p);
+    $(id).querySelectorAll("button").forEach((x) => x.classList.toggle("active", x === b));
+    draw();
+  }));
+}
 const tableHint = () => `<p class="muted small pt-hint">Tap a column header to sort. Swipe sideways for more columns.</p>`;
 
 function renderFreeAgents(el) {
@@ -1102,7 +1110,7 @@ function renderFreeAgents(el) {
     ${topPickups(w, all)}
     <div class="filters">
       <input id="fa-q" type="search" placeholder="Search free agents…" value="${esc(f.faQ)}">
-      <select id="fa-pos" aria-label="Position">${posOptions(f.faPos)}</select>
+      ${posSeg("fa-pos", f.faPos)}
       <div class="seg" id="fa-status">${[["all", "All"], ["FA", "Free agents"], ["W", "On waivers"]].map(([k, l]) => `<button data-s="${k}" class="${f.faStatus === k ? "active" : ""}">${l}</button>`).join("")}</div>
     </div>${tableHint()}<div id="fa-list"></div>${fcCredit()}${nvCredit()}`;
   const draw = () => {
@@ -1111,7 +1119,7 @@ function renderFreeAgents(el) {
     drawPlayerTable($("fa-list"), ["player", "pos", "owner", "opp", "own", "proj", "pts", "snap", "tgt", "seasonPts", "pprRank", "posRank", "value"], rows, f.faSort, w.sp, "No free agents match those filters.");
   };
   $("fa-q").addEventListener("input", (e) => { f.faQ = e.target.value; draw(); });
-  $("fa-pos").addEventListener("change", (e) => { f.faPos = e.target.value; draw(); });
+  bindPosSeg("fa-pos", (v) => (f.faPos = v), draw);
   $("fa-status").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => {
     f.faStatus = b.dataset.s;
     $("fa-status").querySelectorAll("button").forEach((x) => x.classList.toggle("active", x === b));
@@ -1135,7 +1143,7 @@ function renderRosteredPlayers(el) {
     <div class="section-head"><h2>All rostered players</h2></div>
     <div class="filters">
       <input id="pf-q" type="search" placeholder="Search players…" value="${esc(f.q)}">
-      <select id="pf-pos" aria-label="Position">${posOptions(f.pos)}</select>
+      ${posSeg("pf-pos", f.pos)}
       <select id="pf-team" aria-label="Manager"><option value="ALL">All managers</option>${teamOpts}</select>
       <div class="seg" id="pf-role">${["starters", "bench", "all"].map((r) => `<button data-r="${r}" class="${f.role === r ? "active" : ""}">${r[0].toUpperCase() + r.slice(1)}</button>`).join("")}</div>
     </div>${tableHint()}<div id="pf-list"></div>${fcCredit()}${nvCredit()}`;
@@ -1146,7 +1154,7 @@ function renderRosteredPlayers(el) {
     drawPlayerTable($("pf-list"), ["player", "pos", "owner", "opp", "proj", "pts", "diff", "snap", "tgt", "pprRank", "posRank", "value"], rows, f.rSort, w.sp, "No players match those filters.");
   };
   $("pf-q").addEventListener("input", (e) => { f.q = e.target.value; draw(); });
-  $("pf-pos").addEventListener("change", (e) => { f.pos = e.target.value; draw(); });
+  bindPosSeg("pf-pos", (v) => (f.pos = v), draw);
   $("pf-team").addEventListener("change", (e) => { f.team = e.target.value; draw(); });
   $("pf-role").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => {
     f.role = b.dataset.r;
@@ -1167,7 +1175,7 @@ function renderAllPlayers(el) {
   el.innerHTML = `<div class="section-head"><h2>All players</h2><span class="muted small">Rostered players plus the top available free agents · week ${w.week}</span></div>
     <div class="filters">
       <input id="all-q" type="search" placeholder="Search all players…" value="${esc(f.allQ)}">
-      <select id="all-pos" aria-label="Position">${posOptions(f.allPos)}</select>
+      ${posSeg("all-pos", f.allPos)}
     </div>${tableHint()}<div id="all-list"></div>${fcCredit()}${nvCredit()}`;
   const draw = () => {
     const q = f.allQ.toLowerCase();
@@ -1175,7 +1183,7 @@ function renderAllPlayers(el) {
     drawPlayerTable($("all-list"), ["player", "pos", "owner", "opp", "own", "proj", "pts", "snap", "tgt", "seasonPts", "pprRank", "posRank", "value"], rows, f.allSort, w.sp, "No players match those filters.");
   };
   $("all-q").addEventListener("input", (e) => { f.allQ = e.target.value; draw(); });
-  $("all-pos").addEventListener("change", (e) => { f.allPos = e.target.value; draw(); });
+  bindPosSeg("all-pos", (v) => (f.allPos = v), draw);
   draw();
 }
 // ---------- Logos & award icons ----------
@@ -1729,6 +1737,13 @@ function renderLive() {
       <div class="g-score">${g.state === "pre" ? "" : s.score ?? ""}${g.state === "in" && s.timeouts != null ? `<div class="g-to" title="${s.timeouts} timeout${s.timeouts === 1 ? "" : "s"} left">${[0, 1, 2].map((i) => `<i class="${i < s.timeouts ? "on" : ""}"></i>`).join("")}</div>` : ""}</div>
     </div>`;
   };
+  // Down & distance and where the ball is, under the clock: "3rd & 4 at TEN 15".
+  const ddLine = (g) => {
+    if (g.state !== "in") return "";
+    const m = /^(.*?)\s+at\s+(.+)$/.exec(g.downDistance || "");
+    const dd = m ? m[1] : g.downDistance || "", spot = m ? m[2] : g.field?.possText || "";
+    return dd || spot ? `<div class="g-dd">${dd ? `<strong>${esc(dd)}</strong>` : ""}${spot ? ` <span>at ${esc(spot)}</span>` : ""}</div>` : "";
+  };
   // pinned = shown in the desktop side pane (always open, nothing to toggle).
   const gameCard = (g, pinned = false) => {
     const status = g.state === "in" ? `<span class="badge live">LIVE</span> <strong>${esc(g.detail)}</strong>`
@@ -1748,7 +1763,7 @@ function renderLive() {
       <div class="g-top" ${pinned ? "" : `data-gtoggle role="button" tabindex="0" aria-expanded="${open}" title="${open ? "Tap to close" : "Tap for players, stats & weather"}"`}>
       <div class="g-head">
         ${scoreSide(g.away, g, false)}
-        <div class="g-status">${status}${g.broadcast ? `<div class="muted small">${esc(g.broadcast)}</div>` : ""}</div>
+        <div class="g-status">${status}${ddLine(g)}${g.broadcast && g.state !== "in" ? `<div class="muted small">${esc(g.broadcast)}</div>` : ""}</div>
         ${scoreSide(g.home, g, true)}
       </div>
       ${pinned ? `${graphic}${sit}${lastPlay}` : ""}
@@ -1771,7 +1786,7 @@ function renderLive() {
     const status = g.state === "in" ? `<span class="badge live">LIVE</span> <strong>${esc(g.detail)}</strong>${g.redZone ? ` <span class="badge out">RZ</span>` : ""}`
       : g.state === "post" ? `<span class="badge final">FINAL</span>` : `<strong>${esc(kickoff(g))}</strong>`;
     return `<div class="card game game-tile state-${g.state} ${state.liveSel === g.id ? "selected" : ""}" data-gsel="${esc(g.id)}" role="button" tabindex="0">
-      <div class="g-head">${scoreSide(g.away, g, false)}<div class="g-status">${status}</div>${scoreSide(g.home, g, true)}</div></div>`;
+      <div class="g-head">${scoreSide(g.away, g, false)}<div class="g-status">${status}${ddLine(g)}</div>${scoreSide(g.home, g, true)}</div></div>`;
   };
   const split = MU_SPLIT.matches;
   if (split && !games.some((g) => g.id === state.liveSel)) state.liveSel = (games.find((g) => g.state === "in") || games[0])?.id;
@@ -2503,6 +2518,10 @@ const RECOVERY = [
 const INJ_CODE = { "Out": "OUT", "Injured Reserve": "INJURY_RESERVE", "Questionable": "QUESTIONABLE", "Doubtful": "DOUBTFUL", "Suspension": "SUSPENSION", "Day-To-Day": "DAY_TO_DAY" };
 const INJ_ORDER = { "Injured Reserve": 0, "Suspension": 1, "Out": 2, "Doubtful": 3, "Questionable": 4, "Day-To-Day": 5 };
 
+// Depth chart helpers: a position's spots (receivers have three), and whether a listed player is out.
+const depthCols = (dep, pos) => (!dep ? [] : pos === "WR" ? [dep.WR1, dep.WR2, dep.WR3].filter(Boolean) : dep[pos] ? [dep[pos]] : []);
+const depthOut = (x) => /out|reserve|suspen|doubtful|pup|physically/i.test(x?.[2] || "");
+
 function renderInjuries() {
   const el = $("view-injuries");
   ensureUsage(); // weeks missed and snap shares fill in when they arrive
@@ -2523,11 +2542,45 @@ function renderInjuries() {
     return pl || n ? n : null;
   };
   const snap = (id) => usageOf(id)?.last.pct;
-  const depthFor = (p) => (D.depth?.[p.proId]?.[p.pos] || []).filter(([id]) => String(id) !== String(p.id));
-  const nextUp = (p) => depthFor(p).find(([, , hurt]) => !hurt);
-  const fantasyNext = (p) => {
-    const healthy = depthFor(p).filter(([, , hurt]) => !hurt);
-    return [...healthy].sort((a, b) => (snap(b[0]) ?? -1) - (snap(a[0]) ?? -1))[0] || healthy[0];
+  // His backups: the healthy players listed under him at his spot on the depth chart. If he isn't
+  // listed (or nobody healthy is under him), the healthy backups behind each spot's current starter.
+  const backups = (p) => {
+    const C = depthCols(D.depth?.[p.proId], p.pos), me = String(p.id);
+    for (const c of C) {
+      const i = c.findIndex(([id]) => String(id) === me);
+      const below = i >= 0 ? c.slice(i + 1).filter((x) => !depthOut(x)) : [];
+      if (below.length) return below;
+    }
+    const healthy = C.map((c) => c.filter((x) => !depthOut(x) && String(x[0]) !== me));
+    const starters = new Set(healthy.map((c) => String(c[0]?.[0])));
+    const out = [], seen = new Set();
+    for (let d = 1; d < 8; d++) for (const c of healthy) {
+      const x = c[d];
+      if (x && !starters.has(String(x[0])) && !seen.has(String(x[0]))) { seen.add(String(x[0])); out.push(x); }
+    }
+    return out;
+  };
+  const nextUp = (p) => backups(p)[0];
+  // Of those backups, whoever played the most snaps last game (depth order breaks ties).
+  const fantasyNext = (p) => backups(p).map((x, i) => [x, snap(x[0]) ?? -1, i]).sort((a, b) => b[1] - a[1] || a[2] - b[2])[0]?.[0];
+  // Fantasy week he could be back: ESPN's return date mapped to his team's next game on or after it
+  // (byes skipped). IR players also have to sit four games. Questionable/doubtful: the next game.
+  const retWeek = (p) => {
+    if (/^Season/.test(recovery(p)) && p.status === "Injured Reserve") return "season";
+    const up = D.upcoming?.[p.proId] || [];
+    let wk = p.returnWeek ?? null;
+    if (p.status === "Injured Reserve" && up.length) wk = Math.max(wk ?? 0, up[Math.min(Math.max(0, 4 - (p.out ?? 0)), up.length - 1)]);
+    if (wk == null && /Questionable|Doubtful|Day-To-Day/.test(p.status)) wk = p.nextWeek ?? up[0] ?? null;
+    return wk || null;
+  };
+  const retCell = (p) => {
+    const wk = p.ret;
+    if (wk === "season") return `<span class="muted">Season</span>`;
+    if (wk == null) return `<span class="muted">${p.status === "Injured Reserve" ? "IR" : "–"}</span>`;
+    const cur = state.base.current, bye = D.byes?.[p.proId];
+    const games = (D.upcoming?.[p.proId] || []).filter((w) => w < wk).length;
+    const sub = [wk <= cur ? "this week" : games ? `misses ${games} game${games > 1 ? "s" : ""}` : "next game", bye && bye > cur && bye < wk ? `bye wk ${bye}` : ""].filter(Boolean).join(" · ");
+    return `<strong>Wk ${wk}</strong>${!games && /Questionable|Doubtful|Day-To-Day/.test(p.status) ? ` <span class="muted small">GTD</span>` : ""}<div class="pt-sub">${sub}</div>`;
   };
   const who = (x) => (x ? `${plink(x[0], shortName(x[1]))} ${ownerTag(x[0])}${snap(x[0]) != null ? `<div class="pt-sub">${pctTxt(snap(x[0]))} snaps last game</div>` : ""}` : `<span class="muted">–</span>`);
   const recovery = (p) => { const t = `${p.type} ${p.detail} ${p.status}`; return RECOVERY.find(([re]) => re.test(t))?.[1] || "Varies"; };
@@ -2535,16 +2588,17 @@ function renderInjuries() {
   const rows = D.players
     .filter((p) => f.pos === "ALL" || p.pos === f.pos)
     .filter((p) => f.roster === "all" || (f.roster === "rostered" ? owners.has(String(p.id)) : !owners.has(String(p.id))))
-    .map((p) => ({ ...p, out: weeksOut(p), next: nextUp(p), fnext: fantasyNext(p) }));
+    .map((p) => ({ ...p, out: weeksOut(p), next: nextUp(p), fnext: fantasyNext(p) }))
+    .map((p) => ({ ...p, ret: retWeek(p) }));
   const cols = [
     { key: "name", label: "Player", cls: "pt-player", dir: 1, render: (p) => `<div class="pt-name">${plinkNm(p)}${injBadge({ injury: INJ_CODE[p.status] || p.status.toUpperCase() })}</div><div class="pt-sub">${esc(p.pos)} · ${esc(PRO[p.proId] || "")} ${ownerTag(p.id)}</div>` },
     { key: "status", label: "Status", dir: 1, sort: (p) => INJ_ORDER[p.status] ?? 9, render: (p) => esc(p.status) },
     { key: "type", label: "Injury", dir: 1, render: (p) => `<span ${p.note ? `data-tip="${esc(`<b>${esc(p.name)}</b>${esc(p.note)}`)}"` : ""}>${esc([p.type, p.detail].filter(Boolean).join(" – ") || (p.status === "Suspension" ? "Suspension" : "Not disclosed"))}${p.side ? ` <span class="muted">(${esc(p.side)})</span>` : ""}</span>` },
     { key: "recovery", label: "Typical recovery", title: "Typical time missed for this kind of injury (a rough guide)", dir: 1, sort: (p) => recovery(p), render: (p) => esc(recovery(p)) },
     { key: "out", label: "Weeks out", title: "Games in a row his team has played without him (from nflverse snap counts)", num: true, render: (p) => (p.out == null ? `<span class="muted">–</span>` : String(p.out)) },
-    { key: "returnDate", label: "Possible return", title: "ESPN's estimated return date", dir: 1, sort: (p) => p.returnDate || "9999", render: (p) => (p.returnDate ? new Date(`${p.returnDate}T12:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : `<span class="muted">${p.status === "Injured Reserve" ? "IR" : "–"}</span>`) },
-    { key: "next", label: "Next up", title: "Next healthy player at the position on the team's depth chart", dir: 1, sort: (p) => p.next?.[1] || "~", render: (p) => who(p.next) },
-    { key: "fnext", label: "Fantasy fill-in", title: "Healthy teammate at the position with the most snaps last game", dir: 1, sort: (p) => p.fnext?.[1] || "~", render: (p) => who(p.fnext) },
+    { key: "ret", label: "Possible return", title: "Fantasy week he could be back: ESPN's return date matched to his team's schedule (byes skipped). IR players must sit at least four games.", dir: 1, sort: (p) => (p.ret === "season" ? 99 : p.ret ?? 98), render: retCell },
+    { key: "next", label: "Next up", title: "Next healthy player behind him on the team's depth chart", dir: 1, sort: (p) => p.next?.[1] || "~", render: (p) => who(p.next) },
+    { key: "fnext", label: "Fantasy fill-in", title: "Of his healthy backups, the one who played the most snaps last game", dir: 1, sort: (p) => p.fnext?.[1] || "~", render: (p) => who(p.fnext) },
   ];
   const btn = (key, val, label) => `<button type="button" data-${key}="${val}" class="${f[key] === val ? "active" : ""}">${label}</button>`;
   el.innerHTML = `<div class="section-head"><h2>Injury report</h2><span class="muted small">Every QB, RB, WR, TE and K who isn't fully active</span></div>
@@ -3266,39 +3320,41 @@ function renderPlayerModal(d, focusSp) {
   // Snap share and targets from nflverse, when loaded and matched to this player.
   const U = state.usage?.byId ? state.usage : (ensureUsage(), null);
   const ul = U?.byId.get(Number(p.id)), uAvg = ul ? usageOf(p.id, lastWeek) : null;
-  const ucols = ul ? 2 : 0;
-  const usageCells = (sp) => {
-    if (!ul) return "";
-    const e = ul.w[sp];
-    const tt = e ? U.teams[e[3]]?.[sp]?.[1] : 0;
-    if (!e) return `<td class="num muted">–</td><td class="num muted">–</td>`;
-    return `<td class="num" title="${e[0]} of ${U.teams[e[3]]?.[sp]?.[0] || "?"} offensive snaps">${e[1]}%</td>
-      <td class="num">${ul.pos === "QB" ? `<span class="muted">–</span>` : `${e[2]}${tt ? `<div class="pt-sub">${pctTxt((e[2] / tt) * 100)}</div>` : ""}`}</td>`;
+  // One week's usage: share of the team's snaps, targets and rushing attempts.
+  const usage = (sp) => {
+    const e = ul?.w[sp], tm = e ? U.teams[e[3]]?.[sp] : null;
+    return e ? { snap: e[1], snaps: e[0], tgt: tm?.[1] ? (e[2] / tm[1]) * 100 : null, tgts: e[2], rush: tm?.[2] ? ((e[4] || 0) / tm[2]) * 100 : null, car: e[4] || 0 } : null;
   };
-  const rows = [];
-  for (let sp = 1; sp <= lastWeek; sp++) {
+  const uCell = (v, n, unit) => (v == null ? `<td class="num muted">–</td>` : `<td class="num">${Math.round(v)}%<div class="pt-sub">${n} ${unit}</div></td>`);
+  const ncols = 3 + (ul ? 3 : 0);
+  const logRows = (sps) => sps.map((sp) => {
     const w = bySp[sp];
     if (!w) {
       const why = p.bye === sp ? "BYE" : sp === state.base.current ? "Hasn't played yet" : "Did not play";
-      rows.push(`<tr class="muted"><td>${sp}</td><td colspan="${2 + ucols}">${why}</td></tr>`);
-      continue;
+      return `<tr class="muted gl-empty"><td class="gl-wk">${sp}</td><td colspan="${ncols - 1}">${why}</td></tr>`;
     }
-    const opp = w.opp ? `${w.home ? "vs" : "@"} ${esc(PRO[w.opp] || "")}` : "";
-    const open = focusSp === sp;
-    rows.push(`<tr class="gl-row ${open ? "open" : ""}" data-sp="${sp}"><td>${sp}</td><td><strong>${opp || "–"}</strong><div class="gl-line">${esc(gameLine(p.posId, w.stats))}</div></td>
-      ${usageCells(sp)}<td class="num"><button type="button" class="gl-pts" aria-expanded="${open}" aria-controls="gl-bd-${sp}">${f2(w.pts)} <span class="caret">▾</span></button></td></tr>
-      <tr class="gl-bd" id="gl-bd-${sp}" ${open ? "" : "hidden"}><td></td><td colspan="${2 + ucols}">${breakdownHtml(w, p.posId)}</td></tr>`);
-  }
+    const opp = w.opp ? `${w.home ? "vs" : "@"} ${esc(PRO[w.opp] || "")}` : "–";
+    const u = ul ? usage(sp) : null, open = focusSp === sp;
+    const shares = !ul ? "" : !u ? `<td class="num muted">–</td>`.repeat(3)
+      : `${uCell(u.snap, u.snaps, "snp")}${ul.pos === "QB" ? `<td class="num muted">–</td>` : uCell(u.tgt, u.tgts, "tgt")}${uCell(u.rush, u.car, "att")}`;
+    return `<tr class="gl-row ${open ? "open" : ""}" data-sp="${sp}"><td class="gl-wk">${sp}</td>
+      <td class="gl-game"><strong>${opp}</strong><div class="gl-line">${esc(compactLine(p.posId, w.stats) || gameLine(p.posId, w.stats))}</div></td>
+      ${shares}<td class="num gl-ptd"><button type="button" class="gl-pts" aria-expanded="${open}" aria-controls="gl-bd-${sp}">${f1(w.pts)}<span class="caret">▾</span></button></td></tr>
+      <tr class="gl-bd" id="gl-bd-${sp}" ${open ? "" : "hidden"}><td colspan="${ncols}">${breakdownHtml(w, p.posId)}</td></tr>`;
+  }).join("");
+  const logTable = (sps) => `<table class="data gamelog gl-compact ${ul ? "with-u" : ""}"><thead><tr><th class="gl-wk">Wk</th><th>Game</th>${ul ? `<th class="num" title="Share of the team's offensive snaps">Snap</th><th class="num" title="Share of the team's targets">Tgt</th><th class="num" title="Share of the team's rushing attempts">Rush</th>` : ""}<th class="num">Pts</th></tr></thead><tbody>${logRows(sps)}</tbody></table>`;
+
   state.pmFor = String(p.id);
   const rerender = () => { if (!$("pl-modal").hidden && state.pmFor === String(p.id)) renderPlayerModal(d, focusSp); };
 
-  // This week's game (live or final) and this player's box-score lines in it.
-  const g = gameStatusOf({ proId: p.proId });
-  const hasGame = !!g?.id && (g.state === "in" || g.state === "post");
-  let box = null, myCats = [], side = g?.home ? "home" : "away";
-  if (hasGame) {
-    ensureBox({ id: g.id, state: g.state }, rerender);
-    box = state.boxes?.[g.id];
+  // This week's NFL game (from the live scoreboard, any state) and this player's box-score lines in it.
+  if (!state.live && !state.liveForPopup) { state.liveForPopup = true; Promise.resolve().then(refreshLive).catch(() => {}).finally(() => { state.liveForPopup = false; rerender(); }); }
+  const lg = p.proId ? state.live?.games?.find((x) => x.home.proId === p.proId || x.away.proId === p.proId) : null;
+  const started = !!lg && (lg.state === "in" || lg.state === "post");
+  let box = null, myCats = [], side = lg ? (lg.home.proId === p.proId ? "home" : "away") : "away";
+  if (started) {
+    ensureBox({ id: lg.id, state: lg.state }, rerender);
+    box = state.boxes?.[lg.id];
     if (box && box !== "loading" && !box.error) {
       myCats = ["away", "home"].flatMap((sd) => (box.players[sd] || []).map((c) => ({ ...c, sd, row: c.rows.find((r) => String(r.id) === String(p.id)) }))).filter((c) => c.row);
       if (myCats[0]) side = myCats[0].sd;
@@ -3306,47 +3362,64 @@ function renderPlayerModal(d, focusSp) {
   }
   const boxReady = box && box !== "loading" && !box.error;
   const catTable = (c, rowsHtml) => `<div class="pg-cat"><div class="pg-title">${esc(c.title)}</div><table class="pg-table"><thead><tr><th></th>${c.labels.map((l) => `<th>${esc(l)}</th>`).join("")}</tr></thead><tbody>${rowsHtml}</tbody></table></div>`;
-  const myLines = !hasGame ? "" : !boxReady ? (box?.error ? `<p class="muted small">${esc(box.error)}</p>` : `<div class="loading small"><span class="spinner"></span> Loading game stats…</div>`)
+  const myLines = !started ? "" : !boxReady ? (box?.error ? `<p class="muted small">${esc(box.error)}</p>` : `<div class="loading small"><span class="spinner"></span> Loading game stats…</div>`)
     : myCats.length ? `<div class="pg-cats">${myCats.map((c) => catTable(c, `<tr class="me"><td></td>${c.row.stats.map((v) => `<td>${esc(v)}</td>`).join("")}</tr>`)).join("")}</div>`
     : `<p class="muted small">No stats in this game yet.</p>`;
+  const kick = (x) => new Date(x.date).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 
-  const tabs = [["overview", "Overview"], ...(hasGame ? [["game", g.state === "in" ? `<span class="pm-live-dot"></span>Live` : "Game"]] : []), ["log", "Game log"], ["news", "News"]];
+  const tabs = [["overview", "Overview"], ["game", lg?.state === "in" ? `<span class="pm-live-dot"></span>Live` : "Game"], ["log", "Game log"], ["depth", "Depth chart"], ["news", "News"]];
   if (!tabs.some(([k]) => k === state.pmTab)) state.pmTab = "overview";
   const tab = state.pmTab;
 
   let pane = "";
   if (tab === "overview") {
-    pane = `<div class="pm-stats">
-      <div><span class="muted small">Season points</span><strong>${f1(total)}</strong></div>
-      <div><span class="muted small">Games</span><strong>${games}</strong></div>
-      <div><span class="muted small">Per game</span><strong>${games ? f1(total / games) : "–"}</strong></div>
-      <div><span class="muted small">Best week</span><strong>${best ? f1(best.pts) : "–"}</strong>${best ? `<span class="muted small">week ${best.sp}</span>` : ""}</div>
-      ${d.seasonProj ? `<div><span class="muted small">ESPN season proj.</span><strong>${f1(d.seasonProj)}</strong></div>` : ""}
-      ${uAvg?.avg ? `<div><span class="muted small">Snap share</span><strong>${pctTxt(uAvg.avg.pct)}</strong><span class="muted small">season avg</span></div>` : ""}
-      ${uAvg?.avg && uAvg.pos !== "QB" ? `<div><span class="muted small">Target share</span><strong>${pctTxt(uAvg.avg.share)}</strong><span class="muted small">${f1(uAvg.avg.tgt)} tgt/game</span></div>` : ""}
-      ${val ? `<div><span class="muted small">Trade value</span><strong>${fmtVal(val.value)}</strong><span class="muted small">FantasyCalc</span></div>` : ""}
-    </div>
-    ${hasGame ? `<h3 class="pm-sub">This week <span class="pg-line">${gameLineHtml({ proId: p.proId, opp: null })}</span></h3>${myLines}
-      <button type="button" class="pg-go" data-pmtab="game">${g.state === "in" ? "Watch the live game" : "See the game"} ›</button>` : ""}`;
+    // Stat sheet: label over value, four to a row; season totals; this week; the last three games.
+    const totals = {};
+    for (const w of weeks) for (const [k, v] of Object.entries(w.stats || {})) if (typeof v === "number") totals[k] = (totals[k] || 0) + v;
+    const seasonLine = weeks.length ? gameLine(p.posId, totals) : "";
+    const cells = [
+      ["Pts", f1(total)], ["GP", games], ["Avg", games ? f1(total / games) : "–"], ["Best", best ? `${f1(best.pts)}<small>wk ${best.sp}</small>` : "–"],
+      d.seasonProj ? ["Proj", f1(d.seasonProj)] : null,
+      uAvg?.avg ? ["Snap %", pctTxt(uAvg.avg.pct)] : null,
+      uAvg?.avg && uAvg.pos !== "QB" ? ["Tgt %", pctTxt(uAvg.avg.share)] : null,
+      val ? ["Value", fmtVal(val.value)] : null,
+    ].filter(Boolean);
+    const recent = weeks.map((w) => w.sp).sort((x, y) => y - x).slice(0, 3);
+    const score = (sd) => (lg.state === "pre" ? "" : ` ${sd.score ?? ""}`);
+    pane = `<div class="pm-sheet">${cells.map(([l, v]) => `<div><span>${l}</span><strong>${v}</strong></div>`).join("")}</div>
+      ${seasonLine ? `<p class="pm-season small"><span class="muted">Season:</span> ${esc(seasonLine)}</p>` : ""}
+      ${lg ? `<h3 class="pm-sub">This week <span class="pg-line">${esc(lg.away.abbr)}${score(lg.away)} @ ${esc(lg.home.abbr)}${score(lg.home)} · ${lg.state === "pre" ? esc(kick(lg)) : lg.state === "in" ? esc(lg.detail) : "Final"}</span></h3>${myLines}
+        <button type="button" class="pg-go" data-pmtab="game">${lg.state === "in" ? "Watch the live game" : "See the game"} ›</button>` : ""}
+      ${recent.length ? `<h3 class="pm-sub">Recent games</h3>${logTable(recent)}` : ""}`;
   } else if (tab === "game") {
     // The game itself: score, field, last play, this player's lines, then his team's full box score.
-    const lg = state.live?.games?.find((x) => x.id === g.id);
-    if (!state.live && !state.liveForPopup) { state.liveForPopup = true; refreshLive().finally(() => { state.liveForPopup = false; rerender(); }); }
-    const head = lg ? `<div class="pm-game-head">
-        <span class="pgh-team"><img src="${esc(lg.away.logo)}" alt="" width="26" height="26">${esc(lg.away.abbr)}</span><strong>${lg.state === "pre" ? "" : lg.away.score ?? ""}</strong>
-        <span class="pgh-mid">${lg.state === "in" ? `<span class="badge live">LIVE</span> ${esc(lg.detail)}` : lg.state === "post" ? "Final" : ""}</span>
-        <strong>${lg.state === "pre" ? "" : lg.home.score ?? ""}</strong><span class="pgh-team">@${esc(lg.home.abbr)}<img src="${esc(lg.home.logo)}" alt="" width="26" height="26"></span></div>` : "";
-    const sp2 = lg ? shownPlay(lg) : null;
-    const team = boxReady ? (box.players[side] || []) : [];
-    pane = `${head}${lg?.state === "in" ? fieldGraphic(lg) : ""}${sp2?.text ? `<p class="small muted pm-last">${sp2.earlier ? "Last snap" : "Last play"}: ${esc(sp2.text)}</p>` : ""}
-      <h3 class="pm-sub">${esc(p.name)}</h3>${myLines}
-      ${team.length ? `<h3 class="pm-sub">${esc(box.teams?.[side]?.name || "Team")} box score</h3><div class="pg-cats">${team.map((c) => catTable(c, c.rows.map((r) => `<tr class="${String(r.id) === String(p.id) ? "me" : ""}"><td class="pg-name">${esc(r.short || shortName(r.name))}</td>${r.stats.map((v) => `<td>${esc(v)}</td>`).join("")}</tr>`).join(""))).join("")}</div>` : ""}
-      <button type="button" class="pg-go" data-golive="${esc(g.id)}" data-side="${side}">Open on the Live games tab ›</button>`;
+    if (!lg) pane = !state.live ? `<div class="loading small"><span class="spinner"></span> Loading this week's game…</div>`
+      : `<p class="muted">${p.bye && p.bye === state.base.current ? `On bye in week ${p.bye}.` : "No game for his team this week."}</p>`;
+    else {
+      const head = `<div class="pm-game-head">
+          <span class="pgh-team"><img src="${esc(lg.away.logo)}" alt="" width="26" height="26">${esc(lg.away.abbr)}</span><strong>${lg.state === "pre" ? "" : lg.away.score ?? ""}</strong>
+          <span class="pgh-mid">${lg.state === "in" ? `<span class="badge live">LIVE</span> ${esc(lg.detail)}` : lg.state === "post" ? "Final" : esc(kick(lg))}</span>
+          <strong>${lg.state === "pre" ? "" : lg.home.score ?? ""}</strong><span class="pgh-team">@${esc(lg.home.abbr)}<img src="${esc(lg.home.logo)}" alt="" width="26" height="26"></span></div>`;
+      const sp2 = lg.state === "in" ? shownPlay(lg) : null;
+      const ddm = /^(.*?)\s+at\s+(.+)$/.exec(lg.downDistance || "");
+      const dd = lg.state === "in" && lg.downDistance ? `<p class="small pm-dd"><strong>${esc(ddm ? ddm[1] : lg.downDistance)}</strong>${ddm ? ` at ${esc(ddm[2])}` : ""}</p>` : "";
+      const team = boxReady ? (box.players[side] || []) : [];
+      const pre = lg.state === "pre" ? `<p class="muted small">${lg.broadcast ? `${esc(lg.broadcast)} · ` : ""}Stats and the field show up here at kickoff.</p>` : "";
+      pane = `${head}${lg.state === "in" ? fieldGraphic(lg) : ""}${dd}${sp2?.text ? `<p class="small muted pm-last">${sp2.earlier ? "Last snap" : "Last play"}: ${esc(sp2.text)}</p>` : ""}${pre}
+        ${started ? `<h3 class="pm-sub">${esc(p.name)}</h3>${myLines}` : ""}
+        ${team.length ? `<h3 class="pm-sub">${esc(box.teams?.[side]?.name || "Team")} box score</h3><div class="pg-cats">${team.map((c) => catTable(c, c.rows.map((r) => `<tr class="${String(r.id) === String(p.id) ? "me" : ""}"><td class="pg-name">${esc(r.short || shortName(r.name))}</td>${r.stats.map((v) => `<td>${esc(v)}</td>`).join("")}</tr>`).join(""))).join("")}</div>` : ""}
+        <button type="button" class="pg-go" data-golive="${esc(lg.id)}" data-side="${side}">Open on the Live games tab ›</button>`;
+    }
   } else if (tab === "log") {
+    const all = Array.from({ length: lastWeek }, (_, i) => lastWeek - i);
     pane = `${focusSp && !bySp[focusSp] ? `<p class="muted small">No stats yet for week ${focusSp}.</p>` : ""}
-      <p class="small muted">Tap points to see how they were scored.</p>
-      <div class="table-wrap"><table class="data gamelog"><thead><tr><th>Wk</th><th>Game</th>${ul ? `<th class="num" title="Share of the team's offensive snaps">Snap</th><th class="num" title="Targets and share of the team's targets">Tgt</th>` : ""}<th class="num">Pts</th></tr></thead><tbody>${rows.join("")}</tbody></table></div>
-      ${ul ? nvCredit() : ""}`;
+      <p class="small muted pm-hint">Tap points to see how they were scored.${ul ? " Shares are of the team's snaps, targets and carries." : ""}</p>
+      ${logTable(all)}${ul ? nvCredit() : ""}`;
+  } else if (tab === "depth") {
+    const dc = p.proId ? ensureDepth(p.proId, rerender) : null;
+    pane = !p.proId ? `<p class="muted">Not on an NFL team.</p>`
+      : !dc ? `<div class="loading small"><span class="spinner"></span> Loading the depth chart…</div>`
+      : dc.error ? `<p class="muted small">${esc(dc.error)}</p>` : depthTable(dc.depth, p);
   } else {
     const nd = ensureNews([p.id], rerender);
     const items = nd?.players?.[p.id] || [];
@@ -3356,9 +3429,9 @@ function renderPlayerModal(d, focusSp) {
   }
 
   body.innerHTML = `<div class="pm-head">
-      ${headshot({ id: p.id, name: p.name, posId: p.posId, proId: p.proId }, 72)}
+      ${headshot({ id: p.id, name: p.name, posId: p.posId, proId: p.proId }, 64)}
       <div><h2 id="pl-modal-title">${esc(p.name)}${injBadge({ injury: p.injury })}</h2>
-        <div class="muted">${pos}${p.proId ? ` · ${esc(PRO[p.proId] || "")}` : ""}${p.bye ? ` · Bye week ${p.bye}` : ""}</div>
+        <div class="muted small">${pos}${p.proId ? ` · ${esc(PRO[p.proId] || "")}` : ""}${p.bye ? ` · Bye wk ${p.bye}` : ""}</div>
         <div class="pm-owner">${owner}</div></div>
     </div>
     <div class="pm-tabs" role="tablist">${tabs.map(([k, label]) => `<button type="button" role="tab" data-pmtab="${k}" aria-selected="${k === tab}" class="${k === tab ? "active" : ""}">${label}</button>`).join("")}</div>
@@ -3366,12 +3439,37 @@ function renderPlayerModal(d, focusSp) {
   body.querySelectorAll("[data-pmtab]").forEach((b) => b.addEventListener("click", () => { state.pmTab = b.dataset.pmtab; renderPlayerModal(d, focusSp); body.closest(".modal-card").scrollTop = 0; }));
   body.querySelector("[data-golive]")?.addEventListener("click", (e) => goLiveGame(e.currentTarget.dataset.golive, e.currentTarget.dataset.side));
   body.querySelectorAll(".gl-pts").forEach((b) => b.addEventListener("click", () => {
-    const row = b.closest("tr"), bd = $(`gl-bd-${row.dataset.sp}`);
+    const row = b.closest("tr"), bd = row.nextElementSibling;
     bd.hidden = !bd.hidden;
     row.classList.toggle("open", !bd.hidden);
     b.setAttribute("aria-expanded", String(!bd.hidden));
   }));
-  if (tab === "log" && focusSp && bySp[focusSp]) $(`gl-bd-${focusSp}`).scrollIntoView({ block: "center" });
+  if (tab === "log" && focusSp && bySp[focusSp]) body.querySelector(`.pm-pane #gl-bd-${focusSp}`)?.scrollIntoView({ block: "center" });
+}
+
+// ---------- Depth charts (player popup) ----------
+function ensureDepth(proId, onReady) {
+  const c = (state.depthCache ||= {}), hit = c[proId];
+  if (hit && hit !== "loading" && Date.now() - hit.at < 30 * 60e3) return hit;
+  if (hit !== "loading") {
+    c[proId] = "loading";
+    const load = state.demo ? Promise.resolve(window.DemoLeague.depthChart(proId))
+      : fetch(`/api/injuries?team=${proId}`).then(async (r) => { const b = await r.json().catch(() => ({})); if (!r.ok) throw new Error(b.message || "Couldn't load the depth chart."); return b; });
+    load.then((x) => { c[proId] = { ...x, at: Date.now() }; }).catch((e) => { c[proId] = { error: e.message, at: Date.now() }; }).finally(() => onReady?.());
+  }
+  return null;
+}
+// The team's offense, one row per spot: starter, then backups. The open player is highlighted.
+function depthTable(dep, p) {
+  const spots = [["QB", "QB"], ["RB", "RB"], ["WR1", "WR"], ["WR2", "WR"], ["WR3", "WR"], ["TE", "TE"], ["K", "K"]];
+  const cell = (x) => {
+    if (!x) return `<td></td>`;
+    const code = INJ_CODE[x[2]] || (x[2] ? x[2].toUpperCase() : "");
+    return `<td class="${String(x[0]) === String(p.id) ? "me" : ""} ${depthOut(x) ? "dc-out" : ""}">${plink(x[0], shortName(x[1]))}${code ? injBadge({ injury: code }) : ""}</td>`;
+  };
+  const rows = spots.filter(([k]) => dep?.[k]?.length).map(([k, label]) => `<tr><th>${label}</th>${[0, 1, 2].map((i) => cell(dep[k][i])).join("")}</tr>`).join("");
+  return rows ? `<table class="dc-table"><thead><tr><th></th><th>Starter</th><th>2nd</th><th>3rd</th></tr></thead><tbody>${rows}</tbody></table>
+    <p class="fc-credit small muted">Depth chart from ESPN.</p>` : `<p class="muted small">No depth chart from ESPN for this team.</p>`;
 }
 
 // ---------- Tooltip ----------

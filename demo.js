@@ -558,14 +558,38 @@
       returnDate: p.injuryStatus === "INJURY_RESERVE" ? null : new Date(Date.now() + ((p.id % 4) + 1) * 7 * 864e5).toISOString().slice(0, 10),
       note: `${p.fullName} is dealing with an injury and is ${(STATUS[p.injuryStatus] || "out").toLowerCase()} for now.`,
     }));
+    // Depth charts like ESPN's: QB, RB, three receiver spots, TE, K; each [id, name, injury status].
+    const STAT = { OUT: "Out", INJURY_RESERVE: "Injured Reserve", QUESTIONABLE: "Questionable", DOUBTFUL: "Doubtful" };
+    const byTeam = {};
+    for (const p of pool) ((byTeam[p.proTeamId] ||= { QB: [], RB: [], WR: [], TE: [], K: [] })[posName(p.defaultPositionId)]).push(p);
     const depth = {};
-    for (const p of pool) {
-      const d = (depth[p.proTeamId] ||= { QB: [], RB: [], WR: [], TE: [], K: [] }), pos = posName(p.defaultPositionId);
-      d[pos].push([p.id, p.fullName, p.injuryStatus && p.injuryStatus !== "ACTIVE" && p.injuryStatus !== "QUESTIONABLE", p.base || 0]);
+    for (const [tid, d] of Object.entries(byTeam)) {
+      const row = (p) => [p.id, p.fullName, STAT[p.injuryStatus] || ""];
+      const ord = (list) => [...list].sort((a, b) => (b.base || 0) - (a.base || 0)).map(row);
+      const wr = ord(d.WR);
+      depth[tid] = { QB: ord(d.QB), RB: ord(d.RB), WR1: wr.filter((_, i) => i % 3 === 0), WR2: wr.filter((_, i) => i % 3 === 1), WR3: wr.filter((_, i) => i % 3 === 2), TE: ord(d.TE), K: ord(d.K) };
     }
-    for (const d of Object.values(depth)) for (const k of Object.keys(d)) d[k] = d[k].sort((a, b) => b[3] - a[3]).map(([id, n, h]) => [id, n, h]);
-    return { updated: Date.now(), players, depth };
+    // Remaining game weeks per team (byes left out) and each team's bye.
+    const upcoming = {}, byes = {};
+    for (let sp = CURRENT_WEEK + 1; sp <= TOTAL_WEEKS; sp++) {
+      const off = nfl(sp).byes;
+      for (const tid of Object.keys(byTeam)) {
+        if (off[tid]) byes[tid] ||= sp;
+        else (upcoming[tid] ||= []).push(sp);
+      }
+    }
+    for (const p of players) {
+      const up = upcoming[p.proId] || [];
+      p.nextWeek = up[0] ?? null;
+      p.returnWeek = p.returnDate ? up[Math.max(0, Math.round((Date.parse(p.returnDate) - Date.now()) / (7 * 864e5)) - 1)] ?? null : null;
+    }
+    return { updated: Date.now(), players, depth, byes, upcoming };
   }
 
-  window.DemoLeague = { response, activity, nfl, live, values, player, freeAgents, usage, weather, box, news, injuries };
+  // Same shape as /api/injuries?team=N: one team's offensive depth chart.
+  function depthChart(tid) {
+    return { team: Number(tid), depth: injuries().depth[tid] || {} };
+  }
+
+  window.DemoLeague = { response, activity, nfl, live, values, player, freeAgents, usage, weather, box, news, injuries, depthChart };
 })();
