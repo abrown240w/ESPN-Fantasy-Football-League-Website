@@ -6,6 +6,9 @@
 
 const INJURIES = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/injuries";
 const DEPTH = (team) => `https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams/${team}/depthcharts`;
+const ROSTER = (team) => `https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams/${team}/roster`;
+const ATHLETE = (id) => `https://site.web.api.espn.com/apis/common/v3/sports/football/nfl/athletes/${id}`;
+const TEAM_IDS = [...Array(30).keys()].map((i) => i + 1).concat([33, 34]);
 const SCHEDULE = (season) => `https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${season}?view=proTeamSchedules_wl`;
 const POS = { QB: "QB", RB: "RB", FB: "RB", WR: "WR", TE: "TE", PK: "K", K: "K" };
 const CACHE = {
@@ -72,19 +75,42 @@ export default async (req) => {
   const nextWeek = (proId) => games[proId]?.find(([, at]) => at >= Date.now() - 4 * 3600e3)?.[0] ?? null;
 
   const players = [];
+  const add = (id, name, pos, proId, i) => {
+    const d = i.details || {};
+    players.push({
+      id, name, pos, proId, status: i.status, date: i.date || null,
+      type: d.type || "", detail: d.detail && d.detail !== "Not Specified" ? d.detail : "", side: d.side && d.side !== "Not Specified" ? d.side : "",
+      returnDate: d.returnDate || null, returnWeek: weekOf(proId, d.returnDate), nextWeek: nextWeek(proId), note: i.shortComment || "",
+    });
+  };
   for (const t of feed.injuries || []) {
     for (const i of t.injuries || []) {
       const pos = POS[i.athlete?.position?.abbreviation];
       if (!pos || !i.status || i.status === "Active") continue;
-      const d = i.details || {}, proId = Number(t.id);
-      players.push({
-        id: idFrom(i.athlete), name: i.athlete?.displayName || "", pos, proId,
-        status: i.status, date: i.date || null,
-        type: d.type || "", detail: d.detail && d.detail !== "Not Specified" ? d.detail : "", side: d.side && d.side !== "Not Specified" ? d.side : "",
-        returnDate: d.returnDate || null, returnWeek: weekOf(proId, d.returnDate), nextWeek: nextWeek(proId), note: i.shortComment || "",
-      });
+      add(idFrom(i.athlete), i.athlete?.displayName || "", pos, Number(t.id), i);
     }
   }
+
+  // The league-wide feed only carries recent news, so players hurt weeks ago (often on IR) drop off it.
+  // Every team's roster still lists them; their injury details come from each player's own page.
+  const have = new Set(players.map((p) => String(p.id)));
+  const missing = [];
+  await Promise.all(TEAM_IDS.map(async (tid) => {
+    try {
+      const r = await getJson(ROSTER(tid));
+      for (const g of r.athletes || []) for (const a of g.items || []) {
+        const pos = POS[a.position?.abbreviation], inj = a.injuries?.[0];
+        if (!pos || !inj?.status || inj.status === "Active" || have.has(String(a.id))) continue;
+        have.add(String(a.id));
+        missing.push({ a, pos, tid, inj });
+      }
+    } catch { /* roster unavailable; that team's feed entries still count */ }
+  }));
+  await Promise.all(missing.map(async ({ a, pos, tid, inj }) => {
+    let i = inj;
+    try { i = (await getJson(ATHLETE(a.id))).athlete?.injuries?.[0] || inj; } catch { /* status and date only */ }
+    add(Number(a.id), a.displayName || "", pos, tid, { ...i, status: i.status || inj.status });
+  }));
 
   // Depth charts for teams with someone on the report.
   const teams = [...new Set(players.map((p) => p.proId))];

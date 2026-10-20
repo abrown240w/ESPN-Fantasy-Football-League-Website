@@ -300,7 +300,7 @@
     const pairs = Object.entries(n.games).filter(([, g]) => g[1]).map(([h, g]) => [Number(h), g[0]]);
     const progressOf = {};
     const games = pairs.map(([h, a], i) => {
-      const st = i < 3 ? "post" : i < 8 ? "in" : "pre";
+      const st = sp < CURRENT_WEEK || i < 3 ? "post" : i < 8 ? "in" : "pre";
       const progress = st === "post" ? 1 : st === "in" ? Math.min(0.97, 0.15 + (i - 3) * 0.15 + elapsedMin / 4) : 0;
       progressOf[h] = progressOf[a] = progress;
       const q = Math.min(4, Math.floor(progress * 4) + 1), clockSec = Math.round((1 - ((progress * 4) % 1)) * 900);

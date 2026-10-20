@@ -1618,8 +1618,12 @@ function fieldGraphic(g) {
 // ---------- Live games ----------
 const LIVE_POLL_MS = 30000, IDLE_POLL_MS = 120000;
 
+// The week the Live games tab shows: whichever week is selected (current week until one is picked).
+const liveSp = () => state.week?.sp || state.base.scoringPeriodFor(state.base.current);
+const isCurrentSp = (sp) => sp === state.base.scoringPeriodFor(state.base.current);
+
 async function fetchLive() {
-  const sp = state.base.scoringPeriodFor(state.base.current);
+  const sp = liveSp();
   if (state.demo) return window.DemoLeague.live(sp);
   const q = new URLSearchParams({ scoringPeriodId: sp });
   if (state.leagueId) q.set("leagueId", state.leagueId);
@@ -1642,6 +1646,11 @@ async function refreshLive() {
     const base = state.base;
     const data = await fetchLive();
     if (state.base !== base) return; // league changed while loading
+    if (data.sp != null && data.sp !== liveSp()) return; // week changed while loading
+    // Same week as the last load: compare for score bumps and scoring alerts. New week: start fresh.
+    const old = state.live && !state.live.error && state.live.sp === data.sp ? state.live : null;
+    if (!old) state.livePrev = {};
+    else if (isCurrentSp(data.sp)) liveAlerts(old, data);
     const prev = state.livePrev;
     const same = state.live && !state.live.error && JSON.stringify({ ...state.live, updated: 0 }) === JSON.stringify({ ...data, updated: 0 });
     state.liveBumps = {};
@@ -1656,15 +1665,146 @@ async function refreshLive() {
     state.liveSame = false;
   }
   if (state.tab === "live" && !state.liveSame) keepState($("view-live"), renderLive);
-  const anyLive = state.live?.games?.some((g) => g.state === "in");
+  // While games are on, keep polling from any tab so scoring alerts still pop up.
+  const anyLive = state.live?.games?.some((g) => g.state === "in") && isCurrentSp(state.live.sp);
   state.liveTimer = setTimeout(() => {
-    if (state.tab === "live" && document.visibilityState === "visible") refreshLive();
+    if (document.visibilityState === "visible" && (state.tab === "live" || anyLive)) refreshLive();
     else state.liveStale = true;
   }, anyLive ? LIVE_POLL_MS : IDLE_POLL_MS);
 }
 
+// ---------- Scoring alerts ----------
+// A banner drops in at the top for 5 seconds when a fantasy starter (any team, D/ST included) scores a
+// touchdown, crosses a yardage bonus the league pays for, or gains 15+ points between two refreshes.
+const TD_STATS = [4, 25, 43, 63, 93, 101, 102, 103, 104];
+const BONUSES = [[17, 3, 300, "300-yd passing bonus"], [18, 3, 400, "400-yd passing bonus"], [37, 24, 100, "100-yd rushing bonus"],
+  [38, 24, 200, "200-yd rushing bonus"], [56, 42, 100, "100-yd receiving bonus"], [57, 42, 200, "200-yd receiving bonus"]];
+// What a touchdown was: "11-yd receiving TD", "Interception return TD".
+const TD_KIND = { 4: [3, "passing TD"], 25: [24, "rushing TD"], 43: [42, "receiving TD"], 63: [null, "Fumble recovery TD"],
+  93: [null, "Blocked kick return TD"], 101: [null, "Kickoff return TD"], 102: [null, "Punt return TD"], 103: [null, "Interception return TD"], 104: [null, "Fumble return TD"] };
+function liveAlerts(old, data) {
+  const before = new Map(old.players.map((p) => [String(p.id), p]));
+  const items = state.base.raw.settings?.scoringSettings?.scoringItems || [];
+  const paid = new Set(items.map((i) => i.statId));
+  const n = (p, id) => Number(p.stats?.[id] || 0);
+  const events = [];
+  // Fantasy points for a stat change under this league's scoring (D/ST overrides included).
+  const ptsFor = (statId, delta, p) => {
+    const it = items.find((i) => i.statId === statId);
+    if (!it) return 0;
+    const v = it.pointsOverrides?.[p.posId === 16 ? 16 : p.slotId] ?? it.points;
+    return delta * v;
+  };
+  for (const p of data.players) {
+    if (!p.teamId || p.slotId == null || p.slotId === BENCH || p.slotId === IR) continue;
+    const o = before.get(String(p.id));
+    if (!o) continue;
+    const why = [], tds = [];
+    for (const id of TD_STATS) {
+      const k = n(p, id) - n(o, id);
+      if (k <= 0) continue;
+      const [ydStat, label] = TD_KIND[id], yds = ydStat != null ? n(p, ydStat) - n(o, ydStat) : 0;
+      tds.push(id);
+      why.push(["🏈", `${k > 1 ? `${k} ` : ""}${ydStat != null && k === 1 && yds > 0 ? `${yds}-yd ${label}` : ydStat != null ? label[0].toUpperCase() + label.slice(1) + (k > 1 ? "s" : "") : label}`]);
+    }
+    for (const [sid, stat, at, label] of BONUSES) if (paid.has(sid) && n(o, stat) < at && n(p, stat) >= at) why.push(["💰", label]);
+    // Points from everything that changed since the last refresh (the catch, the yards, the TD, any
+    // bonus), using the league's scoring. ESPN's own running total is the fallback.
+    const statIds = new Set([...Object.keys(p.stats || {}), ...Object.keys(o.stats || {})].map(Number));
+    let gain = items.length ? 0 : (p.pts ?? 0) - (o.pts ?? 0);
+    if (items.length) {
+      for (const id of statIds) if (![120, 127].includes(id)) gain += ptsFor(id, n(p, id) - n(o, id), p);
+      for (const [sid, stat, at] of BONUSES) if (paid.has(sid) && n(o, stat) < at && n(p, stat) >= at) gain += ptsFor(sid, 1, p);
+      if (Math.abs(gain - ((p.pts ?? 0) - (o.pts ?? 0))) > 0.05 && p.posId === 16) gain = (p.pts ?? 0) - (o.pts ?? 0); // D/ST tiers: trust ESPN
+    }
+    gain = Math.round(gain * 10) / 10;
+    if (gain >= 15 && !why.length) why.push(["⚡", "Big play"]);
+    if (why.length) events.push({ p, why, gain, pass: tds.includes(4), catch: tds.includes(43) });
+  }
+  // One play, one banner: a passing TD and the catch that scored it (same NFL team) share a banner.
+  for (const qb of events.filter((e) => e.pass)) {
+    const rec = events.find((e) => e.catch && !e.merged && e !== qb && e.p.proId === qb.p.proId);
+    if (rec) { rec.merged = true; qb.with = rec; }
+  }
+  for (const e of events.filter((x) => !x.merged)) queueAlert(e.with ? [e, e.with] : [e]);
+}
+function queueAlert(group) {
+  (state.alerts ||= []).push(group);
+  if (!state.alertShowing) nextAlert();
+}
+function nextAlert() {
+  const g = state.alerts?.shift();
+  state.alertShowing = !!g;
+  if (!g) return;
+  const mine = g.some((e) => String(e.p.teamId) === String(myTeamId()));
+  // Headline: every reason once ("25-yd passing TD · 100-yd receiving bonus"); then one line per player.
+  // (A TD pass and its catch are the same play: the receiver's "receiving TD" is left out.)
+  const reasons = [...new Map(g.flatMap((e, i) => e.why.filter(([, w]) => !(i > 0 && /receiving TD/.test(w)))).map(([icon, w]) => [w, icon]))];
+  const line = (e) => {
+    const t = team(e.p.teamId);
+    return `<div class="fx-who"><strong>${esc(g.length > 1 ? shortName(e.p.name) : e.p.name)}</strong> <span>${esc(POS[e.p.posId] || "")} · ${logoImg(t, 14)} ${esc(t.abbrev)}</span>${g.length > 1 ? ` <b class="fx-mini">${e.gain > 0 ? `+${f1(e.gain)} → ` : ""}${f2(e.p.pts ?? 0)}</b>` : ""}</div>`;
+  };
+  // Combined points only when they all count for the same fantasy team.
+  const total = new Set(g.map((e) => String(e.p.teamId))).size === 1 ? sum(g, (e) => e.gain) : 0;
+  const el = document.createElement("div");
+  el.className = `fx-alert ${mine ? "mine" : ""}`;
+  el.setAttribute("role", "status");
+  // Right side: points from the play, and the player's new total (two-player banners show both per line).
+  const right = g.length === 1 ? `<div class="fx-pts">${total > 0 ? `+${f1(total)}` : ""}<small>${f2(g[0].p.pts ?? 0)} pts</small></div>`
+    : total > 0 ? `<div class="fx-pts">+${f1(total)}</div>` : "";
+  el.innerHTML = `${headshot(g[0].p, 40)}
+    <div class="fx-body"><div class="fx-what">${reasons.map(([w]) => esc(w)).join(" · ")}</div>${g.map(line).join("")}</div>${right}`;
+  let timer, gone = false;
+  const finish = (ms) => { gone = true; clearTimeout(timer); setTimeout(() => { el.remove(); nextAlert(); }, ms); };
+  const dismiss = () => {
+    if (gone) return;
+    el.style.transform = el.style.opacity = "";
+    el.classList.remove("show");
+    finish(300);
+  };
+  // Swipe it away (sideways or up); a tap opens the player. Holding it pauses the 5-second timer.
+  let sx = 0, sy = 0, dragging = false, moved = false;
+  const offset = (e) => [e.clientX - sx, Math.min(0, e.clientY - sy)];
+  el.addEventListener("pointerdown", (e) => {
+    if (gone) return;
+    sx = e.clientX; sy = e.clientY; dragging = true; moved = false;
+    clearTimeout(timer);
+    el.setPointerCapture(e.pointerId);
+    el.style.transition = "none";
+  });
+  el.addEventListener("pointermove", (e) => {
+    if (!dragging) return;
+    const [dx, dy] = offset(e);
+    if (Math.abs(dx) > 6 || dy < -6) moved = true;
+    el.style.transform = `translate(calc(-50% + ${dx}px), ${dy}px)`;
+    el.style.opacity = String(1 - Math.min(0.8, Math.max(Math.abs(dx) / 300, -dy / 150)));
+  });
+  const release = (e) => {
+    if (!dragging) return;
+    dragging = false;
+    const [dx, dy] = offset(e);
+    el.style.transition = "transform .22s ease-out, opacity .22s ease-out";
+    if (Math.abs(dx) > 70 || dy < -30) {
+      el.style.transform = Math.abs(dx) > 70 ? `translate(calc(-50% + ${Math.sign(dx) * innerWidth}px), ${dy}px)` : "translate(-50%, -160%)";
+      el.style.opacity = "0";
+      finish(230);
+      return;
+    }
+    el.style.transform = el.style.opacity = "";
+    setTimeout(() => { el.style.transition = ""; }, 230);
+    if (!moved && e.type === "pointerup") { dismiss(); openPlayer(g[0].p.id); return; }
+    timer = setTimeout(dismiss, 2500); // let go without swiping: it stays a little longer
+  };
+  el.addEventListener("pointerup", release);
+  el.addEventListener("pointercancel", release);
+  document.body.append(el);
+  requestAnimationFrame(() => requestAnimationFrame(() => el.classList.add("show")));
+  timer = setTimeout(dismiss, 5000);
+}
+
 function renderLive() {
   const el = $("view-live");
+  if (state.live?.sp != null && state.live.sp !== liveSp()) state.live = null; // a different week was picked
   ensureWeather(state.live?.sp || state.week?.sp); // game-day forecasts fill in when they arrive
   const L = state.live;
   if (!L || state.liveStale) {
@@ -3541,6 +3681,7 @@ function keepState(el, draw) {
 
 function render() {
   if (!state.week) return;
+  if (!state.live && !state.liveBoot && state.tab !== "live") { state.liveBoot = true; refreshLive().finally(() => { state.liveBoot = false; }); }
   updateEspnLink();
   showView(state.tab);
   keepState($(`view-${state.tab}`), () => renderTab());
@@ -3783,6 +3924,7 @@ function initSwipeTabs() {
     armed = false;
     if (e.touches.length !== 1 || !state.week || document.body.classList.contains("modal-open")) return;
     // Swipes on the header (above the tabs) change the week; anywhere below switches tabs.
+    if (e.target.closest(".fx-alert")) return; // scoring banners handle their own swipes
     onHeader = !!e.target.closest(".topbar-inner");
     if (e.target.closest("input, textarea") || (!onHeader && (e.target.closest("select, .topbar") || scrollsSideways(e.target)))) return;
     sx = e.touches[0].clientX;
@@ -3859,7 +4001,9 @@ function bindUi() {
   }, 30000);
   // Catch up on live games when the page comes back into view.
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible" && state.tab === "live" && state.liveStale) keepState($("view-live"), renderLive);
+    if (document.visibilityState !== "visible" || !state.liveStale) return;
+    if (state.tab === "live") keepState($("view-live"), renderLive);
+    else if (state.live?.games?.some((g) => g.state === "in")) { state.liveStale = false; refreshLive(); }
   });
   // Keep live weeks fresh.
   setInterval(() => {
