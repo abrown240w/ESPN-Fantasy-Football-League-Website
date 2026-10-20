@@ -12,6 +12,8 @@
 // Routes: POST /api/roster/login {passphrase} · POST /api/roster/logout ·
 //         GET /api/roster/session?leagueId=&season= · POST /api/roster/lineup {leagueId, season, teamId, items}
 //         POST /api/roster/transaction {leagueId, season, teamId, add?, drop?, waiver?, bid?}  (pickups, claims, drops)
+//         GET  /api/roster/pending?leagueId=&season=   (your pending claims and trade offers; owner only)
+//         POST /api/roster/trade {leagueId, season, teamId, otherTeamId, send: [ids], receive: [ids], comment?}
 
 import { createHmac, createHash, timingSafeEqual } from "node:crypto";
 
@@ -184,6 +186,77 @@ export default async (req, context) => {
       executionType: "EXECUTE", items, ...(waiver ? { bidAmount: bid } : {}),
     };
     return espnWrite(leagueId, season, payload, { event: waiver ? "claim" : "transaction", ip, leagueId, season, teamId, sp, add, drop, bid: waiver ? bid : undefined, at: new Date().toISOString() });
+  }
+
+  // Your pending waiver claims and trade offers (sent or received). Owner only: claims are private.
+  if (action === "pending" && req.method === "GET") {
+    if (!signedIn(req)) return json(401, { error: "signed_out", message: "Sign in as the owner first." });
+    const p = new URL(req.url).searchParams;
+    const leagueId = p.get("leagueId"), season = p.get("season") || String(defaultSeason());
+    if (!validLeague(leagueId, season)) return json(400, { error: "bad_request" });
+    let data;
+    try { data = await espnRead(leagueId, season, ["mTeam", "mPendingTransactions", "mStatus"]); } catch {
+      return json(502, { error: "upstream", message: "Couldn't load pending moves from ESPN." });
+    }
+    const mine = ownedTeams(data);
+    const all = [...(data.pendingTransactions || []), ...(data.transactions || [])];
+    const seen = new Set();
+    const list = all.filter((t) => t && !seen.has(t.id) && seen.add(t.id))
+      .filter((t) => !["EXECUTED", "CANCELED", "FAILED_INVALIDPLAYERSOURCE", "FAILED_ROSTERLIMIT"].includes(t.status))
+      .filter((t) => mine.includes(t.teamId) || (t.items || []).some((i) => mine.includes(i.fromTeamId) || mine.includes(i.toTeamId)));
+    // Player names for the items.
+    const ids = [...new Set(list.flatMap((t) => (t.items || []).map((i) => i.playerId)))];
+    const names = {};
+    if (ids.length) {
+      try {
+        const r = await fetch(`${READS}/seasons/${season}/players?scoringPeriodId=0&view=players_wl`, {
+          headers: { accept: "application/json", "user-agent": "Mozilla/5.0 (fantasy-dashboard)", "x-fantasy-filter": JSON.stringify({ filterIds: { value: ids } }) },
+        });
+        for (const pl of (await r.json()) || []) names[pl.id] = [pl.fullName, pl.defaultPositionId, pl.proTeamId];
+      } catch { /* names fall back to the site's own lists */ }
+    }
+    return json(200, {
+      teams: mine,
+      pending: list.map((t) => ({
+        id: t.id, type: t.type, status: t.status, teamId: t.teamId, bid: t.bidAmount ?? null,
+        proposed: t.proposedDate || null, process: t.processDate || null, expires: t.expirationDate || null,
+        items: (t.items || []).map((i) => ({ playerId: i.playerId, type: i.type, from: i.fromTeamId ?? null, to: i.toTeamId ?? null, info: names[i.playerId] || null })),
+      })),
+    });
+  }
+
+  // Propose a trade: players you send and players you'd get from one other team.
+  if (action === "trade" && req.method === "POST") {
+    if (!signedIn(req)) return json(401, { error: "signed_out", message: "Sign in as the owner first." });
+    if (!sameOrigin(req)) return json(403, { error: "origin", message: "Changes have to come from the site itself." });
+    const b = await req.json().catch(() => ({}));
+    const season = String(b.season || defaultSeason()), leagueId = String(b.leagueId || "");
+    const teamId = Number(b.teamId), other = Number(b.otherTeamId);
+    const send = Array.isArray(b.send) ? b.send.map(Number) : [], receive = Array.isArray(b.receive) ? b.receive.map(Number) : [];
+    const comment = typeof b.comment === "string" ? b.comment.slice(0, 500) : "";
+    if (!validLeague(leagueId, season) || !Number.isInteger(teamId) || !Number.isInteger(other) || teamId === other
+      || !send.length || !receive.length || send.length > 6 || receive.length > 6 || ![...send, ...receive].every(Number.isInteger)) {
+      return json(400, { error: "bad_request", message: "That trade doesn't look right." });
+    }
+    let data;
+    try { data = await espnRead(leagueId, season, ["mTeam", "mRoster", "mStatus"]); } catch {
+      return json(502, { error: "upstream", message: "Couldn't load rosters from ESPN to check the trade." });
+    }
+    if (!ownedTeams(data).includes(teamId)) return json(403, { error: "not_yours", message: "That isn't your team." });
+    const rosterOf = (id) => new Set((data.teams.find((t) => t.id === id)?.roster?.entries || []).map((e) => e.playerId));
+    const mineSet = rosterOf(teamId), theirs = rosterOf(other);
+    if (!send.every((id) => mineSet.has(id))) return json(409, { error: "stale", message: "A player you're sending isn't on your roster anymore. Refresh and try again." });
+    if (!receive.every((id) => theirs.has(id))) return json(409, { error: "stale", message: "A player you asked for isn't on their roster anymore. Refresh and try again." });
+    const sp = data.scoringPeriodId || data.status?.latestScoringPeriod;
+    const payload = {
+      isLeagueManager: false, teamId, type: "TRADE_PROPOSAL", comment, memberId: `{${swidRaw()}}`, scoringPeriodId: sp,
+      executionType: "EXECUTE", expirationDate: Date.now() + 2 * 24 * 3600e3,
+      items: [
+        ...send.map((playerId) => ({ playerId, type: "TRADE", fromTeamId: teamId, toTeamId: other })),
+        ...receive.map((playerId) => ({ playerId, type: "TRADE", fromTeamId: other, toTeamId: teamId })),
+      ],
+    };
+    return espnWrite(leagueId, season, payload, { event: "trade_proposal", ip, leagueId, season, teamId, other, send, receive, at: new Date().toISOString() });
   }
 
   return json(404, { error: "not_found" });

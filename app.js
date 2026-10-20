@@ -934,7 +934,12 @@ function lineupCheck(side, w, editable = false) {
     if (!locked(p) && !out(p) && !outs.includes(p) && /QUESTIONABLE|DOUBTFUL/.test(p.injury || "")) items.push(`<div class="lc-item lc-note"><span class="lc-ico">⏳</span><span>${nm(p)} is ${injuryInfo(p.injury)[1].toLowerCase()}. Check the status before kickoff.</span></div>`);
   }
   if (!items.length) return LINEUP_OK; // shown as a green check next to "Starters"
-  return `<div class="card lc"><div class="lc-head"><strong>Lineup check</strong>${gain >= 0.5 ? ` <span class="muted small">Best lineup projects <strong class="pos">+${f1(gain)}</strong> pts</span>` : ""}${editable && gain >= 0.5 && toBest.length ? `<button type="button" class="lc-do lc-best" data-best>Set best lineup</button>` : ""}</div>${items.join("")}</div>`;
+  // One line until tapped; the moves slide open underneath. "Set best lineup" works either way.
+  const open = !!state.lcOpen;
+  return `<div class="card lc ${open ? "open" : ""}"><div class="lc-head" data-lc-toggle role="button" tabindex="0" aria-expanded="${open}">
+      <span class="caret lc-caret">▸</span><strong>Lineup check</strong>${gain >= 0.5 ? ` <span class="muted small lc-sum"><span class="hide-phone">Best lineup projects </span><strong class="pos">+${f1(gain)}</strong> pts</span>` : ` <span class="muted small lc-sum">${items.length} note${items.length > 1 ? "s" : ""}</span>`}
+      ${editable && gain >= 0.5 && toBest.length ? `<button type="button" class="lc-do lc-best" data-best>Set best lineup</button>` : ""}</div>
+    <div class="collapse ${open ? "open" : ""}" ${open ? "" : "inert"}><div class="collapse-inner">${items.join("")}</div></div></div>`;
 }
 
 // ---------- Top pickups (Players › Free agents) ----------
@@ -969,7 +974,7 @@ function topPickups(w, faList) {
     ${picks.map(({ p, why }) => `<div class="pick-row">
       <div class="pick-main"><div>${plinkNm(p)}${injBadge(p)} <span class="muted small">${esc(p.pos)}${p.nfl ? ` · ${esc(p.nfl)}` : ""}</span>${p.status === "W" ? ` <span class="badge wv" data-tip="${esc(waiverTip(p))}">W</span>` : ""}</div>
         <div class="pick-why">${why.map((t) => `<span>${t}</span>`).join("")}</div></div>
-      <div class="pick-proj"><strong>${f1(p.proj)}</strong><span class="muted small">proj</span>${actTeam() && side && String(side.teamId) === actTeam() ? `<button type="button" class="add-btn" data-add="${esc(p.id)}">+ ${p.status === "W" ? "Claim" : "Add"}</button>` : ""}</div></div>`).join("")}</div>`;
+      <div class="pick-proj"><strong>${f1(p.proj)}</strong><span class="muted small">proj</span>${actTeam() && side && String(side.teamId) === actTeam() ? `<button type="button" class="add-btn ${p.status === "W" ? "wv" : ""}" data-add="${esc(p.id)}">+ ${p.status === "W" ? "Claim" : "Add"}</button>` : ""}</div></div>`).join("")}</div>`;
 }
 
 // ---------- Player rows (shared by the Players and Roster tabs) ----------
@@ -983,7 +988,7 @@ function faData() {
     fetchFreeAgents(sp)
       .then((x) => { if (state.base === base) cache[sp] = x; })
       .catch((e) => { if (state.base === base) cache[sp] = { error: e.message }; })
-      .finally(() => { if (state.base === base && ["players", "roster", "usage"].includes(state.tab)) render(); });
+      .finally(() => { if (state.base === base && ["players", "roster", "usage", "transactions"].includes(state.tab)) render(); });
   }
   return null;
 }
@@ -1088,7 +1093,7 @@ const PCOLS = {
   snap: { key: "snap", label: "Snap %", title: "Share of the team's offensive snaps in its last game (avg = season average)", num: true, render: snapCell, sort: (p) => usageOf(p.id)?.last.pct ?? null },
   tgt: { key: "tgt", label: "Tgt %", title: "Share of the team's targets in its last game (avg = season average)", num: true, render: tgtCell, sort: (p) => { const u = usageOf(p.id); return u && u.pos !== "QB" ? u.last.share : null; } },
   value: { key: "value", label: "Value", title: "FantasyCalc trade value", num: true, render: (p) => valueCell(p.id), sort: (p) => valueOf(p.id) },
-  act: { key: "", label: "", cls: "pt-act", render: (p) => (!p.owner && p.status ? `<button type="button" class="add-btn sm" data-add="${esc(p.id)}" title="${p.status === "W" ? "Claim" : "Add"} ${esc(p.name)}">+</button>` : "") },
+  act: { key: "", label: "", cls: "pt-act", render: (p) => moveBtns(p) },
 };
 // Draws a player table into `el`; header clicks re-sort it in place.
 function drawPlayerTable(el, keys, rows, sortState, sp, empty) {
@@ -1159,7 +1164,7 @@ function renderRosteredPlayers(el) {
     const q = f.q.toLowerCase();
     const rows = all.filter((p) => (f.pos === "ALL" || p.pos === f.pos) && (f.team === "ALL" || String(p.teamId) === String(f.team)) &&
       (f.role === "all" || (f.role === "starters" ? p.starter : !p.starter)) && (!q || p.name.toLowerCase().includes(q)));
-    drawPlayerTable($("pf-list"), ["player", "pos", "owner", "opp", "proj", "pts", "diff", "snap", "tgt", "pprRank", "posRank", "value"], rows, f.rSort, w.sp, "No players match those filters.");
+    drawPlayerTable($("pf-list"), ["player", ...(actTeam() ? ["act"] : []), "pos", "owner", "opp", "proj", "pts", "diff", "snap", "tgt", "pprRank", "posRank", "value"], rows, f.rSort, w.sp, "No players match those filters.");
   };
   $("pf-q").addEventListener("input", (e) => { f.q = e.target.value; draw(); });
   bindPosSeg("pf-pos", (v) => (f.pos = v), draw);
@@ -2372,13 +2377,14 @@ function renderRoster() {
     return canSwap(picked, p) ? `<button type="button" class="mv-btn to" data-mv="${esc(p.id)}">${p.starter ? "Swap" : "Here"}</button>` : `<span class="upg-none">–</span>`;
   };
   const list = (title, players) => players.length
-    ? `<h3 class="ta-sub">${title}</h3><div class="pr-list mx">${players.map((p) => playerRow(rosteredRow(p), { label: p.slot, sp: w.sp, action: ed ? `<div class="pr-acts">${moveBtn(p)}${picked ? "" : upgradeBtn(p)}</div>` : upgradeBtn(p), owner: false })).join("")}</div>` : "";
+    ? `<h3 class="ta-sub">${title}</h3><div class="pr-list mx">${players.map((p) => playerRow(rosteredRow(p), { label: p.slot, sp: w.sp, action: ed ? `<div class="pr-acts">${moveBtn(p)}${picked ? "" : upgradeBtn(p)}</div>` : actTeam() && String(sel) !== actTeam() ? `<div class="pr-acts">${moveBtns(p)}${upgradeBtn(p)}</div>` : upgradeBtn(p), owner: false })).join("")}</div>` : "";
 
   let body = `<p class="muted">${esc(t.name)} has no lineup for week ${w.week}.</p>`;
   if (side) {
     const bench = side.bench.filter((p) => p.slotId !== IR), ir = side.bench.filter((p) => p.slotId === IR);
     const lc = lineupCheck(side, w, canEdit);
-    const starters = `Starters${lc === LINEUP_OK ? ` <span class="lc-tick" title="Lineup is optimal by ESPN's week ${w.week} projections" aria-label="Lineup is optimal">✓</span>` : ""}`;
+    const wv = waiverPlace(sel);
+    const starters = `Starters${lc === LINEUP_OK ? ` <span class="lc-tick" title="Lineup is optimal by ESPN's week ${w.week} projections" aria-label="Lineup is optimal">✓</span>` : ""}${wv ? ` <span class="rh-wv">Waiver order: ${wv}</span>` : ""}`;
     body = (lc === LINEUP_OK ? "" : lc) + list(starters, side.starters) + list("Bench", bench) + list("Injured reserve", ir) + rosterNews(side) + playoffSchedule(side);
   }
   const rosterValue = side && state.values?.byId?.size ? sum(side.players, (p) => valueOf(p.id) || 0) : null;
@@ -2398,23 +2404,37 @@ function renderRoster() {
   ].filter(Boolean).join("");
   const opts = ids.map((id) => `<option value="${id}" ${id === String(sel) ? "selected" : ""}>${esc(team(id).name)} (${esc(team(id).owner)})</option>`).join("");
 
+  // Your pending claims / trade offers (private to you, so only on your own team).
+  const P = canEdit ? ensurePending() : null, nPend = P?.pending?.length || 0;
+  const pendBtn = canEdit ? `<div class="rh-pend"><button type="button" class="pd-btn" id="pd-open">Pending moves${P ? ` <span class="pd-count ${nPend ? "" : "zero"}">${nPend}</span>` : ""}</button></div>` : "";
   // Picking a player (⇅) shows who he can swap with, plus a Drop button.
   const editBar = !picked ? "" : `<div class="rh-edit on"><span>Moving <strong>${esc(picked.name)}</strong> (${esc(picked.slot)}): tap who to swap with</span>
       <span class="rh-edit-btns"><button type="button" class="mv-cancel" id="mv-drop">Drop</button><button type="button" class="mv-done" id="mv-done">Cancel</button></span></div>`;
   el.innerHTML = `<div class="section-head"><h2>Rosters</h2><label class="small muted ta-me">Team <select id="roster-team">${opts}</select></label></div>
-    <div class="card roster-head">${card}<div class="rh-stats">${stats}</div>${editBar}</div>
+    <div class="card roster-head">${card}<div class="rh-stats">${stats}</div>${pendBtn}${editBar}</div>
     ${body}
     ${fcCredit()}${nvCredit()}${wxCredit()}`;
   $("roster-team").addEventListener("change", (e) => { state.rosterTeam = e.target.value; store.set(key, e.target.value); renderRoster(); });
   $("my-star").addEventListener("click", () => { if (ownerTeam()) return; setMyTeam(sel); state.winWin = null; updateEspnLink(); renderRoster(); });
   $("mv-done")?.addEventListener("click", () => { state.lineupEdit.pick = null; renderRoster(); });
+  $("pd-open")?.addEventListener("click", (e) => { state.modalReturn = e.currentTarget; openPendingModal(); });
   $("mv-drop")?.addEventListener("click", () => { const p = picked; state.lineupEdit.pick = null; confirmDrop(sel, p); });
   // Lineup check buttons: one suggested swap, or the whole best lineup.
   el.querySelectorAll("[data-swap]").forEach((b) => b.addEventListener("click", () => {
     const [a, o] = b.dataset.swap.split(",").map((id) => side.players.find((x) => String(x.id) === id));
     if (a && o) confirmLineup(sel, [[a, o.slotId], [o, a.slotId]]);
   }));
-  el.querySelector("[data-best]")?.addEventListener("click", () => { if (state.lcMoves?.length) confirmLineup(sel, state.lcMoves); });
+  el.querySelector("[data-best]")?.addEventListener("click", (e) => { e.stopPropagation(); if (state.lcMoves?.length) confirmLineup(sel, state.lcMoves); });
+  const lcHead = el.querySelector("[data-lc-toggle]");
+  const lcToggle = () => {
+    state.lcOpen = !state.lcOpen;
+    const card = lcHead.closest(".lc");
+    card.classList.toggle("open", state.lcOpen);
+    lcHead.setAttribute("aria-expanded", String(state.lcOpen));
+    setOpen(card.querySelector(".collapse"), state.lcOpen);
+  };
+  lcHead?.addEventListener("click", (e) => { if (!e.target.closest("button, a, .pl-link")) lcToggle(); });
+  lcHead?.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); lcToggle(); } });
   el.querySelectorAll(".mv-btn").forEach((b) => {
     if (picked && b.classList.contains("to")) b.closest(".pr-row")?.classList.add("mv-target");
     if (picked && b.classList.contains("on")) b.closest(".pr-row")?.classList.add("mv-picked");
@@ -2438,7 +2458,7 @@ const canSwap = (a, b) => a.id !== b.id && !b.locked && !a.locked && b.slotId !=
 const slotName = (id) => (id === BENCH ? "Bench" : SLOT[id] || String(id));
 const ownerKey = () => `${state.base.raw?.id || state.leagueId || ""}:${state.base.season}`;
 function ensureOwner() {
-  if (state.demo) return { signedIn: true, teams: [state.rosterTeam || myTeamId() || Object.keys(state.base.teams)[0]], demo: true }; // demo: try it on any team
+  if (state.demo) return { signedIn: true, teams: [myTeamId() || state.rosterTeam || Object.keys(state.base.teams)[0]], demo: true }; // demo: your starred team, else the one on screen
   if (store.get("ffb.owner") !== "1") return null;
   const k = ownerKey(), o = state.owner;
   if (o?.key === k) return o.data;
@@ -2484,6 +2504,95 @@ function openOwnerSignIn() {
     } catch (err) { msg.textContent = err.message; btn.disabled = false; }
   });
 }
+// ---------- Waivers ----------
+const waiverRankOf = (teamId) => state.base.raw.teams?.find((t) => String(t.id) === String(teamId))?.waiverRank || null;
+const waiverPlace = (teamId) => { const r = waiverRankOf(teamId); return r ? `${ordinal(r)} of ${Object.keys(state.base.teams).length}` : ""; };
+const fmtWhen = (ms) => new Date(ms).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+// Next waiver run: the soonest clear time among players on waivers now.
+function nextWaiverRun() {
+  const fa = state.week ? faData() : null;
+  const times = (fa && !fa.error ? fa.players : []).filter((p) => p.status === "W" && p.waiverDate > Date.now()).map((p) => p.waiverDate);
+  return times.length ? Math.min(...times) : null;
+}
+const waiverDays = () => (state.base.raw.settings?.acquisitionSettings?.waiverProcessDays || []).map((d) => d[0] + d.slice(1, 3).toLowerCase()).join(", ");
+// Your pending claims and trade offers (owner only; ESPN keeps claims private).
+function ensurePending() {
+  if (!actTeam()) return null;
+  if (state.demo) return demoPending();
+  const k = ownerKey(), c = state.pending;
+  if (c?.key === k && c.data && Date.now() - c.at < 60e3) return c.data;
+  if (c?.loading !== k) {
+    state.pending = { ...(c?.key === k ? c : {}), loading: k };
+    const q = new URLSearchParams({ leagueId: state.base.raw?.id || state.leagueId || "", season: state.base.season });
+    fetch(`/api/roster/pending?${q}`).then((r) => r.json()).then((d) => { state.pending = { key: k, at: Date.now(), data: d.pending ? d : { pending: [], error: d.message } }; })
+      .catch(() => { state.pending = { key: k, at: Date.now(), data: { pending: [], error: "Couldn't load pending moves." } }; })
+      .finally(() => {
+        if (["transactions", "roster"].includes(state.tab)) render();
+        if (state.pdModal && !$("pl-modal").hidden && $("pl-modal-body").querySelector(".pd-pop")) openPendingModal();
+      });
+  }
+  return c?.key === k ? c.data : null;
+}
+// Demo: one made-up claim so the layout can be seen.
+function demoPending() {
+  const fa = faData(), me = actTeam(), side = state.week.sides.find((x) => String(x.teamId) === me);
+  const add = fa?.players?.find((p) => p.status === "W"), drop = side?.bench.slice(-1)[0];
+  if (!add || !drop) return { pending: [] };
+  return { pending: [{ id: "demo", type: "WAIVER", status: "PENDING", teamId: Number(me), bid: 0, process: add.waiverDate,
+    items: [{ playerId: add.id, type: "ADD", to: Number(me), info: [add.name, add.posId, add.proId] }, { playerId: drop.id, type: "DROP", from: Number(me), info: [drop.name, drop.posId, drop.proId] }] }] };
+}
+// One pending move as a card row.
+function pendingRow(t, mine) {
+  const nm = (i) => (i.info ? `${plink(i.playerId, i.info[0])} <span class="muted small">${POS[i.info[1]] || ""}</span>` : `Player ${esc(i.playerId)}`);
+  const fa = faData(), clears = (id) => fa?.players?.find((p) => String(p.id) === String(id))?.waiverDate;
+  if (/TRADE/.test(t.type)) {
+    const me = (t.items || []).some((i) => mine.includes(i.from)) ? mine.find((m) => t.items.some((i) => i.from === m)) : mine[0];
+    const other = (t.items || []).map((i) => (i.from === me ? i.to : i.from)).find((x) => x != null && x !== me);
+    const sent = t.items.filter((i) => i.from === me).map(nm).join(", "), got = t.items.filter((i) => i.to === me).map(nm).join(", ");
+    const outgoing = mine.includes(t.teamId);
+    return `<div class="pd-row"><span class="pd-kind trade">Trade</span><div class="pd-main">
+      <div>${outgoing ? "Offer to" : "Offer from"} <strong>${esc(team(other).name)}</strong></div>
+      <div class="small">You send ${sent || "–"} · you get ${got || "–"}</div>
+      <div class="muted small">${t.expires ? `Expires ${fmtWhen(t.expires)}` : esc(t.status || "Pending")}</div></div></div>`;
+  }
+  const adds = (t.items || []).filter((i) => i.type === "ADD"), drops = (t.items || []).filter((i) => i.type === "DROP");
+  const when = t.process || (adds[0] && clears(adds[0].playerId)) || nextWaiverRun();
+  const faab = !!state.base.raw.settings?.acquisitionSettings?.isUsingAcquisitionBudget;
+  return `<div class="pd-row"><span class="pd-kind ${t.type === "WAIVER" ? "wv" : ""}">${t.type === "WAIVER" ? "Claim" : "Add"}</span><div class="pd-main">
+    <div>${adds.length ? `<span class="pos">+</span> ${adds.map(nm).join(", ")}` : ""}${drops.length ? ` <span class="neg">−</span> ${drops.map(nm).join(", ")}` : ""}</div>
+    <div class="muted small">${when ? `Processes ${fmtWhen(when)}` : "Processes at the next waiver run"}${faab && t.bid != null ? ` · bid $${t.bid}` : ""}</div></div></div>`;
+}
+// Popup with your pending moves (Roster tab button). Fills in when the list arrives.
+function openPendingModal() {
+  const me = actTeam();
+  if (!me) return;
+  const P = ensurePending(), next = nextWaiverRun();
+  state.pdModal = true;
+  showModal(`<div class="pm-head">${logoImg(team(me), 44)}<div><h2 id="pl-modal-title">Pending moves</h2>
+      <div class="muted small">${esc(team(me).name)}${waiverPlace(me) ? ` · ${waiverPlace(me)} in waiver order` : ""}${next ? ` · next waiver run ${fmtWhen(next)}` : ""}</div></div></div>
+    <div class="pd-pop">${!P ? `<div class="loading small"><span class="spinner"></span> Loading from ESPN…</div>`
+      : P.error && !P.pending.length ? `<p class="muted small">${esc(P.error)}</p>`
+      : P.pending.length ? P.pending.map((t) => pendingRow(t, (P.teams || [Number(me)]).map(Number))).join("")
+      : `<p class="muted">No pending claims or trade offers.</p>`}</div>`);
+}
+
+// Transactions tab: next waiver run, your pending moves (owner) and the waiver order.
+function waiverSection() {
+  const teams = (state.base.raw.teams || []).filter((t) => t.waiverRank).sort((a, b) => a.waiverRank - b.waiverRank);
+  if (!teams.length) return "";
+  const next = nextWaiverRun(), days = waiverDays(), me = actTeam();
+  const P = me ? ensurePending() : null;
+  const pending = !me ? "" : `<div class="card pd-card"><div class="pd-head"><strong>Your pending moves</strong></div>${
+    !P ? `<div class="loading small"><span class="spinner"></span> Loading…</div>`
+    : P.error && !P.pending.length ? `<p class="muted small">${esc(P.error)}</p>`
+    : P.pending.length ? P.pending.map((t) => pendingRow(t, (P.teams || [Number(me)]).map(Number))).join("")
+    : `<p class="muted small">No pending claims or trade offers.</p>`}</div>`;
+  return `<div class="section-head"><h2>Waivers</h2><span class="muted small">${next ? `Next run ${fmtWhen(next)}` : "Next run: overnight"}${days ? ` · runs ${days}` : ""}</span></div>
+    ${pending}
+    <div class="card wv-order"><div class="pd-head"><strong>Waiver order</strong>${me && waiverPlace(me) ? ` <span class="muted small">You're ${waiverPlace(me)}</span>` : ""}</div>
+      <ol>${teams.map((t) => `<li class="${myRow(t.id)}"><span class="wv-rk">${t.waiverRank}</span>${logoImg(team(t.id), 20)}<span>${esc(team(t.id).name)}</span></li>`).join("")}</ol></div>`;
+}
+
 // The team you can make moves for right now: signed in as owner, current week (null otherwise).
 function actTeam() {
   const own = ensureOwner();
@@ -2495,7 +2604,7 @@ function actTeam() {
 async function refreshAfterMove() {
   const wk = state.week.week;
   try { state.week = await getWeek(wk, true, true); } catch { /* keep what we have */ }
-  state.fa = {}; state.live = null; state.lcMoves = null;
+  state.fa = {}; state.live = null; state.lcMoves = null; state.pending = null;
   render();
 }
 async function sendMove(route, body) {
@@ -2507,6 +2616,46 @@ async function sendMove(route, body) {
   const d = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(d.message || `Request failed (${r.status})`);
 }
+// Who has a player right now (this week's rosters): a team id, null if he's available, undefined
+// while rosters are still loading.
+function rosterOwnerOf(id) {
+  const w = state.weekCache?.[state.base.current];
+  if (!w?.sides) return undefined;
+  if (state.ownerMapFor !== w) {
+    state.ownerMap = new Map(w.sides.flatMap((sd) => sd.players.map((p) => [String(p.id), String(sd.teamId)])));
+    state.ownerMapFor = w;
+  }
+  return state.ownerMap.get(String(id)) ?? null;
+}
+const posIdOf = (pos) => Number(Object.keys(POS).find((k) => POS[k] === pos)) || null;
+const proIdOf = (abbr) => Number(Object.keys(PRO).find((k) => PRO[k] === abbr)) || null;
+// Owner-only quick actions next to a player: + to add (yellow when he's on waivers) if he's available,
+// ⇄ to put him in the mock trade if another team has him. Nothing for your own players.
+function moveBtns(p, big = false) {
+  const me = actTeam();
+  if (!me || p?.id == null) return "";
+  const own = rosterOwnerOf(p.id);
+  if (own === undefined || own === me) return "";
+  const nm = esc(p.name || "");
+  if (own === null) {
+    const wv = faData()?.players?.find((x) => String(x.id) === String(p.id))?.status === "W";
+    return `<button type="button" class="add-btn ${big ? "" : "sm"} ${wv ? "wv" : ""}" data-add="${esc(p.id)}" data-nm="${nm}" data-pos="${esc(p.posId ?? "")}" data-pro="${esc(p.proId ?? "")}" title="${wv ? "Claim" : "Add"} ${nm}">${big ? `+ ${wv ? "Claim" : "Add"}` : "+"}</button>`;
+  }
+  return `<button type="button" class="trade-btn ${big ? "" : "sm"}" data-trade="${esc(p.id)}" title="Trade for ${nm} (${esc(team(own).abbrev || "")})">${big ? "⇄ Trade" : "⇄"}</button>`;
+}
+// Put a player from another team into the mock trade, on the side opposite your team.
+function goTrade(id) {
+  const me = actTeam(), own = rosterOwnerOf(id);
+  if (!me || !own || own === me) return;
+  const ta = (state.ta ||= { my: me, a: me, b: own, give: [], get: [] });
+  if (String(ta.a) !== me) { ta.a = me; ta.give = []; }
+  if (String(ta.b) !== own) { ta.b = own; ta.get = []; }
+  if (!ta.get.map(String).includes(String(id)) && ta.get.length < 3) ta.get.push(String(id));
+  if (!$("pl-modal").hidden) document.querySelector("#pl-modal .modal-close").click();
+  switchTab("trade");
+  setTimeout(() => $("mock-trade")?.scrollIntoView({ behavior: "smooth", block: "start" }), 350);
+}
+
 // Shared confirm dialog: run `send`, show the result, refresh, close.
 function moveDialog(title, html, goLabel, send, done) {
   showModal(`<div class="pm-head"><h2 id="pl-modal-title">${title}</h2></div>${html}
@@ -2530,11 +2679,25 @@ function confirmDrop(teamId, p) {
   moveDialog(`Drop ${esc(p.name)}?`, `<p class="small muted">${esc(team(teamId).name)} · he goes to waivers and other teams can claim him.</p>`, "Drop on ESPN",
     () => sendMove("transaction", { teamId: Number(teamId), drop: Number(p.id) }), "Dropped on ESPN");
 }
+// Short summary at the top of the add/claim dialog: when it happens and where you stand.
+function addSummary(p, tid, waiver) {
+  if (!waiver) return `<div class="wv-sum fa"><strong>Free agent</strong> · added to your roster right away.</div>`;
+  const P = ensurePending();
+  const others = (P?.pending || []).filter((t) => t.type === "WAIVER").length;
+  const when = p.waiverDate || nextWaiverRun();
+  return `<div class="wv-sum"><strong>Waiver claim</strong>
+    <div>Processes ${when ? fmtWhen(when) : "at the next waiver run"}. Nothing changes until then.</div>
+    ${waiverPlace(tid) ? `<div>You're <strong>${waiverPlace(tid)}</strong> in the waiver order. If a team ahead of you claims him, your claim fails.</div>` : ""}
+    ${others ? `<div>You already have ${others} pending claim${others > 1 ? "s" : ""}.</div>` : ""}</div>`;
+}
+
 // Add a free agent or claim a player off waivers, picking who (if anyone) to drop.
-function openAdd(id, dropId) {
+function openAdd(id, dropId, info = {}) {
   const tid = actTeam(), fa = faData();
-  const raw = fa?.players?.find((x) => String(x.id) === String(id));
-  if (!tid || !raw) return;
+  const listed = fa?.players?.find((x) => String(x.id) === String(id));
+  // Not in the free-agent list the site loads (it covers the top 200): build a minimal entry.
+  const raw = listed || (info.name ? { id: Number(id), name: info.name, posId: Number(info.posId) || null, proId: Number(info.proId) || null, status: "FA", proj: 0 } : null);
+  if (!tid || !raw || rosterOwnerOf(id)) return;
   const p = faRow(raw, state.week), waiver = p.status === "W";
   const side = state.week.sides.find((x) => String(x.teamId) === tid);
   const roster = side?.players || [];
@@ -2546,7 +2709,7 @@ function openAdd(id, dropId) {
     <span><strong>${esc(x.name)}</strong> <span class="muted small">${esc(x.pos)} · ${x.starter ? esc(x.slot) : x.slotId === IR ? "IR" : "Bench"} · proj ${f1(x.proj)}${x.locked ? " · locked" : ""}</span></span></label>`;
   moveDialog(`${waiver ? "Claim" : "Add"} ${esc(p.name)}`, `
     <div class="add-head">${headshot(p, 44)}<div><strong>${esc(p.name)}</strong>${injBadge(p)}<div class="muted small">${esc(p.pos)}${p.nfl ? ` · ${esc(p.nfl)}` : ""} · proj ${f1(p.proj)} in week ${state.week.week}</div></div></div>
-    ${waiver ? `<p class="small muted">He's on waivers, so this is a claim. It goes through when waivers clear, if no one with higher priority claims him.</p>` : ""}
+    ${addSummary(p, tid, waiver)}
     ${waiver && faab ? `<label class="bid small">FAAB bid $ <input id="add-bid" type="number" min="0" step="1" value="0" inputmode="numeric"></label>` : ""}
     <h3 class="pm-sub">Drop</h3>
     <div class="dr-list">${full ? "" : `<label class="dr-opt"><input type="radio" name="dr" value="" ${dropId ? "" : "checked"}><span>Nobody <span class="muted small">(you have an open roster spot)</span></span></label>`}${order.map(opt).join("")}</div>`,
@@ -2559,10 +2722,11 @@ function openAdd(id, dropId) {
     waiver ? "Claim submitted on ESPN" : "Added on ESPN");
 }
 document.addEventListener("click", (e) => {
-  const b = e.target.closest("[data-add]");
+  const b = e.target.closest("[data-add], [data-trade]");
   if (!b) return;
   e.preventDefault();
-  openAdd(b.dataset.add, b.dataset.drop);
+  if (b.dataset.trade) goTrade(b.dataset.trade);
+  else openAdd(b.dataset.add, b.dataset.drop, { name: b.dataset.nm, posId: b.dataset.pos, proId: b.dataset.pro });
 });
 
 // Confirm, then send the moves to ESPN. moves = [[player, toSlot], …]
@@ -2594,7 +2758,7 @@ function openUpgrades(p) {
   const ups = upgradesFor(p, fa).slice(0, 20);
   const rows = ups.map((u) => {
     const row = faRow(u, w);
-    const add = String(p.teamId) === actTeam() ? `<button type="button" class="add-btn" data-add="${esc(u.id)}" data-drop="${esc(p.id)}" title="${u.status === "W" ? "Claim" : "Add"} ${esc(u.name)}, drop ${esc(p.name)}">+ ${u.status === "W" ? "Claim" : "Add"}</button>` : "";
+    const add = String(p.teamId) === actTeam() ? `<button type="button" class="add-btn ${u.status === "W" ? "wv" : ""}" data-add="${esc(u.id)}" data-drop="${esc(p.id)}" title="${u.status === "W" ? "Claim" : "Add"} ${esc(u.name)}, drop ${esc(p.name)}">+ ${u.status === "W" ? "Claim" : "Add"}</button>` : "";
     return playerRow(row, { sp: w.sp, action: `<div class="upg-diff" title="Projected points more than ${esc(p.name)}">+${f1(u.proj - (p.proj || 0))}</div>${add}` });
   }).join("");
   showModal(`<div class="pm-head"><h2 id="pl-modal-title">Upgrades for ${esc(p.name)}</h2>
@@ -2933,7 +3097,7 @@ function renderInjuries() {
     const sub = [wk <= cur ? "this week" : games ? `misses ${games} game${games > 1 ? "s" : ""}` : "next game", bye && bye > cur && bye < wk ? `bye wk ${bye}` : ""].filter(Boolean).join(" · ");
     return `<strong>Wk ${wk}</strong>${!games && /Questionable|Doubtful|Day-To-Day/.test(p.status) ? ` <span class="muted small">GTD</span>` : ""}<div class="pt-sub">${sub}</div>`;
   };
-  const who = (x) => (x ? `${plink(x[0], shortName(x[1]))} ${ownerTag(x[0])}${snap(x[0]) != null ? `<div class="pt-sub">${pctTxt(snap(x[0]))} snaps last game</div>` : ""}` : `<span class="muted">–</span>`);
+  const who = (x, p) => (x ? `${plink(x[0], shortName(x[1]))} ${ownerTag(x[0])} ${moveBtns({ id: x[0], name: x[1], posId: posIdOf(p.pos), proId: p.proId })}${snap(x[0]) != null ? `<div class="pt-sub">${pctTxt(snap(x[0]))} snaps last game</div>` : ""}` : `<span class="muted">–</span>`);
   const recovery = (p) => { const t = `${p.type} ${p.detail} ${p.status}`; return RECOVERY.find(([re]) => re.test(t))?.[1] || "Varies"; };
 
   const rows = D.players
@@ -2942,14 +3106,14 @@ function renderInjuries() {
     .map((p) => ({ ...p, out: weeksOut(p), next: nextUp(p), fnext: fantasyNext(p) }))
     .map((p) => ({ ...p, ret: retWeek(p) }));
   const cols = [
-    { key: "name", label: "Player", cls: "pt-player", dir: 1, render: (p) => `<div class="pt-name">${plinkNm(p)}${injBadge({ injury: INJ_CODE[p.status] || p.status.toUpperCase() })}</div><div class="pt-sub">${esc(p.pos)} · ${esc(PRO[p.proId] || "")} ${ownerTag(p.id)}</div>` },
+    { key: "name", label: "Player", cls: "pt-player", dir: 1, render: (p) => `<div class="pt-name">${plinkNm(p)}${injBadge({ injury: INJ_CODE[p.status] || p.status.toUpperCase() })} ${moveBtns({ id: p.id, name: p.name, posId: posIdOf(p.pos), proId: p.proId })}</div><div class="pt-sub">${esc(p.pos)} · ${esc(PRO[p.proId] || "")} ${ownerTag(p.id)}</div>` },
     { key: "status", label: "Status", dir: 1, sort: (p) => INJ_ORDER[p.status] ?? 9, render: (p) => esc(p.status) },
     { key: "type", label: "Injury", dir: 1, render: (p) => `<span ${p.note ? `data-tip="${esc(`<b>${esc(p.name)}</b>${esc(p.note)}`)}"` : ""}>${esc([p.type, p.detail].filter(Boolean).join(" – ") || (p.status === "Suspension" ? "Suspension" : "Not disclosed"))}${p.side ? ` <span class="muted">(${esc(p.side)})</span>` : ""}</span>` },
     { key: "recovery", label: "Typical recovery", title: "Typical time missed for this kind of injury (a rough guide)", dir: 1, sort: (p) => recovery(p), render: (p) => esc(recovery(p)) },
     { key: "out", label: "Weeks out", title: "Games in a row his team has played without him (from nflverse snap counts)", num: true, render: (p) => (p.out == null ? `<span class="muted">–</span>` : String(p.out)) },
     { key: "ret", label: "Possible return", title: "Fantasy week he could be back: ESPN's return date matched to his team's schedule (byes skipped). IR players must sit at least four games.", dir: 1, sort: (p) => (p.ret === "season" ? 99 : p.ret ?? 98), render: retCell },
-    { key: "next", label: "Next up", title: "Next healthy player behind him on the team's depth chart", dir: 1, sort: (p) => p.next?.[1] || "~", render: (p) => who(p.next) },
-    { key: "fnext", label: "Fantasy fill-in", title: "Of his healthy backups, the one who played the most snaps last game", dir: 1, sort: (p) => p.fnext?.[1] || "~", render: (p) => who(p.fnext) },
+    { key: "next", label: "Next up", title: "Next healthy player behind him on the team's depth chart", dir: 1, sort: (p) => p.next?.[1] || "~", render: (p) => who(p.next, p) },
+    { key: "fnext", label: "Fantasy fill-in", title: "Of his healthy backups, the one who played the most snaps last game", dir: 1, sort: (p) => p.fnext?.[1] || "~", render: (p) => who(p.fnext, p) },
   ];
   const btn = (key, val, label) => `<button type="button" data-${key}="${val}" class="${f[key] === val ? "active" : ""}">${label}</button>`;
   el.innerHTML = `<div class="section-head"><h2>Injury report</h2><span class="muted small">Every QB, RB, WR, TE and K who isn't fully active</span></div>
@@ -3041,7 +3205,8 @@ function renderUsage() {
         return `<td class="num" ${heat(v)} title="${e[M.count]} of ${teamTot(wk)} team ${M.what}">${pctTxt(v)}<div class="pt-sub">${e[M.count]} ${M.unit}</div></td>`;
       }).join("");
       const name = typeof p.id === "number" ? plinkNm({ id: p.id, name: p.name }) : `<span class="nm-full">${esc(p.name)}</span><span class="nm-short">${esc(shortName(p.name))}</span>`;
-      return `<tr><td class="pt-player"><div class="pt-name">${name}${trend(p)}</div><div class="ut-owner">${ownerOf(p.id)}</div></td>${cells}
+      const acts = typeof p.id === "number" ? moveBtns({ id: p.id, name: p.name, posId: posIdOf(p.pos), proId: proIdOf(T) }) : "";
+      return `<tr><td class="pt-player"><div class="pt-name">${name}${trend(p)} ${acts}</div><div class="ut-owner">${ownerOf(p.id)}</div></td>${cells}
         <td class="num"><strong>${pctTxt(seasonShare(p))}</strong><div class="pt-sub">${p.total} ${M.unit}</div></td></tr>`;
     }).join("");
     return head + rows;
@@ -3213,7 +3378,7 @@ function renderTradeAnalyzer() {
     const list = faFor(pos);
     const upgrade = (v) => v.value > (me.byPos[pos].core[me.byPos[pos].core.length - 1]?.value || 0);
     return `<div class="fa-pos"><div class="fa-pos-head"><strong>${pos}</strong>${weakPositions.includes(pos) ? ` <span class="badge inj">NEED</span>` : ""}</div>
-      ${list.map((v) => `<div class="fa-row"><span>${plink(v.espnId, v.name)} <span class="muted small">${esc(v.nfl)}</span>${upgrade(v) ? ` <span class="badge live" title="Worth more than your weakest starter at ${pos}">UPGRADE</span>` : ""}</span><span class="num">${valueCell(v.espnId)}</span></div>`).join("") || `<p class="muted small">No ${pos}s with a FantasyCalc value are available.</p>`}</div>`;
+      ${list.map((v) => `<div class="fa-row"><span>${plink(v.espnId, v.name)} <span class="muted small">${esc(v.nfl)}</span> ${moveBtns({ id: v.espnId, name: v.name, posId: posIdOf(pos), proId: proIdOf(v.nfl) })}${upgrade(v) ? ` <span class="badge live" title="Worth more than your weakest starter at ${pos}">UPGRADE</span>` : ""}</span><span class="num">${valueCell(v.espnId)}</span></div>`).join("") || `<p class="muted small">No ${pos}s with a FantasyCalc value are available.</p>`}</div>`;
   }).join("");
 
   // --- Potential adds: trade targets ---
@@ -3344,7 +3509,8 @@ function renderTradeAnalyzer() {
     result = `<div class="trade-result">
       <div class="tr-totals"><div><span class="muted small">${nameA} sends</span><strong>${fmtVal(va)}</strong></div><div class="tr-arrow">⇄</div><div class="right"><span class="muted small">${nameB} sends</span><strong>${fmtVal(vb)}</strong></div></div>
       <div class="tr-verdict">${verdict}</div>
-      <div class="tr-impact">${impact(A, nameA, L.profiles[A], afterA)}${impact(B, nameB, L.profiles[B], afterB)}</div>${consolidation}</div>`;
+      <div class="tr-impact">${impact(A, nameA, L.profiles[A], afterA)}${impact(B, nameB, L.profiles[B], afterB)}</div>${consolidation}
+      ${actTeam() && [String(A), String(B)].includes(actTeam()) ? `<button type="button" class="mv-go ta-propose" id="ta-propose">Propose this trade on ESPN</button>` : ""}</div>`;
   }
 
   const teamOpts = (sel, exclude) => teamIds.filter((id) => id !== exclude).map((id) => `<option value="${id}" ${id === String(sel) ? "selected" : ""}>${esc(team(id).name)}</option>`).join("");
@@ -3387,6 +3553,18 @@ function renderTradeAnalyzer() {
     renderTradeAnalyzer();
   });
   $("ta-b").addEventListener("change", (e) => { ta.b = e.target.value; ta.get = []; renderTradeAnalyzer(); });
+  $("ta-propose")?.addEventListener("click", () => {
+    const meA = String(A) === actTeam();
+    const mine = meA ? sendA : sendB, theirs = meA ? sendB : sendA, other = meA ? B : A;
+    const li = (list) => list.map((p) => `<li><strong>${esc(p.name)}</strong> <span class="muted small">${esc(p.pos)} · ${fmtVal(p.value)}</span></li>`).join("");
+    moveDialog(`Propose a trade to ${esc(team(other).name)}`, `
+      <div class="tp-sides"><div><div class="muted small">You send</div><ul class="mv-list">${li(mine)}</ul></div><div><div class="muted small">You get</div><ul class="mv-list">${li(theirs)}</ul></div></div>
+      <p class="small muted">ESPN sends the offer to ${esc((team(other).owner || team(other).name).replace(/\.$/, ""))}. It expires in 2 days if they don't answer, and the league's review period applies if they accept.</p>
+      <label class="tp-note small">Message (optional)<textarea id="tp-comment" rows="2" maxlength="500"></textarea></label>`,
+      "Send proposal",
+      () => sendMove("trade", { teamId: Number(actTeam()), otherTeamId: Number(other), send: mine.map((p) => Number(p.id)), receive: theirs.map((p) => Number(p.id)), comment: $("tp-comment")?.value || "" }),
+      "Trade proposal sent on ESPN");
+  });
   el.querySelectorAll("select[data-side]").forEach((s) => s.addEventListener("change", () => {
     if (!s.value) return;
     ta[s.dataset.side] = [...ta[s.dataset.side], s.value].filter((v, i, a) => v && a.indexOf(v) === i).slice(0, 3);
@@ -3498,7 +3676,7 @@ function renderTransactions() {
   const teamOpts = Object.values(state.base.teams).sort((x, y) => x.name.localeCompare(y.name))
     .map((t) => `<option value="${t.id}" ${String(f.team) === String(t.id) ? "selected" : ""}>${esc(t.name)}</option>`).join("");
 
-  el.innerHTML = `<div class="section-head"><h2>Pending trades</h2><span class="muted small">Trades both teams accepted that haven't gone through yet</span></div>
+  el.innerHTML = `${waiverSection()}<div class="section-head"><h2>Pending trades</h2><span class="muted small">Trades both teams accepted that haven't gone through yet</span></div>
     ${pending}
     <div class="section-head"><h2>Transactions</h2><span class="muted small">Waiver claims, free-agent moves and completed trades, newest first</span></div>
     <div class="filters">
@@ -3783,7 +3961,7 @@ function renderPlayerModal(d, focusSp) {
       ${headshot({ id: p.id, name: p.name, posId: p.posId, proId: p.proId }, 64)}
       <div><h2 id="pl-modal-title">${esc(p.name)}${injBadge({ injury: p.injury })}</h2>
         <div class="muted small">${pos}${p.proId ? ` · ${esc(PRO[p.proId] || "")}` : ""}${p.bye ? ` · Bye wk ${p.bye}` : ""}</div>
-        <div class="pm-owner">${owner}</div></div>
+        <div class="pm-owner">${owner}</div>${moveBtns({ id: p.id, name: p.name, posId: p.posId, proId: p.proId }, true) ? `<div class="pm-acts">${moveBtns({ id: p.id, name: p.name, posId: p.posId, proId: p.proId }, true)}</div>` : ""}</div>
     </div>
     <div class="pm-tabs" role="tablist">${tabs.map(([k, label]) => `<button type="button" role="tab" data-pmtab="${k}" aria-selected="${k === tab}" class="${k === tab ? "active" : ""}">${label}</button>`).join("")}</div>
     <div class="pm-pane">${pane}</div>`;
