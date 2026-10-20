@@ -282,9 +282,10 @@ export default async () => {
     const st = (await s.get(`state:${lid}`, { type: "json" }).catch(() => null)) || {};
     const out = [];
     try {
-      if (!st.sp || st.season !== season || now - (st.spAt || 0) > 3600e3) {
+      if (!st.sp || st.season !== season || now - (st.spAt || 0) > 3600e3 || !st.teamNames || !st.leagueName) {
         const info = await espn(lid, season, ["mStatus", "mSettings", "mTeam"]);
-        st.teamNames = Object.fromEntries((info.teams || []).map((t) => [t.id, t.name || t.abbrev || `Team ${t.id}`]));
+        st.teamNames = Object.fromEntries((info.teams || []).map((t) => [t.id, t.name || [t.location, t.nickname].filter(Boolean).join(" ") || t.abbrev || `Team ${t.id}`]));
+        st.leagueName = info.settings?.name || "";
         st.sp = info.scoringPeriodId || info.status?.latestScoringPeriod || 1;
         st.scoring = (info.settings?.scoringSettings?.scoringItems || []).map((i) => ({ statId: i.statId, points: i.points, ...(i.pointsOverrides ? { pointsOverrides: i.pointsOverrides } : {}) }));
         st.season = season; st.spAt = now;
@@ -306,7 +307,8 @@ export default async () => {
         if (n.league ? String(sub.teamId) === n.actor : String(sub.teamId) !== n.teamId) continue;
         const body = n.publicBody !== undefined && !sub.owner ? n.publicBody : n.body;
         if (!body) continue;
-        await sendPush(sub, { title: n.title, body, url: n.url, tag: n.tag });
+        // The league name is the bold first line; the alert and its details go underneath.
+        await sendPush(sub, st.leagueName ? { title: st.leagueName, body: `${n.title}\n${body}`, url: n.url, tag: n.tag } : { title: n.title, body, url: n.url, tag: n.tag });
       }
     }
     if (out.length) console.log(JSON.stringify({ event: "watch_sent", lid, alerts: out.length, kinds: [...new Set(out.flatMap((n) => n.kinds))] }));

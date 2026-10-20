@@ -50,7 +50,10 @@ export default async (req, context) => {
   }
   if (action === "test") {
     if (!existing) return json(404, { error: "not_subscribed", message: "Turn notifications on first." });
-    const ok = await sendPush({ ...existing, key }, { title: "🏈 Notifications are on", body: "You'll get alerts for your team here.", url: `/?league=${leagueId}&tab=roster`, tag: "test" });
+    let leagueName = "";
+    try { leagueName = (await espn(leagueId, season, ["mSettings"])).settings?.name || ""; } catch { /* plain title */ }
+    // Same layout as real alerts: league name on top, the message underneath.
+    const ok = await sendPush({ ...existing, key }, { title: leagueName || "🏈 Notifications are on", body: `${leagueName ? "🏈 Notifications are on\n" : ""}You'll get alerts for your team here.`, url: `/?league=${leagueId}&tab=roster`, tag: "test" });
     return ok ? json(200, { sent: true }) : json(502, { error: "push_failed", message: "The push service didn't accept the test. Try turning notifications off and on." });
   }
   if (action === "unsubscribe") {

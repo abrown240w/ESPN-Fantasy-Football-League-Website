@@ -1429,3 +1429,9 @@ h3.ta-sub:has(.rh-wv) { display: flex; align-items: baseline; gap: 6px; }
 .ct-img { max-width: 220px; max-height: 200px; border-radius: 12px; display: block; }
 .ct-img.sticker { max-width: 120px; max-height: 120px; border-radius: 0; }
 .ct-wk { align-self: flex-start; margin-top: 4px; border: 1px solid var(--accent); background: var(--surface); color: var(--accent-ink); border-radius: 8px; padding: 4px 9px; font: inherit; font-size: .78rem; font-weight: 700; cursor: pointer; }
+
+/* No title line at the top of each tab (the tab bar already says where you are). Lines that hold a
+   control keep the control. Transactions starts with its Waivers section, which stays. */
+.view:not(#view-transactions) > .section-head:first-child:not(:has(select, button, input)) { display: none; }
+.view > .section-head:first-child:has(select, button, input) > h2 { display: none; }
+.view > .section-head:first-child:has(select, button, input) { justify-content: flex-end; }
