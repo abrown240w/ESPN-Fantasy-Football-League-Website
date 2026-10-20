@@ -564,7 +564,7 @@ function gsClass(p) {
 const ptsCell = (p, status) => (p.played ? ptsLink(p.id, state.week.sp, f1(p.actual)) : status === "final" ? f1(p.actual) : `<span class="muted">–</span>`);
 
 function showView(name) {
-  for (const v of ["roster", "matchups", "live", "players", "usage", "trade", "transactions", "managers", "season", "history"]) $(`view-${v}`).hidden = v !== name;
+  for (const v of ["roster", "matchups", "live", "players", "usage", "injuries", "trade", "transactions", "managers", "season", "history"]) $(`view-${v}`).hidden = v !== name;
   document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
 }
 
@@ -579,11 +579,12 @@ function renderMatchups() {
   if (!w.matchups.some((m) => m.id === state.openMatchup && m.away)) state.openMatchup = (mine?.away ? mine : w.matchups.find((m) => m.away))?.id ?? null;
   const sel = w.matchups.find((m) => m.id === state.openMatchup);
   const split = MU_SPLIT.matches;
-  el.innerHTML = `<div class="section-head"><h2>Week ${w.week} matchups ${statusBadge(w.status)}</h2><span class="muted small">${label}</span></div>
+  el.innerHTML = `<div class="section-head"><h2>Week ${w.week} matchups ${statusBadge(w.status)}</h2><span class="muted small hide-phone">${label}</span></div>
     <div class="${split ? "mu-split" : "mu-stack"}">
       <div class="${split ? "mu-list" : "mt-grid"}">${w.matchups.map(matchupTile).join("")}</div>
       <div class="${split ? "mu-pane" : "mu-detail"}" id="mu-pane">${sel ? matchupDetail(sel, true) : `<p class="muted">Pick a matchup.</p>`}</div>
-    </div>`;
+    </div>
+    <p class="muted small show-phone mu-note">${label}</p>`;
   el.querySelectorAll(".mini-tile[data-mu]").forEach((c) => c.addEventListener("click", () => {
     const m = w.matchups.find((x) => x.id === +c.dataset.mu);
     if (!m?.away || state.openMatchup === m.id) return;
@@ -1466,6 +1467,16 @@ function shownPlay(g) {
   return mem[g.id] ? { ...mem[g.id], earlier: true } : null;
 }
 
+// A spot named in the play text ("... at HST 27") as a 0–100 yard line (0 = home goal line).
+// Play-by-play uses a few different team codes than the scoreboard.
+const PBP_TEAM = { HST: "HOU", ARZ: "ARI", BLT: "BAL", CLV: "CLE", LA: "LAR", WAS: "WSH", JAC: "JAX" };
+function textSpot(text, re, home, away) {
+  const m = re.exec(text || "");
+  if (!m) return null;
+  const code = PBP_TEAM[m[1]] || m[1], n = Math.max(0, Math.min(50, +m[2]));
+  return code === home.abbr ? n : code === away.abbr ? 100 - n : null;
+}
+
 // ---------- On-field graphic for live games ----------
 // ESPN yard lines run 0 (home team's goal line) to 100 (away team's goal line). The away end zone
 // is drawn on the left and the home end zone on the right, matching the scoreboard above it.
@@ -1539,14 +1550,39 @@ function fieldGraphic(g) {
       parts.push(`<path d="M${xs} ${Y + 14} L${xs} ${Y - 26}" stroke="#fff" stroke-width="3"/><path d="M${xs} ${Y - 26} L${xs + 22} ${Y - 20} L${xs} ${Y - 12} z" fill="#fdd835" stroke="#c9a400" stroke-width="1.5"/>`);
       tag(`🚩 ${what}${pen ? ` · ${gained === 0 ? "offsetting" : ydsTxt(gained)}` : ""}${noPlay ? " · no play" : ""}`, Y - 34, "lp-yds lp-pen");
     } else if (kind === "turnover" || kind === "fumble") {
-      // Turnover: red return path from where the ball changed hands.
-      const label = /INTERCEPT/i.test(text) || /interception/i.test(lp.type) ? "Interception" : "Fumble lost";
-      if (far) parts.push(`<path d="M${xs} ${Y} L${xe} ${Y}" stroke="#ef5350" stroke-width="4" marker-end="url(#arrowr-${esc(g.id)})"/>`);
-      parts.push(`<path d="M${xs - 9} ${Y - 9} L${xs + 9} ${Y + 9} M${xs + 9} ${Y - 9} L${xs - 9} ${Y + 9}" stroke="#ef5350" stroke-width="5" stroke-linecap="round"/>`);
-      tag(`${label}${/touchdown/i.test(lp.type + text) ? " · TD" : ""}`, Y - 16, "lp-yds lp-to");
+      // Turnover: the play up to where the ball changed hands (from the play text), a red X there,
+      // then a red arrow back the other way for the return.
+      const isInt = /INTERCEPT/i.test(text) || /interception/i.test(lp.type);
+      const flip = textSpot(text, isInt ? /INTERCEPTED by .*? at ([A-Z]{2,3}) (-?\d+)/ : /RECOVERED by .*? at ([A-Z]{2,3}) (-?\d+)/, home, away);
+      const xt = flip != null ? x(flip) : xs;
+      if (flip != null && Math.abs(xt - xs) >= 4) {
+        parts.push(isInt ? `<path d="M${xs} ${Y} Q${(xs + xt) / 2} ${Y - 2 * Math.min(38, 14 + Math.abs(xt - xs) / 8)} ${xt} ${Y}" fill="none" stroke="#fff" stroke-width="4" stroke-dasharray="8 6"/>`
+          : `<path d="M${xs} ${Y} L${xt} ${Y}" stroke="#fff" stroke-width="4"/>`);
+      }
+      if (Math.abs(xe - xt) >= 4) parts.push(`<path d="M${xt} ${Y + 6} L${xe} ${Y + 6}" stroke="#ef5350" stroke-width="4" marker-end="url(#arrowr-${esc(g.id)})"/>`);
+      parts.push(`<path d="M${xt - 9} ${Y - 9} L${xt + 9} ${Y + 9} M${xt + 9} ${Y - 9} L${xt - 9} ${Y + 9}" stroke="#ef5350" stroke-width="5" stroke-linecap="round"/>`);
+      const ret = Math.round(Math.abs(lp.end - (flip ?? lp.start)));
+      tag(`${isInt ? "Interception" : "Fumble lost"}${ret >= 2 ? ` · ${ret} yd return` : ""}${/touchdown/i.test(lp.type + text) ? " · TD" : ""}`, Y - 16, "lp-yds lp-to");
+    } else if (kind === "kick") {
+      // Kicks: a high arc to where the ball came down, then (if returned) an arrow back the other way.
+      const kd = /(?:kicks|punts) (\d+) yards?/i.exec(text)?.[1], fgd = /(\d+) yard field goal/i.exec(text)?.[1];
+      let land = /to (?:the )?end zone|touchback/i.test(text) ? (lp.start > 50 ? 0 : 100)
+        : textSpot(text, /(?:kicks|punts) \d+ yards? (?:from [A-Z]{2,3} -?\d+ )?to ([A-Z]{2,3}) (-?\d+)/, home, away);
+      if (/field goal|extra point/i.test(lp.type)) land = lp.end;
+      if (land == null) land = lp.end;
+      const xl = x(land), lift = Math.min(52, 22 + Math.abs(xl - xs) / 6);
+      if (Math.abs(xl - xs) >= 4) parts.push(`<path d="M${xs} ${Y} Q${(xs + xl) / 2} ${Y - lift * 2} ${xl} ${Y}" fill="none" stroke="#fff" stroke-width="4" stroke-dasharray="14 6" ${Math.abs(xe - xl) < 4 ? `marker-end="url(#arrow-${esc(g.id)})"` : ""}/>`);
+      const ret = Math.round(Math.abs(lp.end - land));
+      if (ret >= 1 && !/field goal|extra point/i.test(lp.type)) parts.push(`<path d="M${xl} ${Y + 6} L${xe} ${Y + 6}" stroke="#fff" stroke-width="4" marker-end="url(#arrow-${esc(g.id)})"/>`);
+      const good = /good/i.test(lp.type) || /is GOOD/.test(text);
+      const what = /punt/i.test(lp.type) ? `Punt${kd ? ` ${kd} yds` : ""}${/fair catch/i.test(text) ? " · fair catch" : /touchback/i.test(text) ? " · touchback" : ret >= 1 ? ` · ${ret} yd return` : ""}`
+        : /field goal/i.test(lp.type) ? `FG${fgd ? ` ${fgd} yds` : ""} ${good ? "✓" : "✗"}`
+        : /extra point/i.test(lp.type) ? `XP ${good ? "✓" : "✗"}`
+        : `Kickoff${kd ? ` ${kd} yds` : ""}${/touchback/i.test(text) ? " · touchback" : ret >= 1 ? ` · ${ret} yd return` : ""}`;
+      tag(`${what}${hasFlag(text) ? ` · 🚩 ${flagName(text)}` : ""}`, Math.max(54, Y - lift - 8));
     } else if (far) {
-      const aerial = kind === "pass" || kind === "incomplete" || kind === "kick";
-      const lift = kind === "kick" ? Math.min(52, 22 + Math.abs(xe - xs) / 6) : aerial ? Math.min(38, 14 + Math.abs(xe - xs) / 8) : 0;
+      const aerial = kind === "pass" || kind === "incomplete";
+      const lift = aerial ? Math.min(38, 14 + Math.abs(xe - xs) / 8) : 0;
       const path = aerial ? `M${xs} ${Y} Q${mid} ${Y - lift * 2} ${xe} ${Y}` : `M${xs} ${Y} L${xe} ${Y}`;
       const color = kind === "sack" || kind === "safety" ? "#ef5350" : "#fff";
       const tagY = aerial ? Math.max(54, Y - lift - 8) : Y - 12;
@@ -1555,9 +1591,8 @@ function fieldGraphic(g) {
         parts.push(`<path d="M${xe - 9} ${Y - 9} L${xe + 9} ${Y + 9} M${xe + 9} ${Y - 9} L${xe - 9} ${Y + 9}" stroke="#fff" stroke-width="5" stroke-linecap="round"/>`);
         tag("Incomplete", tagY);
       } else {
-        parts.push(`<path d="${path}" fill="none" stroke="${color}" stroke-width="4" ${kind === "kick" ? 'stroke-dasharray="14 6"' : ""} marker-end="url(#${color === "#fff" ? "arrow" : "arrowr"}-${esc(g.id)})"/>`);
-        const kickWord = /punt/i.test(lp.type) ? "Punt" : /field goal/i.test(lp.type) ? (/good/i.test(lp.type) ? "FG good" : "FG no good") : /extra point/i.test(lp.type) ? "XP" : "Kickoff";
-        tag(kind === "kick" ? `${kickWord}${hasFlag(text) ? ` · 🚩 ${flagName(text)}` : ""}` : kind === "sack" ? `Sack · ${ydsTxt(gained)}` : kind === "safety" ? "Safety" : `${ydsTxt(gained)}${/touchdown/i.test(lp.type) ? " · TD" : ""}`, tagY, kind === "sack" || kind === "safety" ? "lp-yds lp-to" : "lp-yds");
+        parts.push(`<path d="${path}" fill="none" stroke="${color}" stroke-width="4" marker-end="url(#${color === "#fff" ? "arrow" : "arrowr"}-${esc(g.id)})"/>`);
+        tag(kind === "sack" ? `Sack · ${ydsTxt(gained)}` : kind === "safety" ? "Safety" : `${ydsTxt(gained)}${/touchdown/i.test(lp.type) ? " · TD" : ""}`, tagY, kind === "sack" || kind === "safety" ? "lp-yds lp-to" : "lp-yds");
       }
     }
   }
@@ -1716,10 +1751,11 @@ function renderLive() {
         <div class="g-status">${status}${g.broadcast ? `<div class="muted small">${esc(g.broadcast)}</div>` : ""}</div>
         ${scoreSide(g.home, g, true)}
       </div>
-      ${graphic}${sit}${lastPlay}
+      ${pinned ? `${graphic}${sit}${lastPlay}` : ""}
       </div>
       ${pinned ? "" : stickBar(`<span class="sb-team"><img src="${esc(g.away.logo)}" alt="" width="18" height="18">${esc(g.away.abbr)}</span><strong>${sbScore(g.away)}</strong><span class="sb-mid">${g.state === "in" ? esc(g.detail) : g.state === "post" ? "Final" : esc(kickoff(g))}${g.state === "in" && g.downDistance ? ` · ${esc(g.downDistance.replace(/ at .*/, ""))}` : ""}</span><strong>${sbScore(g.home)}</strong><span class="sb-team">${esc(g.home.abbr)}<img src="${esc(g.home.logo)}" alt="" width="18" height="18"></span>`)}
       <div class="collapse ${open ? "open" : ""}" ${open ? "" : "inert"}><div class="collapse-inner">
+      ${pinned ? "" : `${graphic}${sit}${lastPlay}`}
       ${g.state === "pre" ? "" : `<button type="button" class="bx-toggle ${state.boxUi[g.id]?.open ? "open" : ""}" data-bx="${esc(g.id)}" data-toggle="1" aria-expanded="${!!state.boxUi[g.id]?.open}">📊 Player stats <span class="caret">▾</span></button>`}
       ${state.boxUi[g.id]?.open ? boxPanel(g, rosteredBy) : ""}
       ${g.state === "post" ? "" : wxLine(wxGame(g.home.proId, L.sp))}
@@ -1730,14 +1766,12 @@ function renderLive() {
 
   const teamOpts = Object.values(state.base.teams).sort((a, b) => a.name.localeCompare(b.name))
     .map((t) => `<option value="${t.id}" ${String(f.team) === String(t.id) ? "selected" : ""}>${esc(t.name)}</option>`).join("");
-  // Desktop list tile: both teams and scores, game status, who has the ball.
+  // Desktop list: each game as the same condensed score header used on phones.
   const gameTile = (g) => {
-    const row = (sd, key) => {
-      const won = g.state === "post" && sd.score > (key === "home" ? g.away.score : g.home.score);
-      return `<div class="mt-row ${g.state === "post" ? (won ? "lead" : "trail") : ""}"><span class="mt-team"><img src="${esc(sd.logo)}" alt="" width="18" height="18"><span>${key === "home" ? "@" : ""}${esc(sd.abbr)}</span>${g.possession === sd.proId ? ` <span class="poss">🏈</span>` : ""}</span><span class="mt-score">${g.state === "pre" ? "" : sd.score ?? ""}</span></div>`;
-    };
-    const foot = g.state === "in" ? `<span class="badge live">LIVE</span> ${esc(g.detail)}${g.redZone ? ` <span class="badge out">RZ</span>` : ""}` : g.state === "post" ? "Final" : esc(kickoff(g));
-    return `<button type="button" class="mini-tile game-tile state-${g.state} ${state.liveSel === g.id ? "selected" : ""}" data-gsel="${esc(g.id)}">${row(g.away, "away")}${row(g.home, "home")}<div class="mt-foot">${foot}</div></button>`;
+    const status = g.state === "in" ? `<span class="badge live">LIVE</span> <strong>${esc(g.detail)}</strong>${g.redZone ? ` <span class="badge out">RZ</span>` : ""}`
+      : g.state === "post" ? `<span class="badge final">FINAL</span>` : `<strong>${esc(kickoff(g))}</strong>`;
+    return `<div class="card game game-tile state-${g.state} ${state.liveSel === g.id ? "selected" : ""}" data-gsel="${esc(g.id)}" role="button" tabindex="0">
+      <div class="g-head">${scoreSide(g.away, g, false)}<div class="g-status">${status}</div>${scoreSide(g.home, g, true)}</div></div>`;
   };
   const split = MU_SPLIT.matches;
   if (split && !games.some((g) => g.id === state.liveSel)) state.liveSel = (games.find((g) => g.state === "in") || games[0])?.id;
@@ -1746,7 +1780,7 @@ function renderLive() {
   const updated = new Date(L.updated).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit", second: "2-digit" });
 
   el.innerHTML = `<div class="section-head"><h2>NFL week ${L.sp} ${counts.in ? `<span class="badge live">LIVE</span>` : ""}</h2>
-      <span class="muted small">${summary} · Updated ${updated}${counts.in ? " · refreshes every 30 seconds" : ""}</span></div>
+      <span class="muted small" title="${counts.in ? "Refreshes every 30 seconds" : ""}">Updated ${updated}</span></div>
     <div class="filters">
       <div class="seg" id="lv-show"><button data-s="rostered" class="${f.show === "rostered" ? "active" : ""}">Rostered players</button><button data-s="all" class="${f.show === "all" ? "active" : ""}">All players</button></div>
       <select id="lv-team" aria-label="Fantasy team"><option value="ALL">All fantasy teams</option>${teamOpts}</select>
@@ -2138,7 +2172,7 @@ function renderRoster() {
   const w = state.week, el = $("view-roster");
   const ids = Object.keys(state.base.teams).sort((a, b) => team(a).name.localeCompare(team(b).name));
   const key = `ffb.rosterteam.${state.leagueId || "default"}`;
-  let sel = state.rosterTeam || store.get(key) || store.get(`ffb.myteam.${state.leagueId || "default"}`);
+  let sel = state.rosterTeam || store.get(key) || myTeamId();
   if (!state.base.teams[sel]) sel = ids[0];
   state.rosterTeam = sel;
 
@@ -2170,7 +2204,7 @@ function renderRoster() {
   // Team header: who it is and this week's score (or projection) — the opponent lives on the Matchups tab.
   const st = w.status;
   const card = `<div class="rh-top">${logoImg(t, 44)}
-      <div class="rh-id"><strong class="mc-name">${esc(t.name)}</strong><span class="mc-owner">${esc(t.owner)} · ${recordStr(t)}</span></div>
+      <div class="rh-id"><strong class="mc-name">${esc(t.name)} <button type="button" class="my-star ${String(myTeamId()) === String(sel) ? "on" : ""}" id="my-star" title="${String(myTeamId()) === String(sel) ? "This is your team" : "Make this my team"}" aria-pressed="${String(myTeamId()) === String(sel)}">${String(myTeamId()) === String(sel) ? "★" : "☆"}</button></strong><span class="mc-owner">${esc(t.owner)} · ${recordStr(t)}</span></div>
       ${side ? `<div class="rh-score"><span class="mc-score">${st === "upcoming" ? f1(side.proj) : f2(side.score)}</span><small class="mc-proj">${st === "upcoming" ? `week ${w.week} projection` : `proj ${f1(st === "live" ? side.liveProj : side.proj)}`}</small></div>` : ""}
     </div>`;
   const stats = [
@@ -2187,6 +2221,7 @@ function renderRoster() {
     ${body}
     ${fcCredit()}${nvCredit()}${wxCredit()}`;
   $("roster-team").addEventListener("change", (e) => { state.rosterTeam = e.target.value; store.set(key, e.target.value); renderRoster(); });
+  $("my-star").addEventListener("click", () => { setMyTeam(sel); state.winWin = null; updateEspnLink(); renderRoster(); });
   el.querySelectorAll(".upg-btn[data-pid]").forEach((b) => b.addEventListener("click", () => {
     const p = side.players.find((x) => String(x.id) === b.dataset.pid);
     if (p) { state.modalReturn = b; openUpgrades(p); }
@@ -2214,7 +2249,10 @@ function openUpgrades(p) {
 // installed): your team's page once you've picked "My team" in the Trade Analyzer, otherwise the league home.
 const ESPN_FF = "https://fantasy.espn.com/football";
 const espnLeague = () => String(state.base?.raw?.id || state.leagueId || LEAGUES[0].id);
-const myTeamId = () => store.get(`ffb.myteam.${state.leagueId || "default"}`);
+// "My team": what you picked on this device, otherwise the team owned by the ESPN account the site
+// signs in with (the league data function reports which team that is).
+const myTeamId = () => store.get(`ffb.myteam.${state.leagueId || "default"}`) || state.base?.raw?.siteOwnerTeamIds?.[0] || null;
+const setMyTeam = (id) => { store.set(`ffb.myteam.${state.leagueId || "default"}`, String(id)); if (state.ta) state.ta.my = String(id); };
 function updateEspnLink() {
   const a = $("espn-open");
   if (!a || !state.base) return;
@@ -2428,6 +2466,107 @@ function wxLine(g) {
   return `<div class="g-wx" data-tip="${wxTip(g)}">${wxIcon(f.code)} <strong>${esc(f.desc)} ${deg(f.tempF)}</strong>
     <span class="${f.precipProb >= 50 ? "wx-wet" : ""}">· ${f.precipProb}% precip</span> · wind ${Math.round(f.windMph)} mph${f.gustMph >= 25 ? ` (gusts ${Math.round(f.gustMph)})` : ""}${roof ? ` · ${roof}` : ""}</div>`;
 }
+// ---------- Injury report tab ----------
+// Every QB/RB/WR/TE/K who isn't fully active, rostered or not: injury, typical recovery time, weeks
+// missed, expected return, the next man up on the depth chart and the likeliest fantasy fill-in.
+async function fetchInjuries() {
+  if (state.demo) return window.DemoLeague.injuries();
+  const res = await fetch("/api/injuries");
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new ApiError(body.error, body.message || `Request failed (${res.status})`);
+  return body;
+}
+function ensureInjuries() {
+  const d = state.injuries;
+  if (d && d !== "loading" && Date.now() - d.at < 30 * 60e3) return d;
+  if (d !== "loading") {
+    state.injuries = d && d !== "loading" ? d : "loading";
+    const base = state.base;
+    fetchInjuries()
+      .then((x) => { if (state.base === base) state.injuries = { ...x, at: Date.now() }; })
+      .catch((e) => { if (state.base === base) state.injuries = { error: e.message, at: Date.now(), players: [], depth: {} }; })
+      .finally(() => { if (state.base === base && state.tab === "injuries") render(); });
+  }
+  return d && d !== "loading" ? d : null;
+}
+// Typical time missed by injury type (rough guides, not medical advice).
+const RECOVERY = [
+  [/acl|achilles/i, "Season (9–12 mo)"], [/high ankle/i, "4–6 wks"], [/lisfranc/i, "6–12 wks"], [/ankle/i, "1–3 wks"],
+  [/hamstring/i, "2–4 wks"], [/groin|adductor/i, "1–3 wks"], [/quad/i, "1–3 wks"], [/calf/i, "1–3 wks"],
+  [/concussion|head/i, "1–2 wks"], [/mcl/i, "2–6 wks"], [/meniscus/i, "3–6 wks"], [/knee/i, "1–4 wks"],
+  [/collarbone|clavicle/i, "6–8 wks"], [/shoulder/i, "1–4 wks"], [/pectoral|chest/i, "1–3 wks (tear: season)"],
+  [/rib/i, "1–3 wks"], [/oblique|abdomen|core/i, "2–4 wks"], [/back/i, "1–2 wks"], [/neck/i, "1–3 wks"],
+  [/hip/i, "1–3 wks"], [/foot/i, "2–6 wks"], [/toe/i, "1–4 wks"], [/wrist|hand|finger|thumb/i, "1–4 wks"],
+  [/elbow|forearm|arm/i, "1–4 wks"], [/fibula|tibia|leg/i, "Fracture: 6–10 wks"], [/illness/i, "Days"],
+  [/suspension/i, "Set by the league"], [/personal|rest|not injury/i, "Varies"],
+];
+const INJ_CODE = { "Out": "OUT", "Injured Reserve": "INJURY_RESERVE", "Questionable": "QUESTIONABLE", "Doubtful": "DOUBTFUL", "Suspension": "SUSPENSION", "Day-To-Day": "DAY_TO_DAY" };
+const INJ_ORDER = { "Injured Reserve": 0, "Suspension": 1, "Out": 2, "Doubtful": 3, "Questionable": 4, "Day-To-Day": 5 };
+
+function renderInjuries() {
+  const el = $("view-injuries");
+  ensureUsage(); // weeks missed and snap shares fill in when they arrive
+  const D = ensureInjuries(), week = ensureCurrentRosters();
+  if (!D) { el.innerHTML = `<div class="loading"><span class="spinner"></span> Loading the injury report…</div>`; return; }
+  if (D.error) { el.innerHTML = `<div class="banner">${esc(D.error)}</div>`; return; }
+  const f = (state.injF ||= { pos: "ALL", roster: "all", sort: { key: "status", dir: 1 } });
+  const owners = new Map((week?.sides || []).flatMap((sd) => sd.players.map((p) => [String(p.id), sd.teamId])));
+  const ownerTag = (id) => { const t = owners.get(String(id)); return t ? `<span class="inj-owner" title="${esc(team(t).name)}">${esc(team(t).abbrev)}</span>` : `<span class="inj-owner fa">FA</span>`; };
+  // Weeks in a row (most recent first) the player's team played without him, from the nflverse snaps.
+  const weeksOut = (p) => {
+    const U = state.usage, abbr = PRO[p.proId];
+    if (!U?.byId || !abbr || !U.teams?.[abbr]) return null;
+    const pl = U.byId.get(Number(p.id));
+    const played = Object.keys(U.teams[abbr]).map(Number).filter((wk) => wk <= (state.week?.sp || 99)).sort((a, b) => b - a);
+    let n = 0;
+    for (const wk of played) { const e = pl?.w?.[wk]; if (e && e[3] === abbr && (e[0] > 0 || e[2] > 0)) break; n++; }
+    return pl || n ? n : null;
+  };
+  const snap = (id) => usageOf(id)?.last.pct;
+  const depthFor = (p) => (D.depth?.[p.proId]?.[p.pos] || []).filter(([id]) => String(id) !== String(p.id));
+  const nextUp = (p) => depthFor(p).find(([, , hurt]) => !hurt);
+  const fantasyNext = (p) => {
+    const healthy = depthFor(p).filter(([, , hurt]) => !hurt);
+    return [...healthy].sort((a, b) => (snap(b[0]) ?? -1) - (snap(a[0]) ?? -1))[0] || healthy[0];
+  };
+  const who = (x) => (x ? `${plink(x[0], shortName(x[1]))} ${ownerTag(x[0])}${snap(x[0]) != null ? `<div class="pt-sub">${pctTxt(snap(x[0]))} snaps last game</div>` : ""}` : `<span class="muted">–</span>`);
+  const recovery = (p) => { const t = `${p.type} ${p.detail} ${p.status}`; return RECOVERY.find(([re]) => re.test(t))?.[1] || "Varies"; };
+
+  const rows = D.players
+    .filter((p) => f.pos === "ALL" || p.pos === f.pos)
+    .filter((p) => f.roster === "all" || (f.roster === "rostered" ? owners.has(String(p.id)) : !owners.has(String(p.id))))
+    .map((p) => ({ ...p, out: weeksOut(p), next: nextUp(p), fnext: fantasyNext(p) }));
+  const cols = [
+    { key: "name", label: "Player", cls: "pt-player", dir: 1, render: (p) => `<div class="pt-name">${plinkNm(p)}${injBadge({ injury: INJ_CODE[p.status] || p.status.toUpperCase() })}</div><div class="pt-sub">${esc(p.pos)} · ${esc(PRO[p.proId] || "")} ${ownerTag(p.id)}</div>` },
+    { key: "status", label: "Status", dir: 1, sort: (p) => INJ_ORDER[p.status] ?? 9, render: (p) => esc(p.status) },
+    { key: "type", label: "Injury", dir: 1, render: (p) => `<span ${p.note ? `data-tip="${esc(`<b>${esc(p.name)}</b>${esc(p.note)}`)}"` : ""}>${esc([p.type, p.detail].filter(Boolean).join(" – ") || (p.status === "Suspension" ? "Suspension" : "Not disclosed"))}${p.side ? ` <span class="muted">(${esc(p.side)})</span>` : ""}</span>` },
+    { key: "recovery", label: "Typical recovery", title: "Typical time missed for this kind of injury (a rough guide)", dir: 1, sort: (p) => recovery(p), render: (p) => esc(recovery(p)) },
+    { key: "out", label: "Weeks out", title: "Games in a row his team has played without him (from nflverse snap counts)", num: true, render: (p) => (p.out == null ? `<span class="muted">–</span>` : String(p.out)) },
+    { key: "returnDate", label: "Possible return", title: "ESPN's estimated return date", dir: 1, sort: (p) => p.returnDate || "9999", render: (p) => (p.returnDate ? new Date(`${p.returnDate}T12:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : `<span class="muted">${p.status === "Injured Reserve" ? "IR" : "–"}</span>`) },
+    { key: "next", label: "Next up", title: "Next healthy player at the position on the team's depth chart", dir: 1, sort: (p) => p.next?.[1] || "~", render: (p) => who(p.next) },
+    { key: "fnext", label: "Fantasy fill-in", title: "Healthy teammate at the position with the most snaps last game", dir: 1, sort: (p) => p.fnext?.[1] || "~", render: (p) => who(p.fnext) },
+  ];
+  const btn = (key, val, label) => `<button type="button" data-${key}="${val}" class="${f[key] === val ? "active" : ""}">${label}</button>`;
+  el.innerHTML = `<div class="section-head"><h2>Injury report</h2><span class="muted small">Every QB, RB, WR, TE and K who isn't fully active</span></div>
+    <div class="filters inj-filters">
+      <div class="seg">${["ALL", "QB", "RB", "WR", "TE", "K"].map((p) => btn("pos", p, p === "ALL" ? "All" : p)).join("")}</div>
+      <div class="seg">${btn("roster", "all", "All")}${btn("roster", "available", "Available")}${btn("roster", "rostered", "On rosters")}</div>
+    </div>
+    <div id="inj-table"></div>
+    <p class="fc-credit small muted">Injuries, return dates and depth charts from ESPN, updated hourly. Weeks out and snaps from <a href="https://github.com/nflverse/nflverse-data" target="_blank" rel="noopener">nflverse</a> (CC BY 4.0). Typical recovery times are rough guides.</p>`;
+  const draw = () => {
+    const box = $("inj-table");
+    if (!rows.length) { box.innerHTML = `<p class="muted">No players match those filters.</p>`; return; }
+    box.replaceChildren(sortableTable(cols, rows, f.sort, draw, { tableClass: "pt-table inj-table" }));
+  };
+  draw();
+  el.querySelectorAll("[data-pos],[data-roster]").forEach((b) => b.addEventListener("click", () => {
+    if (b.dataset.pos) f.pos = b.dataset.pos;
+    if (b.dataset.roster) f.roster = b.dataset.roster;
+    renderInjuries();
+  }));
+}
+
 // ---------- Team usage tab ----------
 // Every QB/RB/WR/TE on one NFL team, week by week, in one of three views:
 // share of offensive snaps, share of the team's targets, or share of the team's rushing attempts.
@@ -2616,7 +2755,7 @@ function renderTradeAnalyzer() {
   const teamIds = Object.keys(rosters).sort((a, b) => team(a).name.localeCompare(team(b).name));
   const myKey = `ffb.myteam.${state.leagueId || "default"}`;
   // my = team being analyzed; a/b = the two sides of the mock trade (default: my team vs. another).
-  const ta = (state.ta ||= { my: store.get(myKey) || "", a: "", b: "", give: [], get: [] });
+  const ta = (state.ta ||= { my: myTeamId() || "", a: "", b: "", give: [], get: [] });
   if (!rosters[ta.my]) ta.my = teamIds[0];
   const me = L.profiles[ta.my];
   const n = L.n;
@@ -3096,6 +3235,7 @@ async function openPlayer(id, focusSp) {
     }
     if (m.hidden) return;
   }
+  state.pmTab = focusSp ? "log" : "overview";
   renderPlayerModal(cache[id].data, focusSp);
 }
 
@@ -3149,13 +3289,34 @@ function renderPlayerModal(d, focusSp) {
       ${usageCells(sp)}<td class="num"><button type="button" class="gl-pts" aria-expanded="${open}" aria-controls="gl-bd-${sp}">${f2(w.pts)} <span class="caret">▾</span></button></td></tr>
       <tr class="gl-bd" id="gl-bd-${sp}" ${open ? "" : "hidden"}><td></td><td colspan="${2 + ucols}">${breakdownHtml(w, p.posId)}</td></tr>`);
   }
-  body.innerHTML = `<div class="pm-head">
-      ${headshot({ id: p.id, name: p.name, posId: p.posId, proId: p.proId }, 72)}
-      <div><h2 id="pl-modal-title">${esc(p.name)}${injBadge({ injury: p.injury })}</h2>
-        <div class="muted">${pos}${p.proId ? ` · ${esc(PRO[p.proId] || "")}` : ""}${p.bye ? ` · Bye week ${p.bye}` : ""}</div>
-        <div class="pm-owner">${owner}</div></div>
-    </div>
-    <div class="pm-stats">
+  state.pmFor = String(p.id);
+  const rerender = () => { if (!$("pl-modal").hidden && state.pmFor === String(p.id)) renderPlayerModal(d, focusSp); };
+
+  // This week's game (live or final) and this player's box-score lines in it.
+  const g = gameStatusOf({ proId: p.proId });
+  const hasGame = !!g?.id && (g.state === "in" || g.state === "post");
+  let box = null, myCats = [], side = g?.home ? "home" : "away";
+  if (hasGame) {
+    ensureBox({ id: g.id, state: g.state }, rerender);
+    box = state.boxes?.[g.id];
+    if (box && box !== "loading" && !box.error) {
+      myCats = ["away", "home"].flatMap((sd) => (box.players[sd] || []).map((c) => ({ ...c, sd, row: c.rows.find((r) => String(r.id) === String(p.id)) }))).filter((c) => c.row);
+      if (myCats[0]) side = myCats[0].sd;
+    }
+  }
+  const boxReady = box && box !== "loading" && !box.error;
+  const catTable = (c, rowsHtml) => `<div class="pg-cat"><div class="pg-title">${esc(c.title)}</div><table class="pg-table"><thead><tr><th></th>${c.labels.map((l) => `<th>${esc(l)}</th>`).join("")}</tr></thead><tbody>${rowsHtml}</tbody></table></div>`;
+  const myLines = !hasGame ? "" : !boxReady ? (box?.error ? `<p class="muted small">${esc(box.error)}</p>` : `<div class="loading small"><span class="spinner"></span> Loading game stats…</div>`)
+    : myCats.length ? `<div class="pg-cats">${myCats.map((c) => catTable(c, `<tr class="me"><td></td>${c.row.stats.map((v) => `<td>${esc(v)}</td>`).join("")}</tr>`)).join("")}</div>`
+    : `<p class="muted small">No stats in this game yet.</p>`;
+
+  const tabs = [["overview", "Overview"], ...(hasGame ? [["game", g.state === "in" ? `<span class="pm-live-dot"></span>Live` : "Game"]] : []), ["log", "Game log"], ["news", "News"]];
+  if (!tabs.some(([k]) => k === state.pmTab)) state.pmTab = "overview";
+  const tab = state.pmTab;
+
+  let pane = "";
+  if (tab === "overview") {
+    pane = `<div class="pm-stats">
       <div><span class="muted small">Season points</span><strong>${f1(total)}</strong></div>
       <div><span class="muted small">Games</span><strong>${games}</strong></div>
       <div><span class="muted small">Per game</span><strong>${games ? f1(total / games) : "–"}</strong></div>
@@ -3165,37 +3326,44 @@ function renderPlayerModal(d, focusSp) {
       ${uAvg?.avg && uAvg.pos !== "QB" ? `<div><span class="muted small">Target share</span><strong>${pctTxt(uAvg.avg.share)}</strong><span class="muted small">${f1(uAvg.avg.tgt)} tgt/game</span></div>` : ""}
       ${val ? `<div><span class="muted small">Trade value</span><strong>${fmtVal(val.value)}</strong><span class="muted small">FantasyCalc</span></div>` : ""}
     </div>
-    ${focusSp && !bySp[focusSp] ? `<p class="muted small">No stats yet for week ${focusSp}.</p>` : ""}
-    ${(() => {
-      // This week's game (live or final): every box-score line for this player — passing (C/ATT),
-      // rushing (carries), receiving (targets), defense, kicking — plus a jump to the game.
-      const g = gameStatusOf({ proId: p.proId });
-      if (!g?.id || (g.state !== "in" && g.state !== "post")) return "";
-      ensureBox({ id: g.id, state: g.state }, () => { if (!$("pl-modal").hidden && state.newsFor === String(p.id)) renderPlayerModal(d, focusSp); });
-      const box = state.boxes?.[g.id];
-      let lines = `<div class="loading small"><span class="spinner"></span> Loading game stats…</div>`, side = g.home ? "home" : "away";
-      if (box && box !== "loading" && !box.error) {
-        const cats = ["away", "home"].flatMap((sd) => (box.players[sd] || []).map((c) => ({ ...c, sd, row: c.rows.find((r) => String(r.id) === String(p.id)) }))).filter((c) => c.row);
-        if (cats[0]) side = cats[0].sd;
-        lines = cats.length ? `<div class="pg-cats">${cats.map((c) => `<div class="pg-cat"><div class="pg-title">${esc(c.title)}</div>
-          <table class="pg-table"><thead><tr>${c.labels.map((l) => `<th>${esc(l)}</th>`).join("")}</tr></thead><tbody><tr>${c.row.stats.map((v) => `<td>${esc(v)}</td>`).join("")}</tr></tbody></table></div>`).join("")}</div>`
-          : `<p class="muted small">No stats in this game yet.</p>`;
-      } else if (box?.error) lines = `<p class="muted small">${esc(box.error)}</p>`;
-      return `<h3 class="pm-sub">This week <span class="pg-line">${gameLineHtml({ proId: p.proId, opp: null })}</span></h3>${lines}
-        <button type="button" class="pg-go" data-golive="${esc(g.id)}" data-side="${side}">${g.state === "in" ? "Watch the live game" : "Open the game"} on Live games ›</button>`;
-    })()}
-    ${(() => {
-      const nd = ensureNews([p.id], () => { if (!$("pl-modal").hidden && state.newsFor === String(p.id)) renderPlayerModal(d, focusSp); });
-      state.newsFor = String(p.id);
-      const items = nd?.players?.[p.id] || [];
-      const body = !nd ? `<div class="loading small"><span class="spinner"></span> Loading news…</div>`
-        : items.length ? `<div class="news">${items.map((n) => newsItem(n)).join("")}</div>`
-        : `<p class="muted small">No player updates in the last two weeks.</p>`;
-      return `<h3 class="pm-sub">Latest news</h3>${body}`;
-    })()}
-    <h3 class="pm-sub">${state.base.season} game log <span class="muted small">· tap points to see how they were scored</span></h3>
-    <div class="table-wrap"><table class="data gamelog"><thead><tr><th>Wk</th><th>Game</th>${ul ? `<th class="num" title="Share of the team's offensive snaps">Snap</th><th class="num" title="Targets and share of the team's targets">Tgt</th>` : ""}<th class="num">Pts</th></tr></thead><tbody>${rows.join("")}</tbody></table></div>
-    ${ul ? nvCredit() : ""}`;
+    ${hasGame ? `<h3 class="pm-sub">This week <span class="pg-line">${gameLineHtml({ proId: p.proId, opp: null })}</span></h3>${myLines}
+      <button type="button" class="pg-go" data-pmtab="game">${g.state === "in" ? "Watch the live game" : "See the game"} ›</button>` : ""}`;
+  } else if (tab === "game") {
+    // The game itself: score, field, last play, this player's lines, then his team's full box score.
+    const lg = state.live?.games?.find((x) => x.id === g.id);
+    if (!state.live && !state.liveForPopup) { state.liveForPopup = true; refreshLive().finally(() => { state.liveForPopup = false; rerender(); }); }
+    const head = lg ? `<div class="pm-game-head">
+        <span class="pgh-team"><img src="${esc(lg.away.logo)}" alt="" width="26" height="26">${esc(lg.away.abbr)}</span><strong>${lg.state === "pre" ? "" : lg.away.score ?? ""}</strong>
+        <span class="pgh-mid">${lg.state === "in" ? `<span class="badge live">LIVE</span> ${esc(lg.detail)}` : lg.state === "post" ? "Final" : ""}</span>
+        <strong>${lg.state === "pre" ? "" : lg.home.score ?? ""}</strong><span class="pgh-team">@${esc(lg.home.abbr)}<img src="${esc(lg.home.logo)}" alt="" width="26" height="26"></span></div>` : "";
+    const sp2 = lg ? shownPlay(lg) : null;
+    const team = boxReady ? (box.players[side] || []) : [];
+    pane = `${head}${lg?.state === "in" ? fieldGraphic(lg) : ""}${sp2?.text ? `<p class="small muted pm-last">${sp2.earlier ? "Last snap" : "Last play"}: ${esc(sp2.text)}</p>` : ""}
+      <h3 class="pm-sub">${esc(p.name)}</h3>${myLines}
+      ${team.length ? `<h3 class="pm-sub">${esc(box.teams?.[side]?.name || "Team")} box score</h3><div class="pg-cats">${team.map((c) => catTable(c, c.rows.map((r) => `<tr class="${String(r.id) === String(p.id) ? "me" : ""}"><td class="pg-name">${esc(r.short || shortName(r.name))}</td>${r.stats.map((v) => `<td>${esc(v)}</td>`).join("")}</tr>`).join(""))).join("")}</div>` : ""}
+      <button type="button" class="pg-go" data-golive="${esc(g.id)}" data-side="${side}">Open on the Live games tab ›</button>`;
+  } else if (tab === "log") {
+    pane = `${focusSp && !bySp[focusSp] ? `<p class="muted small">No stats yet for week ${focusSp}.</p>` : ""}
+      <p class="small muted">Tap points to see how they were scored.</p>
+      <div class="table-wrap"><table class="data gamelog"><thead><tr><th>Wk</th><th>Game</th>${ul ? `<th class="num" title="Share of the team's offensive snaps">Snap</th><th class="num" title="Targets and share of the team's targets">Tgt</th>` : ""}<th class="num">Pts</th></tr></thead><tbody>${rows.join("")}</tbody></table></div>
+      ${ul ? nvCredit() : ""}`;
+  } else {
+    const nd = ensureNews([p.id], rerender);
+    const items = nd?.players?.[p.id] || [];
+    pane = !nd ? `<div class="loading small"><span class="spinner"></span> Loading news…</div>`
+      : items.length ? `<div class="news">${items.map((n) => newsItem(n)).join("")}</div>${newsCredit()}`
+      : `<p class="muted small">No player updates in the last two weeks.</p>`;
+  }
+
+  body.innerHTML = `<div class="pm-head">
+      ${headshot({ id: p.id, name: p.name, posId: p.posId, proId: p.proId }, 72)}
+      <div><h2 id="pl-modal-title">${esc(p.name)}${injBadge({ injury: p.injury })}</h2>
+        <div class="muted">${pos}${p.proId ? ` · ${esc(PRO[p.proId] || "")}` : ""}${p.bye ? ` · Bye week ${p.bye}` : ""}</div>
+        <div class="pm-owner">${owner}</div></div>
+    </div>
+    <div class="pm-tabs" role="tablist">${tabs.map(([k, label]) => `<button type="button" role="tab" data-pmtab="${k}" aria-selected="${k === tab}" class="${k === tab ? "active" : ""}">${label}</button>`).join("")}</div>
+    <div class="pm-pane">${pane}</div>`;
+  body.querySelectorAll("[data-pmtab]").forEach((b) => b.addEventListener("click", () => { state.pmTab = b.dataset.pmtab; renderPlayerModal(d, focusSp); body.closest(".modal-card").scrollTop = 0; }));
   body.querySelector("[data-golive]")?.addEventListener("click", (e) => goLiveGame(e.currentTarget.dataset.golive, e.currentTarget.dataset.side));
   body.querySelectorAll(".gl-pts").forEach((b) => b.addEventListener("click", () => {
     const row = b.closest("tr"), bd = $(`gl-bd-${row.dataset.sp}`);
@@ -3203,8 +3371,7 @@ function renderPlayerModal(d, focusSp) {
     row.classList.toggle("open", !bd.hidden);
     b.setAttribute("aria-expanded", String(!bd.hidden));
   }));
-  if (focusSp && bySp[focusSp]) $(`gl-bd-${focusSp}`).scrollIntoView({ block: "center" });
-  else body.closest(".modal-card").scrollTop = 0;
+  if (tab === "log" && focusSp && bySp[focusSp]) $(`gl-bd-${focusSp}`).scrollIntoView({ block: "center" });
 }
 
 // ---------- Tooltip ----------
@@ -3281,7 +3448,7 @@ function render() {
   keepState($(`view-${state.tab}`), () => renderTab());
 }
 function renderTab() {
-  ({ roster: renderRoster, matchups: renderMatchups, live: renderLive, players: renderPlayers, usage: renderUsage, managers: renderManagers, season: renderSeason, history: renderHistory, trade: renderTradeAnalyzer, transactions: renderTransactions })[state.tab]();
+  ({ roster: renderRoster, matchups: renderMatchups, live: renderLive, players: renderPlayers, usage: renderUsage, injuries: renderInjuries, managers: renderManagers, season: renderSeason, history: renderHistory, trade: renderTradeAnalyzer, transactions: renderTransactions })[state.tab]();
 }
 
 // Fetch (or reuse) one week's data without touching the screen.
@@ -3525,10 +3692,38 @@ function initSwipeTabs() {
     t0 = Date.now();
     armed = true;
   }, { passive: true });
+  // Tab swipes: once the drag is clearly sideways, the page follows the finger.
+  let dragging = false, dragX = 0;
+  const view = () => $(`view-${state.tab}`);
+  const neighbor = (dir) => { const tabs = [...document.querySelectorAll("#tabs button[data-tab]")]; return tabs[tabs.findIndex((b) => b.dataset.tab === state.tab) + dir]; };
+  document.addEventListener("touchmove", (e) => {
+    if (!armed || onHeader) return;
+    const dx = e.touches[0].clientX - sx, dy = e.touches[0].clientY - sy;
+    if (!dragging) {
+      if (Math.abs(dx) < 14 || Math.abs(dx) < Math.abs(dy) * 1.6) { if (Math.abs(dy) > 14) armed = false; return; }
+      dragging = true;
+    }
+    dragX = dx * (neighbor(dx < 0 ? 1 : -1) ? 1 : 0.25); // resist at the first/last tab
+    const v = view();
+    v.style.transition = "none";
+    v.style.transform = `translateX(${dragX}px)`;
+  }, { passive: true });
   document.addEventListener("touchend", (e) => {
     if (!armed) return;
     armed = false;
     const t = e.changedTouches[0], dx = t.clientX - sx, dy = t.clientY - sy;
+    if (dragging) {
+      dragging = false;
+      const v = view(), next = neighbor(dx < 0 ? 1 : -1);
+      const go = next && (Math.abs(dx) > innerWidth * 0.28 || (Math.abs(dx) > 50 && Date.now() - t0 < 300));
+      v.style.transition = "transform .18s ease-out";
+      v.style.transform = go ? `translateX(${dx < 0 ? -innerWidth : innerWidth}px)` : "translateX(0)";
+      setTimeout(() => {
+        v.style.transition = v.style.transform = "";
+        if (go) switchTab(next.dataset.tab, dx < 0 ? "left" : "right");
+      }, 180);
+      return;
+    }
     if (Math.abs(dx) < 70 || Math.abs(dx) < Math.abs(dy) * 2 || Date.now() - t0 > 700) return;
     if (onHeader) {
       const wk = state.week.week + (dx < 0 ? 1 : -1);
@@ -3543,10 +3738,10 @@ function initSwipeTabs() {
       });
       return;
     }
-    const tabs = [...document.querySelectorAll("#tabs button[data-tab]")];
-    const next = tabs[tabs.findIndex((b) => b.dataset.tab === state.tab) + (dx < 0 ? 1 : -1)];
+    const next = neighbor(dx < 0 ? 1 : -1);
     if (next) switchTab(next.dataset.tab, dx < 0 ? "left" : "right");
   }, { passive: true });
+  document.addEventListener("touchcancel", () => { if (dragging) { dragging = false; const v = view(); v.style.transition = "transform .18s"; v.style.transform = "translateX(0)"; } armed = false; });
 }
 
 function bindUi() {

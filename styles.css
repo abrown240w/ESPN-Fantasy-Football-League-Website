@@ -55,7 +55,7 @@ h3 { font-size: 1rem; }
 a { color: var(--accent-ink); }
 code { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; font-size: .9em; }
 button, select, input { font: inherit; color: inherit; }
-.wrap { max-width: 1180px; margin: 0 auto; padding: 0 16px; }
+.wrap { max-width: min(1680px, 100%); margin: 0 auto; padding: 0 clamp(16px, 2.5vw, 40px); }
 .muted { color: var(--muted); }
 .small { font-size: .85rem; }
 .num { font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
@@ -501,7 +501,7 @@ table.data.roster-table td.r-sub { display: none; }
 /* Player tables (Players tab): sortable columns with the matchup-style Player cell and row highlighting.
    The Player column stays pinned on the left while the rest scroll sideways. */
 .pt-hint { margin: -4px 0 8px; }
-.table-wrap:has(> .pt-table) { max-height: 75vh; overflow: auto; }
+.table-wrap:has(> .pt-table) { max-height: calc(100vh - var(--top-h, 110px) - 24px); max-height: calc(100dvh - var(--top-h, 110px) - 24px); overflow: auto; }
 table.data.pt-table td { vertical-align: top; }
 table.data.pt-table th { z-index: 2; }
 .pt-table .pt-player { position: sticky; left: 0; z-index: 1; background: var(--surface); min-width: 190px; max-width: 260px; white-space: normal; box-shadow: inset -1px 0 0 var(--grid); }
@@ -983,3 +983,61 @@ table.data.bx-table th, table.data.bx-table td { padding: 6px 6px; font-size: .8
 
 /* Scroll jumps stop below the sticky top bar */
 .card.game, .mu-detail, .mini-tile { scroll-margin-top: calc(var(--top-h, 100px) + 8px); }
+
+/* Sticky column headers in the Players / Team usage / Injury report tables (the table scrolls inside a
+   screen-tall box so its header row stays visible) */
+.pt-table thead th { position: sticky; top: 0; z-index: 3; background: var(--surface); box-shadow: inset 0 -1px 0 var(--grid); }
+.pt-table thead th.pt-player { left: 0; z-index: 4; }
+
+/* Phone-only / desktop-only bits */
+.show-phone { display: none; }
+@media (max-width: 640px) { .show-phone { display: block; } .hide-phone { display: none; } }
+.mu-note { margin-top: 10px; }
+
+/* Phones: use more of the screen width */
+@media (max-width: 640px) {
+  .wrap { padding-left: 8px; padding-right: 8px; }
+  .card { padding: 12px 10px; }
+  main { padding-top: 12px; }
+  .section-head { margin-bottom: 8px; }
+  .mt-grid { gap: 6px; }
+  .pr-row { padding-left: 6px; padding-right: 6px; }
+}
+
+/* Desktop Live games list: condensed score headers */
+.game-tile { cursor: pointer; padding: 0; }
+.game-tile.selected { box-shadow: 0 0 0 2px var(--accent) !important; }
+.game-tile .g-head { padding: 8px 10px; gap: 6px; }
+.game-tile .g-logo { width: 26px; height: 26px; }
+.game-tile .g-score { font-size: 1.2rem; }
+.game-tile .g-status { min-width: 0; font-size: .72rem; }
+.lv-split .mu-list { gap: 8px; }
+
+/* Swipe between tabs: the next tab slides in from the side */
+@keyframes slide-from-right { from { transform: translateX(45%); opacity: .4; } to { transform: none; opacity: 1; } }
+@keyframes slide-from-left { from { transform: translateX(-45%); opacity: .4; } to { transform: none; opacity: 1; } }
+.my-star { border: 0; background: none; padding: 0 2px; font-size: 1.05rem; line-height: 1; color: var(--axis); cursor: pointer; vertical-align: 1px; }
+.my-star.on { color: #e8b100; }
+
+/* Player card tabs (ESPN-app style) */
+.pm-tabs { display: flex; gap: 2px; margin: 12px -4px 10px; border-bottom: 1px solid var(--grid); overflow-x: auto; scrollbar-width: none; }
+.pm-tabs button { flex: none; border: 0; background: none; padding: 9px 12px; font: inherit; font-size: .88rem; font-weight: 700; color: var(--muted); border-bottom: 3px solid transparent; cursor: pointer; display: inline-flex; align-items: center; gap: 5px; }
+.pm-tabs button.active { color: var(--ink); border-bottom-color: var(--accent); }
+.pm-live-dot { width: 8px; height: 8px; border-radius: 50%; background: #e11d48; animation: gs-pulse 1.6s infinite; }
+.pm-game-head { display: grid; grid-template-columns: 1fr auto auto auto 1fr; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 10px; background: var(--surface-2); margin-bottom: 8px; }
+.pm-game-head strong { font-size: 1.35rem; font-variant-numeric: tabular-nums; }
+.pgh-team { display: flex; align-items: center; gap: 6px; font-weight: 700; }
+.pgh-team:last-child { justify-content: flex-end; }
+.pgh-mid { font-size: .75rem; color: var(--muted); text-align: center; }
+.pm-pane .field-wrap { padding: 0; }
+.pm-last { margin: 6px 0 0; }
+.pg-table tr.me td { background: #fff7e0; }
+.pg-table td.pg-name { text-align: left; font-size: .78rem; font-weight: 600; white-space: nowrap; }
+.pg-cat .pg-table tbody tr + tr td { border-top: 1px solid var(--grid); }
+.pg-cat .pg-table td { font-size: .85rem; }
+
+/* Injury report */
+.inj-filters .seg { flex-wrap: wrap; }
+.inj-table td { vertical-align: top; }
+.inj-owner { display: inline-block; font-size: .64rem; font-weight: 800; border-radius: 4px; padding: 0 4px; background: #e8f0fc; color: var(--accent-ink); vertical-align: middle; }
+.inj-owner.fa { background: #e8f5ec; color: #146c2e; }

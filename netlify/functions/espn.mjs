@@ -63,7 +63,17 @@ export default async (req) => {
     return json(res.status, { error: "upstream", message: `ESPN returned ${res.status}.` });
   }
 
-  const body = await res.text();
+  let body = await res.text();
+  // Which team(s) belong to the ESPN account the site signs in with, so "My team" can default to it.
+  // Only team numbers are added; the account ID itself is never sent to the browser.
+  if (process.env.SWID && views.includes("mTeam")) {
+    try {
+      const data = JSON.parse(body);
+      const me = process.env.SWID.toUpperCase().replace(/[{}]/g, "");
+      data.siteOwnerTeamIds = (data.teams || []).filter((t) => (t.owners || []).some((o) => String(o).toUpperCase().replace(/[{}]/g, "") === me)).map((t) => String(t.id));
+      body = JSON.stringify(data);
+    } catch { /* leave the response as ESPN sent it */ }
+  }
   return new Response(body, {
     status: 200,
     headers: {

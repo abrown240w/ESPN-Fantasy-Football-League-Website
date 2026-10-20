@@ -544,5 +544,28 @@
     return { updated: Date.now(), players };
   }
 
-  window.DemoLeague = { response, activity, nfl, live, values, player, freeAgents, usage, weather, box, news };
+  // Same shape as /api/injuries: demo players with an injury status, plus depth charts by NFL team.
+  function injuries() {
+    const STATUS = { OUT: "Out", INJURY_RESERVE: "Injured Reserve", QUESTIONABLE: "Questionable", DOUBTFUL: "Doubtful", DAY_TO_DAY: "Questionable" };
+    const posName = (id) => ({ 1: "QB", 2: "RB", 3: "WR", 4: "TE", 5: "K" })[id];
+    const types = ["Hamstring", "Ankle", "Knee", "Concussion", "Shoulder", "Calf", "Groin", "Foot"];
+    const fa = freeAgents(1).players.map((p) => ({ id: p.id, fullName: p.name, defaultPositionId: p.posId, proTeamId: p.proId, injuryStatus: p.injury || "ACTIVE", base: p.proj }));
+    const pool = allPlayers.concat(fa).filter((p) => posName(p.defaultPositionId));
+    const hurt = pool.filter((p) => p.injuryStatus && p.injuryStatus !== "ACTIVE");
+    const players = hurt.map((p, i) => ({
+      id: p.id, name: p.fullName, pos: posName(p.defaultPositionId), proId: p.proTeamId, status: STATUS[p.injuryStatus] || "Out", date: new Date(Date.now() - (i + 2) * 864e5).toISOString(),
+      type: types[(p.id + i) % types.length], detail: "", side: i % 3 ? "" : "Left",
+      returnDate: p.injuryStatus === "INJURY_RESERVE" ? null : new Date(Date.now() + ((p.id % 4) + 1) * 7 * 864e5).toISOString().slice(0, 10),
+      note: `${p.fullName} is dealing with an injury and is ${(STATUS[p.injuryStatus] || "out").toLowerCase()} for now.`,
+    }));
+    const depth = {};
+    for (const p of pool) {
+      const d = (depth[p.proTeamId] ||= { QB: [], RB: [], WR: [], TE: [], K: [] }), pos = posName(p.defaultPositionId);
+      d[pos].push([p.id, p.fullName, p.injuryStatus && p.injuryStatus !== "ACTIVE" && p.injuryStatus !== "QUESTIONABLE", p.base || 0]);
+    }
+    for (const d of Object.values(depth)) for (const k of Object.keys(d)) d[k] = d[k].sort((a, b) => b[3] - a[3]).map(([id, n, h]) => [id, n, h]);
+    return { updated: Date.now(), players, depth };
+  }
+
+  window.DemoLeague = { response, activity, nfl, live, values, player, freeAgents, usage, weather, box, news, injuries };
 })();
