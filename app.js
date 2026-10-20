@@ -770,10 +770,10 @@ function renderPlayers() {
   el.innerHTML = `<div class="section-head"><h2>Players</h2><span class="muted small">Week ${w.week} · ${f.mode === "all" ? "everyone" : "free agents and waivers"}</span></div>
     <div class="filters pl-filters">
       <div class="seg" id="pl-mode"><button type="button" data-m="avail" class="${f.mode === "avail" ? "active" : ""}">Available</button><button type="button" data-m="all" class="${f.mode === "all" ? "active" : ""}">All players</button></div>
-      ${me ? `<label class="pl-mine ${f.mode === "all" ? "off" : ""}"><input type="checkbox" id="pl-mine" ${f.mine ? "checked" : ""} ${f.mode === "all" ? "disabled" : ""}> Include my team</label>` : ""}
       <input id="pl-q" type="search" placeholder="Search players…" value="${esc(f.q)}">
       ${posSeg("pl-pos", f.pos)}
-    </div>${tableHint()}<div id="pl-list"></div>${fcCredit()}${nvCredit()}`;
+    </div>
+    ${me ? `<label class="pl-mine ${f.mode === "all" ? "off" : ""}"><input type="checkbox" id="pl-mine" ${f.mine ? "checked" : ""} ${f.mode === "all" ? "disabled" : ""}> Include my team</label>` : ""}<div id="pl-list"></div>${fcCredit()}${nvCredit()}`;
   const draw = () => {
     const q = f.q.toLowerCase();
     const rows = pool.filter((p) => (f.pos === "ALL" || p.pos === f.pos) && (!q || p.name.toLowerCase().includes(q)));

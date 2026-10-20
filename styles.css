@@ -1435,3 +1435,9 @@ h3.ta-sub:has(.rh-wv) { display: flex; align-items: baseline; gap: 6px; }
 .view:not(#view-transactions) > .section-head:first-child:not(:has(select, button, input)) { display: none; }
 .view > .section-head:first-child:has(select, button, input) > h2 { display: none; }
 .view > .section-head:first-child:has(select, button, input) { justify-content: flex-end; }
+
+/* A strip of the slate background between the tab bar and the first thing on each tab */
+main.wrap { padding-top: 14px !important; }
+@media (max-width: 640px) { main.wrap { padding-top: 12px !important; } }
+.pl-mine { margin: 0 0 10px; padding: 0 10px; }
+@media (min-width: 641px) { .pl-mine { padding: 0; } }
