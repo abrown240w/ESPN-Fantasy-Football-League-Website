@@ -222,6 +222,7 @@ function parsePlayer(entry, sp, teamId, rosterInfo = {}, nfl = null) {
     diff: actual != null ? actual - proj : null,
     injury: inj,
     eligible: pl.eligibleSlots || [],
+    locked: !!entry.playerPoolEntry?.lineupLocked,
     line: statLine(pl.defaultPositionId, act?.stats),
     short: compactLine(pl.defaultPositionId, act?.stats),
     opp,
@@ -2344,8 +2345,20 @@ function renderRoster() {
       ? `<button type="button" class="upg-btn" data-pid="${esc(p.id)}" title="${n} available ${esc(p.pos)}${n > 1 ? "s" : ""} projected at least ${UPGRADE_MIN_GAIN} points higher this week">▲ ${n >= 10 ? "10+" : n}</button>`
       : `<span class="upg-none" title="No available ${esc(p.pos)} is projected at least ${UPGRADE_MIN_GAIN} points higher this week">–</span>`;
   };
+  // Lineup editing (site owner only, current week, own team): tap a player, then who to swap with.
+  const own = ensureOwner();
+  const canEdit = !!own?.signedIn && own.teams?.map(String).includes(String(sel)) && w.week === state.base.current;
+  const ed = canEdit && state.lineupEdit?.teamId === String(sel) ? state.lineupEdit : null;
+  const picked = ed?.pick ? side?.players.find((x) => String(x.id) === String(ed.pick)) : null;
+  const moveBtn = (p) => {
+    if (p.slotId === IR) return `<span class="upg-none">IR</span>`;
+    if (p.locked) return `<span class="mv-lock" title="Locked: his game has started">🔒</span>`;
+    if (!picked) return `<button type="button" class="mv-btn" data-mv="${esc(p.id)}">Move</button>`;
+    if (String(picked.id) === String(p.id)) return `<button type="button" class="mv-btn on" data-mv="${esc(p.id)}">Cancel</button>`;
+    return canSwap(picked, p) ? `<button type="button" class="mv-btn to" data-mv="${esc(p.id)}">${p.starter ? "Swap" : "Here"}</button>` : `<span class="upg-none">–</span>`;
+  };
   const list = (title, players) => players.length
-    ? `<h3 class="ta-sub">${title}</h3><div class="pr-list mx">${players.map((p) => playerRow(rosteredRow(p), { label: p.slot, sp: w.sp, action: upgradeBtn(p), owner: false })).join("")}</div>` : "";
+    ? `<h3 class="ta-sub">${title}</h3><div class="pr-list mx">${players.map((p) => playerRow(rosteredRow(p), { label: p.slot, sp: w.sp, action: ed ? moveBtn(p) : upgradeBtn(p), owner: false })).join("")}</div>` : "";
 
   let body = `<p class="muted">${esc(t.name)} has no lineup for week ${w.week}.</p>`;
   if (side) {
@@ -2371,16 +2384,109 @@ function renderRoster() {
   ].filter(Boolean).join("");
   const opts = ids.map((id) => `<option value="${id}" ${id === String(sel) ? "selected" : ""}>${esc(team(id).name)} (${esc(team(id).owner)})</option>`).join("");
 
+  const editBar = !canEdit ? "" : ed
+    ? `<div class="rh-edit on"><span>${picked ? `Moving <strong>${esc(picked.name)}</strong> (${esc(picked.slot)}): pick who to swap with` : "Tap <strong>Move</strong> on a player"}</span><button type="button" class="mv-done" id="mv-done">Done</button></div>`
+    : `<div class="rh-edit"><button type="button" class="mv-start" id="mv-start">✎ Edit lineup</button></div>`;
   el.innerHTML = `<div class="section-head"><h2>Rosters</h2><label class="small muted ta-me">Team <select id="roster-team">${opts}</select></label></div>
-    <div class="card roster-head">${card}<div class="rh-stats">${stats}</div></div>
+    <div class="card roster-head">${card}<div class="rh-stats">${stats}</div>${editBar}</div>
     ${body}
     ${fcCredit()}${nvCredit()}${wxCredit()}`;
   $("roster-team").addEventListener("change", (e) => { state.rosterTeam = e.target.value; store.set(key, e.target.value); renderRoster(); });
   $("my-star").addEventListener("click", () => { setMyTeam(sel); state.winWin = null; updateEspnLink(); renderRoster(); });
+  $("mv-start")?.addEventListener("click", () => { state.lineupEdit = { teamId: String(sel), pick: null }; renderRoster(); });
+  $("mv-done")?.addEventListener("click", () => { state.lineupEdit = null; renderRoster(); });
+  el.querySelectorAll(".mv-btn").forEach((b) => {
+    if (picked && b.classList.contains("to")) b.closest(".pr-row")?.classList.add("mv-target");
+    if (picked && b.classList.contains("on")) b.closest(".pr-row")?.classList.add("mv-picked");
+    b.addEventListener("click", () => {
+      const p = side.players.find((x) => String(x.id) === b.dataset.mv);
+      if (!picked || b.classList.contains("on")) { state.lineupEdit.pick = picked ? null : p.id; renderRoster(); return; }
+      confirmLineup(sel, [[picked, p.slotId], [p, picked.slotId]]);
+    });
+  });
   el.querySelectorAll(".upg-btn[data-pid]").forEach((b) => b.addEventListener("click", () => {
     const p = side.players.find((x) => String(x.id) === b.dataset.pid);
     if (p) { state.modalReturn = b; openUpgrades(p); }
   }));
+}
+
+// ---------- Owner lineup editing ----------
+// Only the site owner can change lineups: a passphrase (stored only in Netlify) unlocks a device, and
+// the server checks every change. See netlify/functions/roster.mjs.
+const slotOk = (p, slot) => slot === BENCH || (slot !== IR && p.eligible.includes(slot));
+const canSwap = (a, b) => a.id !== b.id && !b.locked && !a.locked && b.slotId !== IR && a.slotId !== b.slotId && slotOk(b, a.slotId) && slotOk(a, b.slotId);
+const slotName = (id) => (id === BENCH ? "Bench" : SLOT[id] || String(id));
+const ownerKey = () => `${state.base.raw?.id || state.leagueId || ""}:${state.base.season}`;
+function ensureOwner() {
+  if (state.demo) return { signedIn: true, teams: [state.rosterTeam || myTeamId() || Object.keys(state.base.teams)[0]], demo: true }; // demo: try it on any team
+  if (store.get("ffb.owner") !== "1") return null;
+  const k = ownerKey(), o = state.owner;
+  if (o?.key === k) return o.data;
+  if (o?.loading === k) return null;
+  state.owner = { loading: k };
+  const q = new URLSearchParams({ leagueId: state.base.raw?.id || state.leagueId || "", season: state.base.season });
+  fetch(`/api/roster/session?${q}`).then((r) => r.json()).then((d) => {
+    state.owner = { key: k, data: d };
+    if (!d.signedIn) store.set("ffb.owner", null);
+  }).catch(() => { state.owner = { key: k, data: { signedIn: false } }; })
+    .finally(() => { updateOwnerLink(); if (state.tab === "roster") renderRoster(); });
+  return null;
+}
+function updateOwnerLink() {
+  const b = $("owner-btn");
+  if (b) b.textContent = store.get("ffb.owner") === "1" ? "Owner: signed in · Sign out" : "Owner sign-in";
+}
+function openOwnerSignIn() {
+  if (store.get("ffb.owner") === "1") {
+    fetch("/api/roster/logout", { method: "POST" }).finally(() => { store.set("ffb.owner", null); state.owner = null; state.lineupEdit = null; updateOwnerLink(); render(); });
+    return;
+  }
+  showModal(`<div class="pm-head"><h2 id="pl-modal-title">Owner sign-in</h2></div>
+    <p class="small muted">Unlocks lineup changes on this device for 90 days. Only the passphrase saved in Netlify works.</p>
+    <form id="owner-form" class="owner-form"><input id="owner-pass" type="password" autocomplete="current-password" placeholder="Passphrase" required>
+      <button type="submit">Sign in</button></form><p id="owner-msg" class="small"></p>`);
+  $("owner-pass").focus();
+  $("owner-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const msg = $("owner-msg"), btn = e.target.querySelector("button");
+    btn.disabled = true; msg.textContent = "Checking…";
+    try {
+      const r = await fetch("/api/roster/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ passphrase: $("owner-pass").value }) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.message || "Couldn't sign in.");
+      store.set("ffb.owner", "1"); state.owner = null;
+      document.querySelector("#pl-modal .modal-close").click();
+      updateOwnerLink(); render();
+    } catch (err) { msg.textContent = err.message; btn.disabled = false; }
+  });
+}
+// Confirm, then send the moves to ESPN. moves = [[player, toSlot], …]
+function confirmLineup(teamId, moves) {
+  const rows = moves.map(([p, to]) => `<li><strong>${esc(p.name)}</strong> <span class="muted">${esc(p.pos)}</span>: ${esc(slotName(p.slotId))} → <strong>${esc(slotName(to))}</strong></li>`).join("");
+  showModal(`<div class="pm-head"><h2 id="pl-modal-title">Change lineup</h2></div>
+    <p class="small muted">${esc(team(teamId).name)} · week ${state.week.week}</p><ul class="mv-list">${rows}</ul>
+    <div class="mv-actions"><button type="button" class="mv-go" id="mv-go">${state.demo ? "Try it (demo, not sent)" : "Send to ESPN"}</button><button type="button" class="mv-cancel" id="mv-cancel">Cancel</button></div>
+    <p id="mv-msg" class="small"></p>`);
+  const close = () => document.querySelector("#pl-modal .modal-close").click();
+  $("mv-cancel").addEventListener("click", close);
+  $("mv-go").addEventListener("click", async (e) => {
+    const msg = $("mv-msg");
+    e.target.disabled = true; msg.innerHTML = `<span class="spinner"></span> Sending to ESPN…`;
+    try {
+      if (!state.demo) {
+        const r = await fetch("/api/roster/lineup", {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ leagueId: state.base.raw?.id || state.leagueId, season: state.base.season, teamId: Number(teamId), items: moves.map(([p, to]) => ({ playerId: Number(p.id), from: p.slotId, to })) }),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(d.message || `Request failed (${r.status})`);
+      }
+      msg.innerHTML = `<span class="pos">✓ ${state.demo ? "Looks good (demo: nothing was sent)" : "Saved on ESPN"}.</span>`;
+      state.lineupEdit = { teamId: String(teamId), pick: null };
+      if (!state.demo) await loadWeek(state.week.week, true).then(() => render());
+      setTimeout(close, 900);
+    } catch (err) { msg.innerHTML = `<span class="neg">${esc(err.message)}</span>`; e.target.disabled = false; }
+  });
 }
 
 // Popup listing the available players who'd be an upgrade for `p` this week.
@@ -3681,6 +3787,8 @@ function keepState(el, draw) {
 
 function render() {
   if (!state.week) return;
+  if (!$("owner-btn").dataset.wired) { $("owner-btn").dataset.wired = "1"; $("owner-btn").addEventListener("click", openOwnerSignIn); }
+  updateOwnerLink();
   if (!state.live && !state.liveBoot && state.tab !== "live") { state.liveBoot = true; refreshLive().finally(() => { state.liveBoot = false; }); }
   updateEspnLink();
   showView(state.tab);

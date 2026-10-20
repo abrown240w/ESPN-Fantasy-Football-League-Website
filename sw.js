@@ -48,7 +48,7 @@ self.addEventListener("fetch", (e) => {
   const url = new URL(req.url);
   if (url.origin === location.origin) {
     if (url.pathname.startsWith("/api/")) {
-      if (url.pathname === "/api/auth") return; // always live
+      if (url.pathname === "/api/auth" || url.pathname.startsWith("/api/roster/")) return; // always live
       e.respondWith(networkFirst(e, req));
     } else if (req.cache === "no-store") {
       return; // the page's own "is there a new version?" check
