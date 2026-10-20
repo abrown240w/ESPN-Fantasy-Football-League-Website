@@ -29,7 +29,18 @@ const READS = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl";
 const WRITES = "https://lm-api-writes.fantasy.espn.com/apis/v3/games/ffl";
 const COOKIE = "ffb_owner";
 const MAX_AGE = 90 * 24 * 3600;
-const fails = new Map(); // ip -> { n, until } (per function instance; slows guessing, not a hard guarantee)
+const fails = new Map();
+let chatMedia = { at: 0, season: null, gifs: {}, stickers: {} };
+async function loadChatMedia(season) {
+  if (chatMedia.season === season && Date.now() - chatMedia.at < 6 * 3600e3) return chatMedia;
+  try {
+    const r = await fetch(`${READS}/seasons/${season}/?view=chat_settings&platform=chat`, { headers: { accept: "application/json", "user-agent": "Mozilla/5.0 (fantasy-dashboard)", cookie: `espn_s2=${process.env.ESPN_S2}; SWID=${process.env.SWID}` } });
+    const cs = (await r.json())?.settings?.communicationSettings || {};
+    const map = (list) => Object.fromEntries((list || []).filter((x) => x.url).map((x) => [x.id, x.url]));
+    chatMedia = { at: Date.now(), season, gifs: map(cs.gifSources), stickers: map(cs.stickerSources) };
+  } catch { /* images just won't show */ }
+  return chatMedia;
+} // ip -> { n, until } (per function instance; slows guessing, not a hard guarantee)
 
 function defaultSeason() {
   const now = new Date();
@@ -340,8 +351,8 @@ export default async (req, context) => {
     const COMM = `https://lm-api-communication.fantasy.espn.com/apis/v3/games/ffl/seasons/${season}/segments/0/leagues/${leagueId}/communication/`;
     const me = `{${swidRaw()}}`;
     const headers = { accept: "application/json", "content-type": "application/json", "user-agent": "Mozilla/5.0 (fantasy-dashboard)", origin: "https://chat.espn.com", referer: "https://chat.espn.com/", cookie: `espn_s2=${process.env.ESPN_S2}; SWID=${process.env.SWID}` };
-    const comm = async (path, init = {}) => {
-      const res = await fetch(COMM + path, { ...init, headers });
+    const comm = async (path, init = {}, filter) => {
+      const res = await fetch(COMM + path, { ...init, headers: filter ? { ...headers, "x-fantasy-filter": JSON.stringify(filter) } : headers });
       const out = await res.json().catch(() => null);
       if (!res.ok) throw Object.assign(new Error(out?.messages?.[0] || out?.details?.[0]?.message || `ESPN chat returned ${res.status}`), { status: res.status });
       return out;
@@ -360,7 +371,7 @@ export default async (req, context) => {
     const memberOf = (id) => members.find((m) => norm(m.id) === norm(id));
     try {
       if (action === "chat") {
-        const list = await comm("?view=chat_conversations&platform=chat");
+        const list = await comm("?view=chat_conversations&platform=chat", {}, { topics: { filterType: { value: ["CHAT_ALL_MEMBERS", "CHAT_DIRECT_MESSAGE"] } } });
         const topics = (list.topics || []).filter((t) => t.type !== "ACTIVITY_TRANSACTIONS").map((t) => {
           const others = (t.viewableBy || []).filter((x) => norm(x) !== norm(me)).map(memberOf).filter(Boolean);
           return { id: t.id, type: t.type, unread: t.unreadMessageCount || 0, date: t.dateEdited || 0,
@@ -371,7 +382,7 @@ export default async (req, context) => {
       }
       if (action === "chattopic") {
         if (!/^[\w-]{6,64}$/.test(String(b.topic || ""))) return json(400, { error: "bad_request" });
-        const c = await comm(`topics/${b.topic}?view=chat_conversation&platform=chat`);
+        const c = await comm(`topics/${b.topic}?view=chat_conversation&platform=chat`, {}, { limit: 100, offset: 0, sortDate: { sortAsc: false, sortPriority: 1 } });
         // ESPN's automatic posts carry team and player ids; turn them into readable lines.
         const ids = new Set();
         for (const m of c.messages || []) for (const [k, v] of Object.entries(m.attributes || {})) if (/P\d+$/.test(k)) ids.add(Number(v));
@@ -393,12 +404,20 @@ export default async (req, context) => {
           }
           return parts;
         };
-        const kind = { 264: "Player add", 265: "Player drop", 266: "Add / drop", 271: "Trade", 272: "Trade", 273: "Waivers processed" };
+        // Message types, as ESPN's chat app shows them. 259/260 are a sticker/GIF someone posted.
+        const kind = { 264: "Player Add", 265: "Player Drop", 266: "Player Add/Drop", 271: "Trade", 272: "Trade", 273: "Waiver results", 270: "League recap", 281: "Matchup recap" };
+        const media = await loadChatMedia(season);
         const messages = (c.messages || []).filter((m) => !m.isDeleted).map((m) => {
-          const who = memberOf(m.author);
-          const sys = m.messageTypeId !== 0;
-          return { id: m.id, date: m.date, mine: norm(m.author) === norm(me), author: who?.name || (sys ? "League" : "Manager"), team: who?.team || "",
-            text: m.content || "", system: sys, title: sys ? (kind[m.messageTypeId] || "League update") : "", lines: sys ? activity(m.attributes || {}) : [] };
+          const who = memberOf(m.author), t = m.messageTypeId;
+          const base = { id: m.id, date: m.date, mine: norm(m.author) === norm(me), author: who?.name || "League", team: who?.team || "" };
+          if (t === 0) return { ...base, text: m.content || "" };
+          if (t === 259 || t === 260) {
+            const img = (t === 260 ? media.gifs[m.targetId] || media.stickers[m.targetId] : media.stickers[m.targetId] || media.gifs[m.targetId]) || null;
+            return { ...base, img, sticker: t === 259, text: img ? "" : t === 260 ? "[GIF]" : "[Sticker]" };
+          }
+          const a = m.attributes || {};
+          return { ...base, system: true, title: kind[t] || "League update", text: m.content || "", lines: activity(a),
+            week: t === 281 && a.mId ? Number(a.mId) : null };
         }).sort((x, y) => x.date - y.date);
         return json(200, { id: c.id, type: c.type, messages, total: c.totalMessageCount || messages.length });
       }
@@ -414,7 +433,7 @@ export default async (req, context) => {
         const ids = (Array.isArray(b.members) ? b.members : []).map(String).filter((x) => memberOf(x));
         if (!ids.length || !text || text.length > 1000) return json(400, { error: "bad_request", message: "Pick at least one manager and write a message." });
         const out = await comm(`topics/?source=${encodeURIComponent(me)}&platform=chat`, { method: "POST", body: JSON.stringify({
-          messages: [{ author: me, content: text, messageTypeId: 0 }], subject: "", type: "CHAT_DIRECT_MESSAGE", viewableBy: [me, ...ids] }) });
+          messages: [{ author: me, content: text, messageTypeId: 0 }], subject: "DM", type: "CHAT_DIRECT_MESSAGE", viewableBy: [me, ...ids] }) });
         console.log(JSON.stringify({ event: "chat_new", ip, leagueId, people: ids.length, at: new Date().toISOString() }));
         return json(200, { ok: true, id: out?.id || null });
       }

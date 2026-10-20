@@ -2709,10 +2709,19 @@ async function openChatTopic(t, list) {
       const day = new Date(m.date).toDateString();
       const sep = day !== lastDay ? `<div class="ct-day">${new Date(m.date).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}</div>` : "";
       lastDay = day;
-      if (m.system) return `${sep}<div class="ct-sys"><strong>${esc(m.title)}</strong>${m.lines.map((l) => `<div>${esc(l)}</div>`).join("")}${m.text ? `<div>${esc(m.text)}</div>` : ""}<span class="muted small">${chatTime(m.date)}</span></div>`;
-      return `${sep}<div class="ct-msg ${m.mine ? "mine" : ""}">${m.mine ? "" : `<div class="ct-who">${esc(m.author)}${m.team ? ` <span class="muted">· ${esc(m.team)}</span>` : ""}</div>`}<div class="ct-bubble">${esc(m.text)}</div><span class="muted small">${new Date(m.date).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}</span></div>`;
+      if (m.system) return `${sep}<div class="ct-sys"><strong>${esc(m.title)}</strong>${m.week ? `<div>Week ${m.week} is in the books.</div>` : ""}${m.lines.map((l) => `<div>${esc(l)}</div>`).join("")}${m.text ? `<div>${esc(m.text)}</div>` : ""}
+          ${m.week ? `<button type="button" class="ct-wk" data-week="${m.week}">See week ${m.week} matchups ›</button>` : ""}<span class="muted small">${chatTime(m.date)}</span></div>`;
+      const body = m.img ? `<img class="ct-img ${m.sticker ? "sticker" : ""}" src="${esc(m.img)}" alt="${m.sticker ? "Sticker" : "GIF"}" loading="lazy">` : `<div class="ct-bubble">${esc(m.text)}</div>`;
+      return `${sep}<div class="ct-msg ${m.mine ? "mine" : ""}">${m.mine ? "" : `<div class="ct-who">${esc(m.author)}${m.team ? ` <span class="muted">· ${esc(m.team)}</span>` : ""}</div>`}${body}<span class="muted small">${new Date(m.date).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}</span></div>`;
     }).join("") || `<p class="muted">No messages yet. Say something!</p>`;
     if (stick || atBottom) box.scrollTop = box.scrollHeight;
+    box.querySelectorAll("img.ct-img").forEach((im) => im.addEventListener("load", () => { if (stick) box.scrollTop = box.scrollHeight; }, { once: true }));
+    box.querySelectorAll("[data-week]").forEach((b) => b.addEventListener("click", async () => {
+      document.querySelector("#pl-modal .modal-close").click();
+      switchTab("matchups");
+      await loadWeek(Number(b.dataset.week));
+      setUrl(); render();
+    }));
   };
   await load(true);
   clearInterval(state.chatTimer);
@@ -4782,7 +4791,15 @@ function initSwipeTabs() {
     // can't scroll any further that way.
     if (e.touches.length === 1 && state.week && !document.body.classList.contains("modal-open") && !e.target.closest(".topbar, select, input")) {
       const sc = sideScroller(e.target);
-      if (sc) { scroller = sc; sx = e.touches[0].clientX; sy = e.touches[0].clientY; t0 = Date.now(); armed = true; onHeader = false; return; }
+      if (sc) {
+        // Which ends the table is already resting at when the finger goes down. Scrolling to an end during
+        // this swipe doesn't count: you have to be at the end first, then swipe again.
+        scroller = sc;
+        scroller.startAtLeft = sc.scrollLeft <= 1;
+        scroller.startAtRight = sc.scrollLeft + sc.clientWidth >= sc.scrollWidth - 1;
+        if (!scroller.startAtLeft && !scroller.startAtRight) { scroller = null; return; }
+        sx = e.touches[0].clientX; sy = e.touches[0].clientY; t0 = Date.now(); armed = true; onHeader = false; return;
+      }
     }
     if (e.touches.length !== 1 || !state.week || document.body.classList.contains("modal-open")) return;
     // Swipes on the header (above the tabs) change the week; anywhere below switches tabs.
@@ -4804,7 +4821,7 @@ function initSwipeTabs() {
     if (!dragging) {
       if (scroller) {
         // Only once the table is at its edge in the swipe direction, and after a longer pull.
-        const atEdge = dx > 0 ? scroller.scrollLeft <= 0 : scroller.scrollLeft + scroller.clientWidth >= scroller.scrollWidth - 1;
+        const atEdge = dx > 0 ? scroller.startAtLeft : scroller.startAtRight;
         if (!atEdge || Math.abs(dx) < 70 || Math.abs(dx) < Math.abs(dy) * 1.6) { if (Math.abs(dy) > 20 || !atEdge) armed = Math.abs(dy) <= 20; return; }
       } else if (Math.abs(dx) < 14 || Math.abs(dx) < Math.abs(dy) * 1.6) { if (Math.abs(dy) > 14) armed = false; return; }
       dragging = true;
