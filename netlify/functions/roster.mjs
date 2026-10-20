@@ -11,6 +11,7 @@
 //
 // Routes: POST /api/roster/login {passphrase} · POST /api/roster/logout ·
 //         GET /api/roster/session?leagueId=&season= · POST /api/roster/lineup {leagueId, season, teamId, items}
+//         POST /api/roster/transaction {leagueId, season, teamId, add?, drop?, waiver?, bid?}  (pickups, claims, drops)
 
 import { createHmac, createHash, timingSafeEqual } from "node:crypto";
 
@@ -55,6 +56,29 @@ async function espnRead(leagueId, season, views) {
 }
 const ownedTeams = (data) => (data.teams || []).filter((t) => (t.owners || []).some((o) => String(o).toUpperCase().replace(/[{}]/g, "") === swidRaw())).map((t) => t.id);
 const validLeague = (leagueId, season) => /^\d{1,12}$/.test(String(leagueId)) && /^\d{4}$/.test(String(season));
+// Send one transaction to ESPN as the saved account and log it.
+async function espnWrite(leagueId, season, payload, log) {
+  let res, out;
+  try {
+    res = await fetch(`${WRITES}/seasons/${season}/segments/0/leagues/${leagueId}/transactions/`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json", accept: "application/json", "user-agent": "Mozilla/5.0 (fantasy-dashboard)",
+        origin: "https://fantasy.espn.com", referer: "https://fantasy.espn.com/",
+        cookie: `espn_s2=${process.env.ESPN_S2}; SWID=${process.env.SWID}`,
+      },
+      body: JSON.stringify(payload),
+    });
+    out = await res.json().catch(() => null);
+  } catch {
+    console.log(JSON.stringify({ ...log, result: "unreachable" }));
+    return json(502, { error: "upstream", message: "Couldn't reach ESPN." });
+  }
+  const espnMsg = out?.messages?.[0] || out?.details?.[0]?.message || out?.message || "";
+  console.log(JSON.stringify({ ...log, result: res.status, status: out?.status, espnMsg }));
+  if (!res.ok) return json(502, { error: "espn_refused", message: `ESPN didn't accept the change${espnMsg ? `: ${espnMsg}` : ` (${res.status})`}.` });
+  return json(200, { ok: true, status: out?.status || "EXECUTED" });
+}
 
 export default async (req, context) => {
   const action = context.params?.action;
@@ -103,8 +127,8 @@ export default async (req, context) => {
     const b = await req.json().catch(() => ({}));
     const season = String(b.season || defaultSeason()), leagueId = String(b.leagueId || ""), teamId = Number(b.teamId);
     const items = Array.isArray(b.items) ? b.items : [];
-    if (!validLeague(leagueId, season) || !Number.isInteger(teamId) || !items.length || items.length > 6
-      || !items.every((i) => [i.playerId, i.from, i.to].every(Number.isInteger))) {
+    if (!validLeague(leagueId, season) || !Number.isInteger(teamId) || !items.length
+      || items.length > 20 || !items.every((i) => [i.playerId, i.from, i.to].every(Number.isInteger))) {
       return json(400, { error: "bad_request", message: "That lineup change doesn't look right." });
     }
     let data;
@@ -127,27 +151,39 @@ export default async (req, context) => {
       isLeagueManager: false, teamId, type: "ROSTER", memberId: `{${swidRaw()}}`, scoringPeriodId: sp, executionType: "EXECUTE",
       items: items.map((i) => ({ playerId: i.playerId, type: "LINEUP", fromLineupSlotId: i.from, toLineupSlotId: i.to })),
     };
-    const log = { event: "lineup", ip, leagueId, season, teamId, sp, items, at: new Date().toISOString() };
-    let res, out;
-    try {
-      res = await fetch(`${WRITES}/seasons/${season}/segments/0/leagues/${leagueId}/transactions/`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json", accept: "application/json", "user-agent": "Mozilla/5.0 (fantasy-dashboard)",
-          origin: "https://fantasy.espn.com", referer: "https://fantasy.espn.com/",
-          cookie: `espn_s2=${process.env.ESPN_S2}; SWID=${process.env.SWID}`,
-        },
-        body: JSON.stringify(payload),
-      });
-      out = await res.json().catch(() => null);
-    } catch {
-      console.log(JSON.stringify({ ...log, result: "unreachable" }));
-      return json(502, { error: "upstream", message: "Couldn't reach ESPN." });
+    return espnWrite(leagueId, season, payload, { event: "lineup", ip, leagueId, season, teamId, sp, items, at: new Date().toISOString() });
+  }
+
+  // Free-agent pickup (with or without a drop), waiver claim, or a plain drop.
+  if (action === "transaction" && req.method === "POST") {
+    if (!signedIn(req)) return json(401, { error: "signed_out", message: "Sign in as the owner first." });
+    if (!sameOrigin(req)) return json(403, { error: "origin", message: "Changes have to come from the site itself." });
+    const b = await req.json().catch(() => ({}));
+    const season = String(b.season || defaultSeason()), leagueId = String(b.leagueId || ""), teamId = Number(b.teamId);
+    const add = b.add == null ? null : Number(b.add), drop = b.drop == null ? null : Number(b.drop), waiver = !!b.waiver;
+    const bid = Math.max(0, Math.floor(Number(b.bid) || 0));
+    if (!validLeague(leagueId, season) || !Number.isInteger(teamId) || (add == null && drop == null)
+      || (add != null && !Number.isInteger(add)) || (drop != null && !Number.isInteger(drop)) || (waiver && add == null)) {
+      return json(400, { error: "bad_request", message: "That roster move doesn't look right." });
     }
-    const espnMsg = out?.messages?.[0] || out?.details?.[0]?.message || out?.message || "";
-    console.log(JSON.stringify({ ...log, result: res.status, status: out?.status, espnMsg }));
-    if (!res.ok) return json(502, { error: "espn_refused", message: `ESPN didn't accept the change${espnMsg ? `: ${espnMsg}` : ` (${res.status})`}.` });
-    return json(200, { ok: true, status: out?.status || "EXECUTED" });
+    let data;
+    try { data = await espnRead(leagueId, season, ["mTeam", "mRoster", "mStatus"]); } catch {
+      return json(502, { error: "upstream", message: "Couldn't load your roster from ESPN to check the move." });
+    }
+    if (!ownedTeams(data).includes(teamId)) return json(403, { error: "not_yours", message: "That isn't your team." });
+    const sp = data.scoringPeriodId || data.status?.latestScoringPeriod;
+    const mine = data.teams.find((t) => t.id === teamId)?.roster?.entries || [];
+    if (drop != null && !mine.some((e) => e.playerId === drop)) return json(400, { error: "not_on_team", message: "The player you're dropping isn't on your roster." });
+    if (add != null && data.teams.some((t) => (t.roster?.entries || []).some((e) => e.playerId === add))) return json(409, { error: "taken", message: "That player is already on a roster in this league." });
+    const items = [
+      ...(add != null ? [{ playerId: add, type: "ADD", toTeamId: teamId }] : []),
+      ...(drop != null ? [{ playerId: drop, type: "DROP", fromTeamId: teamId }] : []),
+    ];
+    const payload = {
+      isLeagueManager: false, teamId, type: waiver ? "WAIVER" : "FREEAGENT", memberId: `{${swidRaw()}}`, scoringPeriodId: sp,
+      executionType: "EXECUTE", items, ...(waiver ? { bidAmount: bid } : {}),
+    };
+    return espnWrite(leagueId, season, payload, { event: waiver ? "claim" : "transaction", ip, leagueId, season, teamId, sp, add, drop, bid: waiver ? bid : undefined, at: new Date().toISOString() });
   }
 
   return json(404, { error: "not_found" });

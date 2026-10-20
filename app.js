@@ -76,16 +76,17 @@ class ApiError extends Error {
   constructor(code, message) { super(message); this.code = code; }
 }
 
-async function api(views, scoringPeriodId, season = state.season) {
+async function api(views, scoringPeriodId, season = state.season, fresh = false) {
   if (state.demo) return window.DemoLeague.response(views, scoringPeriodId, season);
   const q = new URLSearchParams();
+  if (fresh) q.set("fresh", Date.now()); // straight from ESPN, skipping every cache (right after a roster move)
   views.forEach((v) => q.append("view", v));
   if (scoringPeriodId) q.set("scoringPeriodId", scoringPeriodId);
   if (state.leagueId) q.set("leagueId", state.leagueId);
   if (season) q.set("season", season);
   let res, body;
   try {
-    res = await fetch(`/api/espn?${q}`);
+    res = await fetch(`/api/espn?${q}`, fresh ? { cache: "no-store" } : undefined);
     body = await res.json();
   } catch {
     throw new ApiError("no_function", "Couldn't reach the data function. If you're opening the files directly, deploy to Netlify (or run `netlify dev`) so /api/espn exists.");
@@ -895,7 +896,7 @@ function rosterNews(side) {
 // Players whose game has started or finished are locked in place, like on ESPN.
 const WONT_PLAY = /^(OUT|INJURY_RESERVE|SUSPENSION)$/;
 const LINEUP_OK = "ok";
-function lineupCheck(side, w) {
+function lineupCheck(side, w, editable = false) {
   if (!side || w.status === "final") return "";
   const locked = (p) => { const g = gameStatusOf(p); return !!g && (g.state === "in" || g.state === "post"); };
   const out = (p) => WONT_PLAY.test(p.injury || "") || !!p.opp?.bye;
@@ -908,6 +909,10 @@ function lineupCheck(side, w) {
   const current = pool.filter((p) => p.starter);
   const gain = best.points - sum(current, val);
   const bestIds = new Set(best.lineup.map((x) => x.p.id));
+  // Every change needed to get from the current lineup to the best one (for "Set best lineup").
+  const bestSlot = new Map(best.lineup.map((x) => [String(x.p.id), x.slot]));
+  const toBest = pool.map((p) => [p, bestSlot.get(String(p.id)) ?? BENCH]).filter(([p, to]) => to !== p.slotId);
+  state.lcMoves = editable ? toBest : null;
   const ins = best.lineup.map((x) => x.p).filter((p) => !p.starter).sort((a, b) => val(b) - val(a));
   const outs = current.filter((p) => !bestIds.has(p.id)).sort((a, b) => val(a) - val(b));
   const why = (p) => (p.opp?.bye ? "on bye" : WONT_PLAY.test(p.injury || "") ? injuryInfo(p.injury)[1].toLowerCase() : "");
@@ -917,18 +922,19 @@ function lineupCheck(side, w) {
     ins.forEach((p, i) => {
       const o = outs[i];
       if (!o) return;
-      items.push(`<div class="lc-item lc-swap"><span class="lc-ico">⇅</span><span>Start ${nm(p)} <span class="muted small">${f1(p.proj)}</span> over ${nm(o)} <span class="muted small">${why(o) || f1(o.proj)}</span></span><strong class="pos">+${f1(val(p) - val(o))}</strong></div>`);
+      const btn = editable && canSwap(p, o) ? `<button type="button" class="lc-do" data-swap="${esc(p.id)},${esc(o.id)}">Swap</button>` : "";
+      items.push(`<div class="lc-item lc-swap"><span class="lc-ico">⇅</span><span>Start ${nm(p)} <span class="muted small">${f1(p.proj)}</span> over ${nm(o)} <span class="muted small">${why(o) || f1(o.proj)}</span></span><strong class="pos">+${f1(val(p) - val(o))}</strong>${btn}</div>`);
     });
   }
   // Starters who won't play but have no better replacement on the roster still get a warning.
   for (const p of side.starters) {
-    if (!locked(p) && out(p) && !outs.includes(p)) items.push(`<div class="lc-item lc-warn"><span class="lc-ico">⚠️</span><span>${nm(p)} is ${why(p)}. No bench player can fill in, so check free agents.</span></div>`);
+    if (!locked(p) && out(p) && !outs.includes(p)) items.push(`<div class="lc-item lc-warn"><span class="lc-ico">⚠️</span><span>${nm(p)} is ${why(p)}. No bench player can fill in, so check free agents.</span>${editable ? `<button type="button" class="lc-do upg-btn" data-pid="${esc(p.id)}">Find one</button>` : ""}</div>`);
   }
   for (const p of side.starters) {
     if (!locked(p) && !out(p) && !outs.includes(p) && /QUESTIONABLE|DOUBTFUL/.test(p.injury || "")) items.push(`<div class="lc-item lc-note"><span class="lc-ico">⏳</span><span>${nm(p)} is ${injuryInfo(p.injury)[1].toLowerCase()}. Check the status before kickoff.</span></div>`);
   }
   if (!items.length) return LINEUP_OK; // shown as a green check next to "Starters"
-  return `<div class="card lc"><div class="lc-head"><strong>Lineup check</strong>${gain >= 0.5 ? ` <span class="muted small">Best lineup projects <strong class="pos">+${f1(gain)}</strong> pts</span>` : ""}</div>${items.join("")}</div>`;
+  return `<div class="card lc"><div class="lc-head"><strong>Lineup check</strong>${gain >= 0.5 ? ` <span class="muted small">Best lineup projects <strong class="pos">+${f1(gain)}</strong> pts</span>` : ""}${editable && gain >= 0.5 && toBest.length ? `<button type="button" class="lc-do lc-best" data-best>Set best lineup</button>` : ""}</div>${items.join("")}</div>`;
 }
 
 // ---------- Top pickups (Players › Free agents) ----------
@@ -963,7 +969,7 @@ function topPickups(w, faList) {
     ${picks.map(({ p, why }) => `<div class="pick-row">
       <div class="pick-main"><div>${plinkNm(p)}${injBadge(p)} <span class="muted small">${esc(p.pos)}${p.nfl ? ` · ${esc(p.nfl)}` : ""}</span>${p.status === "W" ? ` <span class="badge wv" data-tip="${esc(waiverTip(p))}">W</span>` : ""}</div>
         <div class="pick-why">${why.map((t) => `<span>${t}</span>`).join("")}</div></div>
-      <div class="pick-proj"><strong>${f1(p.proj)}</strong><span class="muted small">proj</span></div></div>`).join("")}</div>`;
+      <div class="pick-proj"><strong>${f1(p.proj)}</strong><span class="muted small">proj</span>${actTeam() && side && String(side.teamId) === actTeam() ? `<button type="button" class="add-btn" data-add="${esc(p.id)}">+ ${p.status === "W" ? "Claim" : "Add"}</button>` : ""}</div></div>`).join("")}</div>`;
 }
 
 // ---------- Player rows (shared by the Players and Roster tabs) ----------
@@ -1082,6 +1088,7 @@ const PCOLS = {
   snap: { key: "snap", label: "Snap %", title: "Share of the team's offensive snaps in its last game (avg = season average)", num: true, render: snapCell, sort: (p) => usageOf(p.id)?.last.pct ?? null },
   tgt: { key: "tgt", label: "Tgt %", title: "Share of the team's targets in its last game (avg = season average)", num: true, render: tgtCell, sort: (p) => { const u = usageOf(p.id); return u && u.pos !== "QB" ? u.last.share : null; } },
   value: { key: "value", label: "Value", title: "FantasyCalc trade value", num: true, render: (p) => valueCell(p.id), sort: (p) => valueOf(p.id) },
+  act: { key: "", label: "", cls: "pt-act", render: (p) => (!p.owner && p.status ? `<button type="button" class="add-btn sm" data-add="${esc(p.id)}" title="${p.status === "W" ? "Claim" : "Add"} ${esc(p.name)}">+</button>` : "") },
 };
 // Draws a player table into `el`; header clicks re-sort it in place.
 function drawPlayerTable(el, keys, rows, sortState, sp, empty) {
@@ -1117,7 +1124,7 @@ function renderFreeAgents(el) {
   const draw = () => {
     const q = f.faQ.toLowerCase();
     const rows = all.filter((p) => (f.faPos === "ALL" || p.pos === f.faPos) && (f.faStatus === "all" || p.status === f.faStatus) && (!q || p.name.toLowerCase().includes(q)));
-    drawPlayerTable($("fa-list"), ["player", "pos", "owner", "opp", "own", "proj", "pts", "snap", "tgt", "seasonPts", "pprRank", "posRank", "value"], rows, f.faSort, w.sp, "No free agents match those filters.");
+    drawPlayerTable($("fa-list"), ["player", ...(actTeam() ? ["act"] : []), "pos", "owner", "opp", "own", "proj", "pts", "snap", "tgt", "seasonPts", "pprRank", "posRank", "value"], rows, f.faSort, w.sp, "No free agents match those filters.");
   };
   $("fa-q").addEventListener("input", (e) => { f.faQ = e.target.value; draw(); });
   bindPosSeg("fa-pos", (v) => (f.faPos = v), draw);
@@ -1181,7 +1188,7 @@ function renderAllPlayers(el) {
   const draw = () => {
     const q = f.allQ.toLowerCase();
     const rows = all.filter((p) => (f.allPos === "ALL" || p.pos === f.allPos) && (!q || p.name.toLowerCase().includes(q)));
-    drawPlayerTable($("all-list"), ["player", "pos", "owner", "opp", "own", "proj", "pts", "snap", "tgt", "seasonPts", "pprRank", "posRank", "value"], rows, f.allSort, w.sp, "No players match those filters.");
+    drawPlayerTable($("all-list"), ["player", ...(actTeam() ? ["act"] : []), "pos", "owner", "opp", "own", "proj", "pts", "snap", "tgt", "seasonPts", "pprRank", "posRank", "value"], rows, f.allSort, w.sp, "No players match those filters.");
   };
   $("all-q").addEventListener("input", (e) => { f.allQ = e.target.value; draw(); });
   bindPosSeg("all-pos", (v) => (f.allPos = v), draw);
@@ -2355,22 +2362,22 @@ function renderRoster() {
   // Lineup editing (site owner only, current week, own team): tap a player, then who to swap with.
   const own = ensureOwner();
   const canEdit = !!own?.signedIn && own.teams?.map(String).includes(String(sel)) && w.week === state.base.current;
-  const ed = canEdit && state.lineupEdit?.teamId === String(sel) ? state.lineupEdit : null;
+  const ed = !canEdit ? null : state.lineupEdit?.teamId === String(sel) ? state.lineupEdit : (state.lineupEdit = { teamId: String(sel), pick: null });
   const picked = ed?.pick ? side?.players.find((x) => String(x.id) === String(ed.pick)) : null;
   const moveBtn = (p) => {
     if (p.slotId === IR) return `<span class="upg-none">IR</span>`;
     if (p.locked) return `<span class="mv-lock" title="Locked: his game has started">🔒</span>`;
-    if (!picked) return `<button type="button" class="mv-btn" data-mv="${esc(p.id)}">Move</button>`;
+    if (!picked) return `<button type="button" class="mv-btn" data-mv="${esc(p.id)}" title="Move ${esc(p.name)}" aria-label="Move ${esc(p.name)}">⇅</button>`;
     if (String(picked.id) === String(p.id)) return `<button type="button" class="mv-btn on" data-mv="${esc(p.id)}">Cancel</button>`;
     return canSwap(picked, p) ? `<button type="button" class="mv-btn to" data-mv="${esc(p.id)}">${p.starter ? "Swap" : "Here"}</button>` : `<span class="upg-none">–</span>`;
   };
   const list = (title, players) => players.length
-    ? `<h3 class="ta-sub">${title}</h3><div class="pr-list mx">${players.map((p) => playerRow(rosteredRow(p), { label: p.slot, sp: w.sp, action: ed ? moveBtn(p) : upgradeBtn(p), owner: false })).join("")}</div>` : "";
+    ? `<h3 class="ta-sub">${title}</h3><div class="pr-list mx">${players.map((p) => playerRow(rosteredRow(p), { label: p.slot, sp: w.sp, action: ed ? `<div class="pr-acts">${moveBtn(p)}${picked ? "" : upgradeBtn(p)}</div>` : upgradeBtn(p), owner: false })).join("")}</div>` : "";
 
   let body = `<p class="muted">${esc(t.name)} has no lineup for week ${w.week}.</p>`;
   if (side) {
     const bench = side.bench.filter((p) => p.slotId !== IR), ir = side.bench.filter((p) => p.slotId === IR);
-    const lc = lineupCheck(side, w);
+    const lc = lineupCheck(side, w, canEdit);
     const starters = `Starters${lc === LINEUP_OK ? ` <span class="lc-tick" title="Lineup is optimal by ESPN's week ${w.week} projections" aria-label="Lineup is optimal">✓</span>` : ""}`;
     body = (lc === LINEUP_OK ? "" : lc) + list(starters, side.starters) + list("Bench", bench) + list("Injured reserve", ir) + rosterNews(side) + playoffSchedule(side);
   }
@@ -2391,17 +2398,23 @@ function renderRoster() {
   ].filter(Boolean).join("");
   const opts = ids.map((id) => `<option value="${id}" ${id === String(sel) ? "selected" : ""}>${esc(team(id).name)} (${esc(team(id).owner)})</option>`).join("");
 
-  const editBar = !canEdit ? "" : ed
-    ? `<div class="rh-edit on"><span>${picked ? `Moving <strong>${esc(picked.name)}</strong> (${esc(picked.slot)}): pick who to swap with` : "Tap <strong>Move</strong> on a player"}</span><button type="button" class="mv-done" id="mv-done">Done</button></div>`
-    : `<div class="rh-edit"><button type="button" class="mv-start" id="mv-start">✎ Edit lineup</button></div>`;
+  // Picking a player (⇅) shows who he can swap with, plus a Drop button.
+  const editBar = !picked ? "" : `<div class="rh-edit on"><span>Moving <strong>${esc(picked.name)}</strong> (${esc(picked.slot)}): tap who to swap with</span>
+      <span class="rh-edit-btns"><button type="button" class="mv-cancel" id="mv-drop">Drop</button><button type="button" class="mv-done" id="mv-done">Cancel</button></span></div>`;
   el.innerHTML = `<div class="section-head"><h2>Rosters</h2><label class="small muted ta-me">Team <select id="roster-team">${opts}</select></label></div>
     <div class="card roster-head">${card}<div class="rh-stats">${stats}</div>${editBar}</div>
     ${body}
     ${fcCredit()}${nvCredit()}${wxCredit()}`;
   $("roster-team").addEventListener("change", (e) => { state.rosterTeam = e.target.value; store.set(key, e.target.value); renderRoster(); });
   $("my-star").addEventListener("click", () => { if (ownerTeam()) return; setMyTeam(sel); state.winWin = null; updateEspnLink(); renderRoster(); });
-  $("mv-start")?.addEventListener("click", () => { state.lineupEdit = { teamId: String(sel), pick: null }; renderRoster(); });
-  $("mv-done")?.addEventListener("click", () => { state.lineupEdit = null; renderRoster(); });
+  $("mv-done")?.addEventListener("click", () => { state.lineupEdit.pick = null; renderRoster(); });
+  $("mv-drop")?.addEventListener("click", () => { const p = picked; state.lineupEdit.pick = null; confirmDrop(sel, p); });
+  // Lineup check buttons: one suggested swap, or the whole best lineup.
+  el.querySelectorAll("[data-swap]").forEach((b) => b.addEventListener("click", () => {
+    const [a, o] = b.dataset.swap.split(",").map((id) => side.players.find((x) => String(x.id) === id));
+    if (a && o) confirmLineup(sel, [[a, o.slotId], [o, a.slotId]]);
+  }));
+  el.querySelector("[data-best]")?.addEventListener("click", () => { if (state.lcMoves?.length) confirmLineup(sel, state.lcMoves); });
   el.querySelectorAll(".mv-btn").forEach((b) => {
     if (picked && b.classList.contains("to")) b.closest(".pr-row")?.classList.add("mv-target");
     if (picked && b.classList.contains("on")) b.closest(".pr-row")?.classList.add("mv-picked");
@@ -2471,6 +2484,87 @@ function openOwnerSignIn() {
     } catch (err) { msg.textContent = err.message; btn.disabled = false; }
   });
 }
+// The team you can make moves for right now: signed in as owner, current week (null otherwise).
+function actTeam() {
+  const own = ensureOwner();
+  if (!own?.signedIn || !state.week || state.week.week !== state.base.current) return null;
+  const t = state.demo ? myTeamId() || own.teams?.[0] : own.teams?.[0];
+  return t != null ? String(t) : null;
+}
+// After any move: reload this week straight from ESPN (no caches) and redraw.
+async function refreshAfterMove() {
+  const wk = state.week.week;
+  try { state.week = await getWeek(wk, true, true); } catch { /* keep what we have */ }
+  state.fa = {}; state.live = null; state.lcMoves = null;
+  render();
+}
+async function sendMove(route, body) {
+  if (state.demo) return;
+  const r = await fetch(`/api/roster/${route}`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ leagueId: state.base.raw?.id || state.leagueId, season: state.base.season, ...body }),
+  });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.message || `Request failed (${r.status})`);
+}
+// Shared confirm dialog: run `send`, show the result, refresh, close.
+function moveDialog(title, html, goLabel, send, done) {
+  showModal(`<div class="pm-head"><h2 id="pl-modal-title">${title}</h2></div>${html}
+    <div class="mv-actions"><button type="button" class="mv-go" id="mv-go">${state.demo ? "Try it (demo, not sent)" : goLabel}</button><button type="button" class="mv-cancel" id="mv-cancel">Cancel</button></div>
+    <p id="mv-msg" class="small"></p>`);
+  const close = () => document.querySelector("#pl-modal .modal-close").click();
+  $("mv-cancel").addEventListener("click", close);
+  $("mv-go").addEventListener("click", async (e) => {
+    const msg = $("mv-msg");
+    e.target.disabled = true;
+    msg.innerHTML = `<span class="spinner"></span> Sending to ESPN…`;
+    try {
+      await send();
+      msg.innerHTML = `<span class="pos">✓ ${state.demo ? "Looks good (demo: nothing was sent)" : done}.</span>`;
+      await refreshAfterMove();
+      setTimeout(close, 900);
+    } catch (err) { msg.innerHTML = `<span class="neg">${esc(err.message)}</span>`; e.target.disabled = false; }
+  });
+}
+function confirmDrop(teamId, p) {
+  moveDialog(`Drop ${esc(p.name)}?`, `<p class="small muted">${esc(team(teamId).name)} · he goes to waivers and other teams can claim him.</p>`, "Drop on ESPN",
+    () => sendMove("transaction", { teamId: Number(teamId), drop: Number(p.id) }), "Dropped on ESPN");
+}
+// Add a free agent or claim a player off waivers, picking who (if anyone) to drop.
+function openAdd(id, dropId) {
+  const tid = actTeam(), fa = faData();
+  const raw = fa?.players?.find((x) => String(x.id) === String(id));
+  if (!tid || !raw) return;
+  const p = faRow(raw, state.week), waiver = p.status === "W";
+  const side = state.week.sides.find((x) => String(x.teamId) === tid);
+  const roster = side?.players || [];
+  const size = sum(Object.entries(state.base.slotCounts).filter(([k]) => Number(k) !== IR), ([, n]) => n);
+  const full = roster.filter((x) => x.slotId !== IR).length >= size;
+  const faab = !!state.base.raw.settings?.acquisitionSettings?.isUsingAcquisitionBudget;
+  const order = [...roster].sort((a, b) => (a.starter - b.starter) || (a.slotId === IR) - (b.slotId === IR) || (a.proj || 0) - (b.proj || 0));
+  const opt = (x) => `<label class="dr-opt ${x.locked ? "off" : ""}"><input type="radio" name="dr" value="${esc(x.id)}" ${String(x.id) === String(dropId) ? "checked" : ""} ${x.locked ? "disabled" : ""}>
+    <span><strong>${esc(x.name)}</strong> <span class="muted small">${esc(x.pos)} · ${x.starter ? esc(x.slot) : x.slotId === IR ? "IR" : "Bench"} · proj ${f1(x.proj)}${x.locked ? " · locked" : ""}</span></span></label>`;
+  moveDialog(`${waiver ? "Claim" : "Add"} ${esc(p.name)}`, `
+    <div class="add-head">${headshot(p, 44)}<div><strong>${esc(p.name)}</strong>${injBadge(p)}<div class="muted small">${esc(p.pos)}${p.nfl ? ` · ${esc(p.nfl)}` : ""} · proj ${f1(p.proj)} in week ${state.week.week}</div></div></div>
+    ${waiver ? `<p class="small muted">He's on waivers, so this is a claim. It goes through when waivers clear, if no one with higher priority claims him.</p>` : ""}
+    ${waiver && faab ? `<label class="bid small">FAAB bid $ <input id="add-bid" type="number" min="0" step="1" value="0" inputmode="numeric"></label>` : ""}
+    <h3 class="pm-sub">Drop</h3>
+    <div class="dr-list">${full ? "" : `<label class="dr-opt"><input type="radio" name="dr" value="" ${dropId ? "" : "checked"}><span>Nobody <span class="muted small">(you have an open roster spot)</span></span></label>`}${order.map(opt).join("")}</div>`,
+    waiver ? "Claim on ESPN" : "Add on ESPN",
+    () => {
+      const drop = document.querySelector('input[name="dr"]:checked')?.value;
+      if (full && !drop) return Promise.reject(new Error("Your roster is full. Pick someone to drop."));
+      return sendMove("transaction", { teamId: Number(tid), add: Number(p.id), drop: drop ? Number(drop) : null, waiver, bid: Number($("add-bid")?.value || 0) });
+    },
+    waiver ? "Claim submitted on ESPN" : "Added on ESPN");
+}
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-add]");
+  if (!b) return;
+  e.preventDefault();
+  openAdd(b.dataset.add, b.dataset.drop);
+});
+
 // Confirm, then send the moves to ESPN. moves = [[player, toSlot], …]
 function confirmLineup(teamId, moves) {
   const rows = moves.map(([p, to]) => `<li><strong>${esc(p.name)}</strong> <span class="muted">${esc(p.pos)}</span>: ${esc(slotName(p.slotId))} → <strong>${esc(slotName(to))}</strong></li>`).join("");
@@ -2484,17 +2578,10 @@ function confirmLineup(teamId, moves) {
     const msg = $("mv-msg");
     e.target.disabled = true; msg.innerHTML = `<span class="spinner"></span> Sending to ESPN…`;
     try {
-      if (!state.demo) {
-        const r = await fetch("/api/roster/lineup", {
-          method: "POST", headers: { "content-type": "application/json" },
-          body: JSON.stringify({ leagueId: state.base.raw?.id || state.leagueId, season: state.base.season, teamId: Number(teamId), items: moves.map(([p, to]) => ({ playerId: Number(p.id), from: p.slotId, to })) }),
-        });
-        const d = await r.json().catch(() => ({}));
-        if (!r.ok) throw new Error(d.message || `Request failed (${r.status})`);
-      }
+      await sendMove("lineup", { teamId: Number(teamId), items: moves.map(([p, to]) => ({ playerId: Number(p.id), from: p.slotId, to })) });
       msg.innerHTML = `<span class="pos">✓ ${state.demo ? "Looks good (demo: nothing was sent)" : "Saved on ESPN"}.</span>`;
       state.lineupEdit = { teamId: String(teamId), pick: null };
-      if (!state.demo) await loadWeek(state.week.week, true).then(() => render());
+      await refreshAfterMove();
       setTimeout(close, 900);
     } catch (err) { msg.innerHTML = `<span class="neg">${esc(err.message)}</span>`; e.target.disabled = false; }
   });
@@ -2507,7 +2594,8 @@ function openUpgrades(p) {
   const ups = upgradesFor(p, fa).slice(0, 20);
   const rows = ups.map((u) => {
     const row = faRow(u, w);
-    return playerRow(row, { sp: w.sp, action: `<div class="upg-diff" title="Projected points more than ${esc(p.name)}">+${f1(u.proj - (p.proj || 0))}</div>` });
+    const add = String(p.teamId) === actTeam() ? `<button type="button" class="add-btn" data-add="${esc(u.id)}" data-drop="${esc(p.id)}" title="${u.status === "W" ? "Claim" : "Add"} ${esc(u.name)}, drop ${esc(p.name)}">+ ${u.status === "W" ? "Claim" : "Add"}</button>` : "";
+    return playerRow(row, { sp: w.sp, action: `<div class="upg-diff" title="Projected points more than ${esc(p.name)}">+${f1(u.proj - (p.proj || 0))}</div>${add}` });
   }).join("");
   showModal(`<div class="pm-head"><h2 id="pl-modal-title">Upgrades for ${esc(p.name)}</h2>
       <div class="muted">${esc(p.pos)} · projected ${f1(p.proj)} in week ${w.week}</div></div>
@@ -3817,11 +3905,11 @@ function renderTab() {
 }
 
 // Fetch (or reuse) one week's data without touching the screen.
-async function getWeek(week, force) {
+async function getWeek(week, force, fresh = false) {
   const base = state.base;
   if (!force && state.weekCache[week]?.nfl) return state.weekCache[week];
   const sp = base.scoringPeriodFor(week);
-  const [raw, nfl] = await Promise.all([api(["mBoxscore", "mMatchupScore", "mRoster"], sp), loadNfl(sp)]);
+  const [raw, nfl] = await Promise.all([api(["mBoxscore", "mMatchupScore", "mRoster"], sp, state.season, fresh), loadNfl(sp)]);
   if (state.base !== base) throw new ApiError("stale", "League changed while loading.");
   const w = buildWeek(raw, week, nfl);
   w.nfl = nfl || {};
@@ -4155,10 +4243,28 @@ function watchForUpdates() {
   document.addEventListener("visibilitychange", async () => {
     if (document.visibilityState === "hidden") { hiddenAt = Date.now(); return; }
     if (state.reloadPending) return freshReload();
-    if (!version || Date.now() - hiddenAt < 30000) return;
+    if (!version) return;
     const now = await siteVersion();
-    if (now && now !== version) freshReload();
+    if (!now || now === version) return;
+    if (Date.now() - hiddenAt >= 30000) freshReload(); // back after a while: just switch
+    else showUpdateBar();
   });
+  // While the app stays open, look for a new version every few minutes.
+  setInterval(async () => {
+    if (document.visibilityState !== "visible" || !version) return;
+    const now = await siteVersion();
+    if (now && now !== version) showUpdateBar();
+  }, 5 * 60e3);
+}
+// A bar at the bottom: "A new version is ready · Reload".
+function showUpdateBar() {
+  if ($("upd-bar")) return;
+  const bar = document.createElement("div");
+  bar.id = "upd-bar";
+  bar.className = "upd-bar";
+  bar.innerHTML = `<span>A new version of the site is ready.</span><button type="button">Reload</button>`;
+  bar.querySelector("button").addEventListener("click", freshReload);
+  document.body.append(bar);
 }
 // Reload onto the newest version: the offline copy is refreshed first so the reload doesn't
 // come back up on the old one.
@@ -4189,7 +4295,7 @@ function initOffline() {
     else if (m.type === "updated") {
       // Just opened: switch to the new version right away. Otherwise wait until the app is reopened.
       if (Date.now() - opened < 10000 && document.visibilityState === "visible") freshReload();
-      else state.reloadPending = true;
+      else { state.reloadPending = true; showUpdateBar(); }
     }
   });
   addEventListener("online", () => showOffline(null));

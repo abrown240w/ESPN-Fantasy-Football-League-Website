@@ -1153,3 +1153,24 @@ table.data.bx-table th, table.data.bx-table td { padding: 6px 6px; font-size: .8
 table tr.my-row > td { background: #fff7e0; }
 table tr.my-row > td:first-child { box-shadow: inset 3px 0 0 #e8b100; }
 .pt-table tr.my-row td.pt-player { background: #fff7e0; }
+
+/* Always-on editing, suggestion buttons, add/drop dialogs */
+.pr-acts { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.mv-btn { min-width: 30px; }
+.rh-edit-btns { display: flex; gap: 6px; flex: none; }
+.lc-do { margin-left: 8px; flex: none; border: 1px solid var(--accent); background: var(--accent); color: #fff; border-radius: 8px; padding: 4px 9px; font: inherit; font-size: .76rem; font-weight: 700; cursor: pointer; }
+.lc-best { margin-left: auto; }
+.lc-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.add-btn { border: 1px solid #15803d; background: #15803d; color: #fff; border-radius: 8px; padding: 4px 9px; font: inherit; font-size: .76rem; font-weight: 700; cursor: pointer; white-space: nowrap; margin-top: 4px; }
+.add-btn.sm { padding: 2px 8px; font-size: .9rem; margin: 0; }
+.pick-proj { display: flex; flex-direction: column; align-items: flex-end; }
+td.pt-act { width: 34px; padding-left: 2px; padding-right: 2px; text-align: center; }
+.add-head { display: flex; gap: 10px; align-items: center; margin: 4px 0 8px; }
+.dr-list { display: flex; flex-direction: column; gap: 2px; max-height: 40vh; overflow-y: auto; margin-bottom: 12px; border: 1px solid var(--grid); border-radius: 10px; padding: 4px; }
+.dr-opt { display: flex; gap: 8px; align-items: center; padding: 6px; border-radius: 8px; cursor: pointer; font-size: .88rem; }
+.dr-opt:has(input:checked) { background: #fff1f1; }
+.dr-opt.off { opacity: .5; cursor: default; }
+.bid { display: inline-flex; align-items: center; gap: 6px; margin: 2px 0 8px; }
+.bid input { width: 80px; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--border); font: inherit; }
+.upd-bar { position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 12px); transform: translateX(-50%); z-index: 900; display: flex; align-items: center; gap: 12px; padding: 10px 12px 10px 16px; border-radius: 12px; background: #1d2733; color: #fff; box-shadow: 0 8px 24px rgba(0,0,0,.35); font-size: .88rem; width: max-content; max-width: calc(100vw - 24px); }
+.upd-bar button { border: 0; border-radius: 8px; background: #fff; color: #1d2733; font: inherit; font-weight: 800; padding: 6px 12px; cursor: pointer; }

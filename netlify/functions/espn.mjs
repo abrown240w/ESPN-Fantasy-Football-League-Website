@@ -78,9 +78,12 @@ export default async (req) => {
     status: 200,
     headers: {
       "content-type": "application/json",
-      // Short cache so live scores stay fresh but repeat visits are fast.
-      "cache-control": "public, max-age=60",
-      "netlify-cdn-cache-control": "public, max-age=60, stale-while-revalidate=120",
+      // Short cache so live scores stay fresh but repeat visits are fast. ?fresh=… (sent right after a
+      // roster move) skips caching so the change shows immediately.
+      ...(params.has("fresh") ? { "cache-control": "no-store", "netlify-cdn-cache-control": "no-store" } : {
+        "cache-control": "public, max-age=60",
+        "netlify-cdn-cache-control": "public, max-age=60, stale-while-revalidate=120",
+      }),
     },
   });
 };
