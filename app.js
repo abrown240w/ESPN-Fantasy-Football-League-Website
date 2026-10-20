@@ -1042,7 +1042,13 @@ const waiverTip = (p) => (p.waiverDate ? `<b>On waivers</b>Clears ${new Date(p.w
 
 // One player row in the matchup style: label | name / game line / stats / details | points & projection | optional action.
 // Rows get the same highlighting as the matchup screen (bold = playing, gold = on the field, red = red zone).
-function playerRow(p, { label, sp, action = "", owner = true, unread = false } = {}) {
+// Three usage columns for the Roster tab (last game): share of snaps, targets and carries.
+function usageCols(id) {
+  const u = usageOf(id);
+  const cell = (v, lbl, tip) => `<div class="pu" title="${tip}"><b>${v == null ? "–" : pctTxt(v)}</b><span>${lbl}</span></div>`;
+  return `<div class="pr-use" ${u ? `data-tip="${usageTip(u)}"` : ""}>${cell(u?.last.pct, "Snap", "Share of the team's offensive snaps last game")}${cell(u && u.pos !== "QB" ? u.last.share : null, "Tgt", "Share of the team's targets last game")}${cell(u?.last.rush, "Rush", "Share of the team's rushing attempts last game")}</div>`;
+}
+function playerRow(p, { label, sp, action = "", owner = true, unread = false, cols = false, faStats = false } = {}) {
   const pts = p.pts == null ? "–" : ptsLink(p.id, sp, f1(p.pts));
   let who = "";
   if (owner && p.owner) {
@@ -1059,11 +1065,16 @@ function playerRow(p, { label, sp, action = "", owner = true, unread = false } =
     p.own != null && `${f1(p.own)}% rost${Math.abs(p.ownChg || 0) >= 0.5 ? ` <span class="trend ${p.ownChg > 0 ? "pos" : "neg"}">${p.ownChg > 0 ? "▲" : "▼"}${f1(Math.abs(p.ownChg))}</span>` : ""}`,
     p.seasonPts != null && `${f1(p.seasonPts)} season pts`,
     v && `Val ${valueCell(p.id)}`,
-    usageBrief(p.id),
+    !cols && usageBrief(p.id),
     p.pprRank && `<span class="pd-rank">PPR ${posRankHtml(p, p.pprRank)}</span>`,
     p.posRank && `<span class="pd-rank">Rk ${posRankHtml(p, p.posRank)}</span>`,
   ].filter(Boolean);
-  return `<div class="pr-row ${gsState(p)}">
+  // Free agents in the upgrade list: position rank, points per game and % rostered instead.
+  if (faStats) details.splice(0, details.length,
+    `<span class="pd-k">Rank</span> ${p.posRank ? `${esc(p.pos)}${Math.round(p.posRank)}` : "–"}`,
+    `<span class="pd-k">Avg</span> ${p.seasonAvg != null ? f1(p.seasonAvg) : "–"}`,
+    `<span class="pd-k">Rost</span> ${p.own != null ? `${Math.round(p.own)}%` : "–"}`);
+  return `<div class="pr-row ${gsState(p)} ${cols ? "has-use" : ""} ${faStats ? "fa-stats" : ""}">
     <div class="pr-label">${esc(label ?? p.pos)}</div>
     <div class="pr-info pr-has-hs">${headshot(p, 38)}<div class="pr-text">
       <div class="mx-name">${plinkNm(p)}${injBadge(p)}${unread ? newsDot(p) : ""}</div>
@@ -1071,6 +1082,7 @@ function playerRow(p, { label, sp, action = "", owner = true, unread = false } =
       <div class="mx-stats" ${p.short ? `title="${esc(p.line)}"` : ""}>${p.short ? esc(p.short) : "&nbsp;"}</div>
       <div class="pr-details">${details.length ? details.map((d) => `<span class="pd">${d}</span>`).join("") : "&nbsp;"}</div>
     </div></div>
+    ${cols ? usageCols(p.id) : ""}
     <div class="mx-pts"><div class="mx-score">${pts}</div><div class="mx-proj">${f1(p.proj)}</div></div>
     ${action}
   </div>`;
@@ -1706,7 +1718,8 @@ async function refreshLive() {
 }
 
 // ---------- Scoring alerts ----------
-// A banner drops in at the top for 5 seconds when a fantasy starter (any team, D/ST included) scores a
+// A banner drops in at the top for 7 seconds when a starter in your matchup (your team or this week's
+// opponent, D/ST included) scores a
 // touchdown, crosses a yardage bonus the league pays for, or gains 15+ points between two refreshes.
 const TD_STATS = [4, 25, 43, 63, 93, 101, 102, 103, 104];
 const BONUSES = [[17, 3, 300, "300-yd passing bonus"], [18, 3, 400, "400-yd passing bonus"], [37, 24, 100, "100-yd rushing bonus"],
@@ -1720,6 +1733,11 @@ function liveAlerts(old, data) {
   const paid = new Set(items.map((i) => i.statId));
   const n = (p, id) => Number(p.stats?.[id] || 0);
   const events = [];
+  // Only your matchup: your team and whoever you play this week.
+  const me = String(myTeamId() || "");
+  const wk = state.weekCache?.[state.base.current];
+  const mu = me && wk?.matchups?.find((m) => [m.home?.teamId, m.away?.teamId].map(String).includes(me));
+  const inMatchup = new Set(mu ? [mu.home?.teamId, mu.away?.teamId].filter((x) => x != null).map(String) : me ? [me] : []);
   // Fantasy points for a stat change under this league's scoring (D/ST overrides included).
   const ptsFor = (statId, delta, p) => {
     const it = items.find((i) => i.statId === statId);
@@ -1728,7 +1746,7 @@ function liveAlerts(old, data) {
     return delta * v;
   };
   for (const p of data.players) {
-    if (!p.teamId || p.slotId == null || p.slotId === BENCH || p.slotId === IR) continue;
+    if (!p.teamId || p.slotId == null || p.slotId === BENCH || p.slotId === IR || !inMatchup.has(String(p.teamId))) continue;
     const o = before.get(String(p.id));
     if (!o) continue;
     const why = [], tds = [];
@@ -1794,7 +1812,7 @@ function nextAlert() {
     el.classList.remove("show");
     finish(300);
   };
-  // Swipe it away (sideways or up); a tap opens the player. Holding it pauses the 5-second timer.
+  // Swipe it away (sideways or up); a tap opens the player. Holding it pauses the 7-second timer.
   let sx = 0, sy = 0, dragging = false, moved = false;
   const offset = (e) => [e.clientX - sx, Math.min(0, e.clientY - sy)];
   el.addEventListener("pointerdown", (e) => {
@@ -1831,7 +1849,7 @@ function nextAlert() {
   el.addEventListener("pointercancel", release);
   document.body.append(el);
   requestAnimationFrame(() => requestAnimationFrame(() => el.classList.add("show")));
-  timer = setTimeout(dismiss, 5000);
+  timer = setTimeout(dismiss, 7000);
 }
 
 function renderLive() {
@@ -2399,7 +2417,7 @@ function renderRoster() {
   const rn = side ? ensureNews(side.players.map((p) => p.id), () => { if (state.tab === "roster") render(); }) : null;
   const hasUnread = (p) => !!rn && unreadNews(String(p.id), rn.players?.[p.id]).length > 0;
   const list = (title, players) => players.length
-    ? `<h3 class="ta-sub">${title}</h3><div class="pr-list mx">${players.map((p) => playerRow(rosteredRow(p), { label: p.slot, sp: w.sp, unread: hasUnread(p), action: ed ? `<div class="pr-acts">${moveBtn(p)}${picked ? "" : upgradeBtn(p)}</div>` : actTeam() && String(sel) !== actTeam() ? `<div class="pr-acts">${moveBtns(p)}${upgradeBtn(p)}</div>` : upgradeBtn(p), owner: false })).join("")}</div>` : "";
+    ? `<h3 class="ta-sub">${title}</h3><div class="pr-list mx">${players.map((p) => playerRow(rosteredRow(p), { label: p.slot, sp: w.sp, unread: hasUnread(p), cols: true, action: ed ? `<div class="pr-acts">${moveBtn(p)}${picked ? "" : upgradeBtn(p)}</div>` : actTeam() && String(sel) !== actTeam() ? `<div class="pr-acts">${moveBtns(p)}${upgradeBtn(p)}</div>` : upgradeBtn(p), owner: false })).join("")}</div>` : "";
 
   let body = `<p class="muted">${esc(t.name)} has no lineup for week ${w.week}.</p>`;
   if (side) {
@@ -2630,6 +2648,18 @@ function demoPending() {
   return { pending: [{ id: "demo", type: "WAIVER", status: "PENDING", teamId: Number(me), bid: 0, process: add.waiverDate,
     items: [{ playerId: add.id, type: "ADD", to: Number(me), info: [add.name, add.posId, add.proId] }, { playerId: drop.id, type: "DROP", from: Number(me), info: [drop.name, drop.posId, drop.proId] }] }] };
 }
+// Cancel a pending claim, withdraw a trade offer you sent, or decline one you got.
+function cancelPending(t, kind, label) {
+  const me = actTeam();
+  moveDialog(label, `<p class="small muted">${kind === "trade-in" ? "The other manager is told you declined." : "Nothing else on your roster changes."}</p>`, label,
+    () => sendMove("cancel", { teamId: Number(me), txId: t.id, kind }), kind === "trade-in" ? "Declined on ESPN" : "Canceled on ESPN");
+}
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-cancel]");
+  if (!b) return;
+  const P = ensurePending(), t = P?.pending?.find((x) => String(x.id) === b.dataset.cancel);
+  if (t) cancelPending(t, b.dataset.kind, b.dataset.label);
+});
 // One pending move as a card row.
 function pendingRow(t, mine) {
   const nm = (i) => (i.info ? `${plink(i.playerId, i.info[0])} <span class="muted small">${POS[i.info[1]] || ""}</span>` : `Player ${esc(i.playerId)}`);
@@ -2639,17 +2669,20 @@ function pendingRow(t, mine) {
     const other = (t.items || []).map((i) => (i.from === me ? i.to : i.from)).find((x) => x != null && x !== me);
     const sent = t.items.filter((i) => i.from === me).map(nm).join(", "), got = t.items.filter((i) => i.to === me).map(nm).join(", ");
     const outgoing = mine.includes(t.teamId);
+    const kind = outgoing ? "trade-out" : "trade-in", label = outgoing ? "Withdraw offer" : "Decline offer";
     return `<div class="pd-row"><span class="pd-kind trade">Trade</span><div class="pd-main">
       <div>${outgoing ? "Offer to" : "Offer from"} <strong>${esc(team(other).name)}</strong></div>
       <div class="small">You send ${sent || "–"} · you get ${got || "–"}</div>
-      <div class="muted small">${t.expires ? `Expires ${fmtWhen(t.expires)}` : esc(t.status || "Pending")}</div></div></div>`;
+      <div class="muted small">${t.expires ? `Expires ${fmtWhen(t.expires)}` : esc(t.status || "Pending")}</div></div>
+      <button type="button" class="pd-cancel" data-cancel="${esc(t.id)}" data-kind="${kind}" data-label="${label}">${outgoing ? "Withdraw" : "Decline"}</button></div>`;
   }
   const adds = (t.items || []).filter((i) => i.type === "ADD"), drops = (t.items || []).filter((i) => i.type === "DROP");
   const when = t.process || (adds[0] && clears(adds[0].playerId)) || nextWaiverRun();
   const faab = !!state.base.raw.settings?.acquisitionSettings?.isUsingAcquisitionBudget;
   return `<div class="pd-row"><span class="pd-kind ${t.type === "WAIVER" ? "wv" : ""}">${t.type === "WAIVER" ? "Claim" : "Add"}</span><div class="pd-main">
     <div>${adds.length ? `<span class="pos">+</span> ${adds.map(nm).join(", ")}` : ""}${drops.length ? ` <span class="neg">−</span> ${drops.map(nm).join(", ")}` : ""}</div>
-    <div class="muted small">${when ? `Processes ${fmtWhen(when)}` : "Processes at the next waiver run"}${faab && t.bid != null ? ` · bid $${t.bid}` : ""}</div></div></div>`;
+    <div class="muted small">${when ? `Processes ${fmtWhen(when)}` : "Processes at the next waiver run"}${faab && t.bid != null ? ` · bid $${t.bid}` : ""}</div></div>
+    <button type="button" class="pd-cancel" data-cancel="${esc(t.id)}" data-kind="claim" data-label="Cancel claim">Cancel</button></div>`;
 }
 // Popup with your pending moves (Roster tab button). Fills in when the list arrives.
 function openPendingModal() {
@@ -2760,7 +2793,7 @@ function moveDialog(title, html, goLabel, send, done) {
       await send();
       msg.innerHTML = `<span class="pos">✓ ${state.demo ? "Looks good (demo: nothing was sent)" : done}.</span>`;
       await refreshAfterMove();
-      setTimeout(close, 900);
+      setTimeout(() => { close(); if (state.pdModal && state.tab === "roster" && /Cancel|Withdraw|Decline/.test(title)) openPendingModal(); }, 900);
     } catch (err) { msg.innerHTML = `<span class="neg">${esc(err.message)}</span>`; e.target.disabled = false; }
   });
 }
@@ -2848,7 +2881,7 @@ function openUpgrades(p) {
   const rows = ups.map((u) => {
     const row = faRow(u, w);
     const add = String(p.teamId) === actTeam() ? `<button type="button" class="add-btn ${u.status === "W" ? "wv" : ""}" data-add="${esc(u.id)}" data-drop="${esc(p.id)}" title="${u.status === "W" ? "Claim" : "Add"} ${esc(u.name)}, drop ${esc(p.name)}">+ ${u.status === "W" ? "Claim" : "Add"}</button>` : "";
-    return playerRow(row, { sp: w.sp, action: `<div class="upg-diff" title="Projected points more than ${esc(p.name)}">+${f1(u.proj - (p.proj || 0))}</div>${add}` });
+    return playerRow(row, { sp: w.sp, faStats: true, action: `<div class="upg-act"><div class="upg-diff" title="Projected points more than ${esc(p.name)}">+${f1(u.proj - (p.proj || 0))}</div>${add}</div>` });
   }).join("");
   showModal(`<div class="pm-head"><h2 id="pl-modal-title">Upgrades for ${esc(p.name)}</h2>
       <div class="muted">${esc(p.pos)} · projected ${f1(p.proj)} in week ${w.week}</div></div>
@@ -2981,8 +3014,9 @@ function usageCalc(pl, sp) {
   const lastWk = Math.max(wks.at(-1), ...Object.keys(T[team] || {}).map(Number).filter((w) => w <= sp));
   const teamOf = (wk, t) => T[t]?.[wk] || [0, 0];
   const e = pl.w[lastWk];
-  const last = e ? { wk: lastWk, snaps: e[0], pct: e[1], tgt: e[2], teamSnaps: teamOf(lastWk, e[3])[0], share: teamOf(lastWk, e[3])[1] ? (e[2] / teamOf(lastWk, e[3])[1]) * 100 : null }
-    : { wk: lastWk, snaps: 0, pct: 0, tgt: 0, teamSnaps: teamOf(lastWk, team)[0], share: 0, out: true };
+  const last = e ? { wk: lastWk, snaps: e[0], pct: e[1], tgt: e[2], teamSnaps: teamOf(lastWk, e[3])[0], share: teamOf(lastWk, e[3])[1] ? (e[2] / teamOf(lastWk, e[3])[1]) * 100 : null,
+      car: e[4] || 0, rush: teamOf(lastWk, e[3])[2] ? ((e[4] || 0) / teamOf(lastWk, e[3])[2]) * 100 : null }
+    : { wk: lastWk, snaps: 0, pct: 0, tgt: 0, teamSnaps: teamOf(lastWk, team)[0], share: 0, car: 0, rush: 0, out: true };
   const avgOf = (list) => {
     if (!list.length) return null;
     const tgt = sum(list, (w) => pl.w[w][2]), teamTgt = sum(list, (w) => teamOf(w, pl.w[w][3])[1]);
@@ -4078,6 +4112,28 @@ function renderPlayerModal(d, focusSp) {
     const row = body.querySelector(".pm-tabs");
     if (row) { row.scrollLeft = x; row.querySelector(".active")?.scrollIntoView({ block: "nearest", inline: "nearest" }); }
   }));
+  // Swipe left/right on the card to move between its tabs.
+  if (!body.dataset.swipe) {
+    body.dataset.swipe = "1";
+    let sx = 0, sy = 0, ok = false;
+    body.addEventListener("touchstart", (e) => {
+      const t = e.touches[0];
+      ok = e.touches.length === 1 && !e.target.closest(".pm-tabs, .table-wrap, .pg-cats, .field-wrap, input, textarea, select");
+      sx = t.clientX; sy = t.clientY;
+    }, { passive: true });
+    body.addEventListener("touchend", (e) => {
+      if (!ok) return;
+      const t = e.changedTouches[0], dx = t.clientX - sx, dy = t.clientY - sy;
+      if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+      const keys = [...body.querySelectorAll(".pm-tabs [data-pmtab]")].map((b) => b.dataset.pmtab);
+      const next = keys[keys.indexOf(state.pmTab) + (dx < 0 ? 1 : -1)];
+      if (!next) return;
+      state.pmSlide = dx < 0 ? "right" : "left";
+      body.querySelector(`.pm-tabs [data-pmtab="${next}"]`)?.click();
+    }, { passive: true });
+  }
+  const paneEl = body.querySelector(".pm-pane");
+  if (state.pmSlide && paneEl) { paneEl.classList.add(`slide-${state.pmSlide}`); state.pmSlide = null; }
   // » shows while tabs are hidden off the right edge; tapping it scrolls them into view.
   const tabRow = body.querySelector(".pm-tabs"), more = body.querySelector(".pm-more");
   const updMore = () => { more.hidden = tabRow.scrollLeft + tabRow.clientWidth >= tabRow.scrollWidth - 4; };
@@ -4431,9 +4487,23 @@ function initSwipeTabs() {
     }
     return false;
   };
-  let onHeader = false;
+  let onHeader = false, scroller = null;
+  // The element a touch would scroll sideways, if any.
+  const sideScroller = (el) => {
+    for (; el && el !== document.body; el = el.parentElement) {
+      if (el.scrollWidth > el.clientWidth + 2 && /auto|scroll/.test(getComputedStyle(el).overflowX)) return el;
+    }
+    return null;
+  };
   document.addEventListener("touchstart", (e) => {
     armed = false;
+    scroller = null;
+    // Team usage is mostly one wide table: a long swipe there still changes tabs once the table
+    // can't scroll any further that way.
+    if (state.tab === "usage" && e.touches.length === 1 && !document.body.classList.contains("modal-open") && !e.target.closest(".topbar, select, input")) {
+      const sc = sideScroller(e.target);
+      if (sc) { scroller = sc; sx = e.touches[0].clientX; sy = e.touches[0].clientY; t0 = Date.now(); armed = true; onHeader = false; return; }
+    }
     if (e.touches.length !== 1 || !state.week || document.body.classList.contains("modal-open")) return;
     // Swipes on the header (above the tabs) change the week; anywhere below switches tabs.
     if (e.target.closest(".fx-alert")) return; // scoring banners handle their own swipes
@@ -4452,7 +4522,11 @@ function initSwipeTabs() {
     if (!armed || onHeader) return;
     const dx = e.touches[0].clientX - sx, dy = e.touches[0].clientY - sy;
     if (!dragging) {
-      if (Math.abs(dx) < 14 || Math.abs(dx) < Math.abs(dy) * 1.6) { if (Math.abs(dy) > 14) armed = false; return; }
+      if (scroller) {
+        // Only once the table is at its edge in the swipe direction, and after a longer pull.
+        const atEdge = dx > 0 ? scroller.scrollLeft <= 0 : scroller.scrollLeft + scroller.clientWidth >= scroller.scrollWidth - 1;
+        if (!atEdge || Math.abs(dx) < 70 || Math.abs(dx) < Math.abs(dy) * 1.6) { if (Math.abs(dy) > 20 || !atEdge) armed = Math.abs(dy) <= 20; return; }
+      } else if (Math.abs(dx) < 14 || Math.abs(dx) < Math.abs(dy) * 1.6) { if (Math.abs(dy) > 14) armed = false; return; }
       dragging = true;
     }
     dragX = dx * (neighbor(dx < 0 ? 1 : -1) ? 1 : 0.25); // resist at the first/last tab
@@ -4467,7 +4541,7 @@ function initSwipeTabs() {
     if (dragging) {
       dragging = false;
       const v = view(), next = neighbor(dx < 0 ? 1 : -1);
-      const go = next && (Math.abs(dx) > innerWidth * 0.28 || (Math.abs(dx) > 50 && Date.now() - t0 < 300));
+      const go = next && (scroller ? Math.abs(dx) > innerWidth * 0.4 : Math.abs(dx) > innerWidth * 0.28 || (Math.abs(dx) > 50 && Date.now() - t0 < 300));
       v.style.transition = "transform .18s ease-out";
       v.style.transform = go ? `translateX(${dx < 0 ? -innerWidth : innerWidth}px)` : "translateX(0)";
       setTimeout(() => {

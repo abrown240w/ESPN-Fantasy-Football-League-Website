@@ -14,6 +14,7 @@
 //         POST /api/roster/transaction {leagueId, season, teamId, add?, drop?, waiver?, bid?}  (pickups, claims, drops)
 //         GET  /api/roster/pending?leagueId=&season=   (your pending claims and trade offers; owner only)
 //         POST /api/roster/trade {leagueId, season, teamId, otherTeamId, send: [ids], receive: [ids], comment?}
+//         POST /api/roster/cancel {leagueId, season, teamId, txId, kind: claim | trade-out | trade-in}
 //         POST /api/roster/pushowner {endpoint, leagueId}  (marks this device's alerts as the owner's, so
 //                                    waiver reports can include missed claims)
 
@@ -276,6 +277,47 @@ export default async (req, context) => {
     sub.owner = mine.includes(Number(sub.teamId));
     await s.setJSON(key, sub);
     return json(200, { owner: sub.owner });
+  }
+
+  // Cancel a pending waiver claim, withdraw a trade offer you sent, or decline one you got. ESPN
+  // doesn't document these, so a few known request shapes are tried in order; after each one ESPN is
+  // checked to see whether the move is still pending. Nothing here can make a new move.
+  if (action === "cancel" && req.method === "POST") {
+    if (!signedIn(req)) return json(401, { error: "signed_out", message: "Sign in as the owner first." });
+    if (!sameOrigin(req)) return json(403, { error: "origin", message: "Changes have to come from the site itself." });
+    const b = await req.json().catch(() => ({}));
+    const season = String(b.season || defaultSeason()), leagueId = String(b.leagueId || ""), teamId = Number(b.teamId);
+    const txId = String(b.txId || ""), kind = String(b.kind || "");
+    if (!validLeague(leagueId, season) || !Number.isInteger(teamId) || !/^[\w-]{6,64}$/.test(txId) || !["claim", "trade-out", "trade-in"].includes(kind)) {
+      return json(400, { error: "bad_request", message: "That cancel request doesn't look right." });
+    }
+    let data;
+    try { data = await espnRead(leagueId, season, ["mTeam", "mPendingTransactions", "mStatus"]); } catch {
+      return json(502, { error: "upstream", message: "Couldn't load your pending moves from ESPN." });
+    }
+    if (!ownedTeams(data).includes(teamId)) return json(403, { error: "not_yours", message: "That isn't your team." });
+    const pendingNow = (d) => [...(d.pendingTransactions || []), ...(d.transactions || [])].find((t) => String(t.id) === txId && !/^(EXECUTED|CANCEL|FAIL|VETO|DECLINE)/.test(t.status || ""));
+    const tx = pendingNow(data);
+    if (!tx) return json(409, { error: "gone", message: "That move isn't pending anymore." });
+    const mineInvolved = tx.teamId === teamId || (tx.items || []).some((i) => i.fromTeamId === teamId || i.toTeamId === teamId);
+    if (!mineInvolved) return json(403, { error: "not_yours", message: "That move isn't yours." });
+    const sp = data.scoringPeriodId || data.status?.latestScoringPeriod;
+    const TX = `${WRITES}/seasons/${season}/segments/0/leagues/${leagueId}/transactions/`;
+    const base = { isLeagueManager: false, teamId, memberId: `{${swidRaw()}}`, scoringPeriodId: sp, executionType: "EXECUTE", relatedTransactionId: txId, items: [] };
+    const tries = kind === "trade-in"
+      ? [["POST", TX, { ...base, type: "TRADE_DECLINE" }]]
+      : [["POST", TX, { ...base, type: "CANCEL" }], ["DELETE", `${TX}${txId}`, null], ...(kind === "trade-out" ? [["POST", TX, { ...base, type: "TRADE_DECLINE" }]] : [])];
+    const headers = { "content-type": "application/json", accept: "application/json", "user-agent": "Mozilla/5.0 (fantasy-dashboard)", origin: "https://fantasy.espn.com", referer: "https://fantasy.espn.com/", cookie: `espn_s2=${process.env.ESPN_S2}; SWID=${process.env.SWID}` };
+    let lastMsg = "";
+    for (const [method, url, body] of tries) {
+      let res, out;
+      try { res = await fetch(url, { method, headers, ...(body ? { body: JSON.stringify(body) } : {}) }); out = await res.json().catch(() => null); } catch { continue; }
+      lastMsg = out?.messages?.[0] || out?.details?.[0]?.message || "";
+      console.log(JSON.stringify({ event: "cancel_try", ip, leagueId, teamId, txId, kind, method, type: body?.type || null, result: res.status, espnMsg: lastMsg }));
+      if (!res.ok) continue;
+      try { if (!pendingNow(await espnRead(leagueId, season, ["mPendingTransactions"]))) return json(200, { ok: true }); } catch { return json(200, { ok: true, unverified: true }); }
+    }
+    return json(502, { error: "espn_refused", message: `ESPN didn't ${kind === "trade-in" ? "decline" : "cancel"} it${lastMsg ? `: ${lastMsg}` : ""}. You can do it in the ESPN app for now.` });
   }
 
   return json(404, { error: "not_found" });

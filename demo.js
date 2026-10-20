@@ -419,7 +419,7 @@
         injury: i % 9 === 4 ? "QUESTIONABLE" : "",
         own: round(Math.max(1, 78 - i * 2.4)), ownChg: round(((i * 53) % 130) / 10 - 5),
         proj, pts: played ? round(Math.max(0, proj + (((i * 29) % 13) - 6))) : null,
-        seasonPts: round(proj * (CURRENT_WEEK - 1) * 0.9), seasonProj: round(proj * 17),
+        seasonPts: round(proj * (CURRENT_WEEK - 1) * 0.9), seasonAvg: round(proj * 0.9), seasonProj: round(proj * 17),
         pprRank: 20 + i, posRank: 25 + (i * 3) % 40,
       };
     });

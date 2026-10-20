@@ -66,6 +66,7 @@ export default async (req) => {
       proj: round2(stat(1, sp, 1)),
       pts: round2(stat(0, sp, 1)),
       seasonPts: round2(stat(0, 0, 0)),
+      seasonAvg: round2(stats.find((s) => s.statSourceId === 0 && s.scoringPeriodId === 0 && s.statSplitTypeId === 0)?.appliedAverage),
       seasonProj: round2(stat(1, 0, 0)),
       pprRank: (pl.rankings?.[sp] || []).find((r) => r.rankType === "PPR" && r.rankSourceId === 0)?.averageRank ?? null,
       posRank: e.ratings?.["0"]?.positionalRanking || null,
