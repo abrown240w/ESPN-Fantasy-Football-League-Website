@@ -1088,7 +1088,7 @@ function drawPlayerTable(el, keys, rows, sortState, sp, empty) {
   if (!rows.length) { el.innerHTML = `<p class="muted pr-empty">${empty}</p>`; return; }
   const cols = keys.map((k) => { const c = PCOLS[k]; return c.render ? { ...c, render: (r) => c.render(r, sp) } : c; });
   const redraw = () => drawPlayerTable(el, keys, rows, sortState, sp, empty);
-  el.replaceChildren(sortableTable(cols, rows, sortState, redraw, { rowClass: gsState, tableClass: "pt-table" }));
+  el.replaceChildren(sortableTable(cols, rows, sortState, redraw, { rowClass: (p) => `${gsState(p)} ${myRow(p.teamId)}`, tableClass: "pt-table" }));
 }
 
 // Position filter as a row of buttons (same feel as the injury report).
@@ -1336,7 +1336,7 @@ function renderManagers() {
     { key: "mvp", label: "MVP", cls: "hide-sm", sort: (s) => s.mvp?.actual, render: (s) => (s.mvp ? `${plink(s.mvp.id, s.mvp.name)} <span class="muted">${f1(s.mvp.actual)}</span>` : "–") },
     { key: "bust", label: "Biggest bust", cls: "hide-sm", sort: (s) => s.bust?.diff, render: (s) => (s.bust ? `${plink(s.bust.id, s.bust.name)} <span class="neg">${signed(s.bust.diff)}</span>` : "–") },
   ];
-  const draw = () => $("mg-table").replaceChildren(sortableTable(cols, sides, state.managers.sort, draw));
+  const draw = () => $("mg-table").replaceChildren(sortableTable(cols, sides, state.managers.sort, draw, { rowClass: (r) => myRow(r.teamId) }));
   draw();
 }
 
@@ -1382,7 +1382,7 @@ function renderSeason() {
     const rosters = rostersWithValues();
     for (const r of season.rows) r.rosterValue = rosters[r.id] ? sum(rosters[r.id], (p) => p.value) : null;
   }
-  const draw = () => $("st-table").replaceChildren(sortableTable(cols, season.rows, state.standings.sort, draw));
+  const draw = () => $("st-table").replaceChildren(sortableTable(cols, season.rows, state.standings.sort, draw, { rowClass: (r) => myRow(r.id) }));
   draw();
   $("st-table").insertAdjacentHTML("afterend", (odds && odds.weeksLeft ? `<p class="small muted st-odds-note">Playoff odds simulate the remaining ${odds.weeksLeft} week${odds.weeksLeft > 1 ? "s" : ""} 5,000 times using each team's scoring so far. Ties are broken by points for, which may differ from your league's tiebreaker.</p>` : "") + fcCredit());
   if (!state.awardTally) {
@@ -1818,7 +1818,12 @@ function renderLive() {
 
   const f = state.liveFilter;
   const order = { in: 0, pre: 1, post: 2 };
-  const games = [...L.games].sort((a, b) => order[a.state] - order[b.state] || new Date(a.date) - new Date(b.date));
+  // Your players' games come first within live / upcoming / final (starters count more than bench).
+  const my = String(myTeamId() || "");
+  const myWeight = {};
+  for (const p of L.players) if (my && String(p.teamId) === my) myWeight[p.proId] = (myWeight[p.proId] || 0) + (p.slotId === BENCH || p.slotId === IR ? 1 : 10);
+  const mineIn = (g) => (myWeight[g.home.proId] || 0) + (myWeight[g.away.proId] || 0);
+  const games = [...L.games].sort((a, b) => order[a.state] - order[b.state] || mineIn(b) - mineIn(a) || new Date(a.date) - new Date(b.date));
   const counts = { in: 0, pre: 0, post: 0 };
   for (const g of games) counts[g.state]++;
   const byPro = {};
@@ -2290,7 +2295,8 @@ function renderHistory() {
       { key: "best", label: "Best finish", num: true, sort: (m) => (m.best == null ? null : -m.best), render: (m) => (m.best ? `${medal(m.best)} ${ordinal(m.best)}` : "–") },
       { key: "avgFinish", label: "Avg finish", num: true, cls: "hide-sm", sort: (m) => (m.avgFinish == null ? null : -m.avgFinish), render: (m) => (m.avgFinish ? f1(m.avgFinish) : "–") },
     ];
-    const draw = () => $("hist-table").replaceChildren(sortableTable(cols, rows, state.historySort, draw));
+    const myOwner = String(state.base.raw.teams?.find((t) => String(t.id) === String(myTeamId()))?.primaryOwner || "");
+    const draw = () => $("hist-table").replaceChildren(sortableTable(cols, rows, state.historySort, draw, { rowClass: (m) => (myOwner && m.ownerId === myOwner ? "my-row" : "") }));
     draw();
   } else {
     const s = seasons.find((x) => String(x.year) === String(sel));
@@ -2307,7 +2313,8 @@ function renderHistory() {
       { key: "moves", label: "Pickups", num: true, cls: "hide-sm", render: (t) => t.moves ?? "–" },
       { key: "trades", label: "Trades", num: true, cls: "hide-sm", render: (t) => t.trades ?? "–" },
     ];
-    const draw = () => $("hist-table").replaceChildren(sortableTable(cols, s.list, state.seasonSort, draw));
+    const myOwner = String(state.base.raw.teams?.find((t) => String(t.id) === String(myTeamId()))?.primaryOwner || "");
+    const draw = () => $("hist-table").replaceChildren(sortableTable(cols, s.list, state.seasonSort, draw, { rowClass: (t) => (myOwner && t.ownerId === myOwner ? "my-row" : "") }));
     draw();
   }
 }
@@ -2328,7 +2335,7 @@ function renderRoster() {
   const w = state.week, el = $("view-roster");
   const ids = Object.keys(state.base.teams).sort((a, b) => team(a).name.localeCompare(team(b).name));
   const key = `ffb.rosterteam.${state.leagueId || "default"}`;
-  let sel = state.rosterTeam || store.get(key) || myTeamId();
+  let sel = state.rosterTeam || ownerTeam() || store.get(key) || myTeamId();
   if (!state.base.teams[sel]) sel = ids[0];
   state.rosterTeam = sel;
 
@@ -2372,7 +2379,7 @@ function renderRoster() {
   // Team header: who it is and this week's score (or projection) — the opponent lives on the Matchups tab.
   const st = w.status;
   const card = `<div class="rh-top">${logoImg(t, 44)}
-      <div class="rh-id"><strong class="mc-name">${esc(t.name)} <button type="button" class="my-star ${String(myTeamId()) === String(sel) ? "on" : ""}" id="my-star" title="${String(myTeamId()) === String(sel) ? "This is your team" : "Make this my team"}" aria-pressed="${String(myTeamId()) === String(sel)}">${String(myTeamId()) === String(sel) ? "★" : "☆"}</button></strong><span class="mc-owner">${esc(t.owner)} · ${recordStr(t)}</span></div>
+      <div class="rh-id"><strong class="mc-name">${esc(t.name)} <button type="button" class="my-star ${String(myTeamId()) === String(sel) ? "on" : ""}" id="my-star" title="${ownerTeam() ? (String(myTeamId()) === String(sel) ? "Your team (signed in as owner)" : "Signed in as owner: your team is set automatically") : String(myTeamId()) === String(sel) ? "This is your team" : "Make this my team"}" aria-pressed="${String(myTeamId()) === String(sel)}">${String(myTeamId()) === String(sel) ? "★" : "☆"}</button></strong><span class="mc-owner">${esc(t.owner)} · ${recordStr(t)}</span></div>
       ${side ? `<div class="rh-score"><span class="mc-score">${st === "upcoming" ? f1(side.proj) : f2(side.score)}</span><small class="mc-proj">${st === "upcoming" ? `week ${w.week} projection` : `proj ${f1(st === "live" ? side.liveProj : side.proj)}`}</small></div>` : ""}
     </div>`;
   const stats = [
@@ -2392,7 +2399,7 @@ function renderRoster() {
     ${body}
     ${fcCredit()}${nvCredit()}${wxCredit()}`;
   $("roster-team").addEventListener("change", (e) => { state.rosterTeam = e.target.value; store.set(key, e.target.value); renderRoster(); });
-  $("my-star").addEventListener("click", () => { setMyTeam(sel); state.winWin = null; updateEspnLink(); renderRoster(); });
+  $("my-star").addEventListener("click", () => { if (ownerTeam()) return; setMyTeam(sel); state.winWin = null; updateEspnLink(); renderRoster(); });
   $("mv-start")?.addEventListener("click", () => { state.lineupEdit = { teamId: String(sel), pick: null }; renderRoster(); });
   $("mv-done")?.addEventListener("click", () => { state.lineupEdit = null; renderRoster(); });
   el.querySelectorAll(".mv-btn").forEach((b) => {
@@ -2428,8 +2435,12 @@ function ensureOwner() {
   fetch(`/api/roster/session?${q}`).then((r) => r.json()).then((d) => {
     state.owner = { key: k, data: d };
     if (!d.signedIn) store.set("ffb.owner", null);
+    if (ownerTeam()) {
+      state.rosterTeam = null; state.openMatchup = null; state.liveSel = null;
+      if (state.ta && !state.ta.give.length && !state.ta.get.length) state.ta.my = ownerTeam();
+    }
   }).catch(() => { state.owner = { key: k, data: { signedIn: false } }; })
-    .finally(() => { updateOwnerLink(); if (state.tab === "roster") renderRoster(); });
+    .finally(() => { updateOwnerLink(); updateEspnLink(); if (state.week && state.base) render(); });
   return null;
 }
 function updateOwnerLink() {
@@ -2512,7 +2523,13 @@ const ESPN_FF = "https://fantasy.espn.com/football";
 const espnLeague = () => String(state.base?.raw?.id || state.leagueId || LEAGUES[0].id);
 // "My team": what you picked on this device, otherwise the team owned by the ESPN account the site
 // signs in with (the league data function reports which team that is).
-const myTeamId = () => store.get(`ffb.myteam.${state.leagueId || "default"}`) || state.base?.raw?.siteOwnerTeamIds?.[0] || null;
+// Signed in as the site owner: the team you actually control in this league comes first.
+const ownerTeam = () => {
+  const o = state.owner;
+  return !state.demo && state.base && o?.key === ownerKey() && o.data?.signedIn && o.data.teams?.length ? String(o.data.teams[0]) : null;
+};
+const myTeamId = () => ownerTeam() || store.get(`ffb.myteam.${state.leagueId || "default"}`) || state.base?.raw?.siteOwnerTeamIds?.[0] || null;
+const myRow = (teamId) => (teamId != null && String(teamId) === String(myTeamId()) ? "my-row" : "");
 const setMyTeam = (id) => { store.set(`ffb.myteam.${state.leagueId || "default"}`, String(id)); if (state.ta) state.ta.my = String(id); };
 function updateEspnLink() {
   const a = $("espn-open");
@@ -3788,6 +3805,7 @@ function keepState(el, draw) {
 function render() {
   if (!state.week) return;
   if (!$("owner-btn").dataset.wired) { $("owner-btn").dataset.wired = "1"; $("owner-btn").addEventListener("click", openOwnerSignIn); }
+  ensureOwner();
   updateOwnerLink();
   if (!state.live && !state.liveBoot && state.tab !== "live") { state.liveBoot = true; refreshLive().finally(() => { state.liveBoot = false; }); }
   updateEspnLink();

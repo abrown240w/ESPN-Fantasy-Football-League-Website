@@ -1148,3 +1148,8 @@ table.data.bx-table th, table.data.bx-table td { padding: 6px 6px; font-size: .8
 .mv-go:disabled { opacity: .6; }
 .owner-form { display: flex; gap: 8px; margin-top: 10px; }
 .owner-form input { flex: 1; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); font: inherit; }
+
+/* Your team's row in tables */
+table tr.my-row > td { background: #fff7e0; }
+table tr.my-row > td:first-child { box-shadow: inset 3px 0 0 #e8b100; }
+.pt-table tr.my-row td.pt-player { background: #fff7e0; }
