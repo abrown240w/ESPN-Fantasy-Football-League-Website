@@ -177,7 +177,7 @@ function computeOpp(nfl, posId, proId, sp) {
   const g = nfl.games[proId];
   if (g) {
     const [rank, avg] = nfl.oprk?.[posId]?.[g[0]] || [];
-    return { team: PRO[g[0]] || "", home: g[1], rank, avg };
+    return { team: PRO[g[0]] || "", home: g[1], rank, avg, date: g[2] || null };
   }
   return nfl.byes?.[proId] === sp ? { bye: true } : null;
 }
@@ -228,6 +228,8 @@ function parsePlayer(entry, sp, teamId, rosterInfo = {}, nfl = null) {
     short: compactLine(pl.defaultPositionId, act?.stats),
     opp,
     pprRank: info.pprRank ?? null,
+    own: pl.ownership?.percentOwned ?? info.own ?? null,
+    start: pl.ownership?.percentStarted ?? info.start ?? null,
     posRank: info.posRank ?? null,
     teamId,
   };
@@ -289,6 +291,8 @@ function buildWeek(raw, week, nfl = null) {
       pprRank: (p.rankings?.[sp] || []).find((r) => r.rankType === "PPR" && r.rankSourceId === 0)?.averageRank ?? null,
       // Season rank by fantasy points, within the player's position.
       posRank: e.playerPoolEntry.ratings?.["0"]?.positionalRanking || null,
+      own: p.ownership?.percentOwned ?? null,
+      start: p.ownership?.percentStarted ?? null,
     };
   }
   const matchups = (raw.schedule || []).filter((m) => m.matchupPeriodId === week).map((m) => ({
@@ -1042,6 +1046,49 @@ const waiverTip = (p) => (p.waiverDate ? `<b>On waivers</b>Clears ${new Date(p.w
 
 // One player row in the matchup style: label | name / game line / stats / details | points & projection | optional action.
 // Rows get the same highlighting as the matchup screen (bold = playing, gold = on the field, red = red zone).
+// Roster rows: "@DET 32nd" on one line and "Sun 3:25 PM ☀️" (or the live clock / Final) under it.
+function gameLines(p) {
+  const g = gameStatusOf(p), chip = p.opp?.rank ? ` ${oprkChip(p)}` : "";
+  const wx = wxChip(p.proId, g?.state, true);
+  const kick = (d) => new Date(d).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" });
+  if (g?.oppAbbr) {
+    const opp = `${g.home ? "" : "@"}${esc(g.oppAbbr)}`;
+    const score = g.state !== "pre" && g.score != null && g.oppScore != null ? ` ${g.score}-${g.oppScore}` : "";
+    const when = g.state === "pre" ? kick(g.date) : g.state === "in" ? `<span class="mx-clock">${esc((g.detail || "").replace(" - ", " "))}</span>` : "Final";
+    return [`${opp}${chip}`, `${when}${score}${wx ? ` ${wx}` : ""}`];
+  }
+  if (p.opp?.bye) return ["BYE", ""];
+  if (!p.opp?.team) return ["", ""];
+  return [`${p.opp.home ? "" : "@"}${esc(p.opp.team)}${chip}`, `${p.opp.date ? kick(p.opp.date) : ""}${wx ? ` ${wx}` : ""}`];
+}
+// The Roster tab's right-hand columns: Ranks, Usage, Research or Schedule (buttons above Starters).
+const ROSTER_VIEWS = [["ranks", "Ranks"], ["usage", "Usage"], ["research", "Research"], ["schedule", "Schedule"]];
+const rosterView = () => (ROSTER_VIEWS.some(([k]) => k === state.rosterView) ? state.rosterView : (state.rosterView = store.get("ffb.rview") || "usage"));
+function rosterCols(p) {
+  const cell = (v, lbl, tip) => `<div class="pu" title="${tip}"><b>${v}</b><span>${lbl}</span></div>`;
+  const v = rosterView();
+  if (v === "ranks") return `<div class="pr-use n2">${cell(p.pprRank ? `${esc(p.pos)}${Math.round(p.pprRank)}` : "–", "PPR", "ESPN experts' average PPR rank this week, at the position")}${cell(p.posRank ? `${esc(p.pos)}${p.posRank}` : "–", "Pos", "Season rank by fantasy points, at the position")}</div>`;
+  if (v === "research") {
+    const val = valueOf(p.id);
+    return `<div class="pr-use n3">${cell(p.own != null ? `${Math.round(p.own)}%` : "–", "Rost", "% of ESPN leagues that roster him")}${cell(p.start != null ? `${Math.round(p.start)}%` : "–", "Start", "% of ESPN leagues that start him")}${cell(val ? fmtVal(val) : "–", "Value", "FantasyCalc trade value")}</div>`;
+  }
+  if (v === "schedule") return schedStrip(p);
+  return usageCols(p.id);
+}
+// This week's matchup and the rest of the season: opponent and how tough that defense is vs. his position.
+function schedStrip(p) {
+  const nfl = state.week?.nfl, sched = nfl?.sched?.[p.proId];
+  if (!sched) return `<div class="pr-sched"><div class="ps muted">–</div></div>`;
+  const cells = [];
+  for (let wk = state.week.week; wk <= state.base.weeks; wk++) {
+    const sp = state.base.scoringPeriodFor(wk), g = sched[sp];
+    if (!g) { cells.push(`<div class="ps bye"><span>W${wk}</span><b>BYE</b><i></i></div>`); continue; }
+    const [opp, home] = g, rank = nfl.oprk?.[p.posId]?.[opp]?.[0];
+    const cls = rank ? (rank <= 10 ? "tough" : rank >= 23 ? "easy" : "") : "";
+    cells.push(`<div class="ps ${wk === state.week.week ? "cur" : ""}" title="Week ${wk}: ${home ? "vs" : "@"} ${esc(PRO[opp] || "")}${rank ? ` · ${ordinal(rank)} vs ${esc(p.pos)}s (1st = toughest)` : ""}"><span>W${wk}</span><b>${home ? "" : "@"}${esc(PRO[opp] || "")}</b><i class="oprk ${cls}">${rank ? ordinal(rank) : ""}</i></div>`);
+  }
+  return `<div class="pr-sched">${cells.join("")}</div>`;
+}
 // Three usage columns for the Roster tab (last game): share of snaps, targets and carries.
 function usageCols(id) {
   const u = usageOf(id);
@@ -1074,15 +1121,16 @@ function playerRow(p, { label, sp, action = "", owner = true, unread = false, co
     `<span class="pd-k">Rank</span> ${p.posRank ? `${esc(p.pos)}${Math.round(p.posRank)}` : "–"}`,
     `<span class="pd-k">Avg</span> ${p.seasonAvg != null ? f1(p.seasonAvg) : "–"}`,
     `<span class="pd-k">Rost</span> ${p.own != null ? `${Math.round(p.own)}%` : "–"}`);
-  return `<div class="pr-row ${gsState(p)} ${cols ? "has-use" : ""} ${faStats ? "fa-stats" : ""}">
+  return `<div class="pr-row ${gsState(p)} ${cols ? `has-use rv-${rosterView()}` : ""} ${faStats ? "fa-stats" : ""}">
     <div class="pr-label">${esc(label ?? p.pos)}</div>
     <div class="pr-info pr-has-hs">${headshot(p, 38)}<div class="pr-text">
       <div class="mx-name">${plinkNm(p)}${injBadge(p)}${unread ? newsDot(p) : ""}</div>
-      <div class="mx-game">${gameLineHtml(p)}${p.opp?.rank ? `<span class="pr-oprk"> ${oprkChip(p)}</span>` : ""}${wxChip(p.proId, gameStatusOf(p)?.state)}</div>
+      ${cols ? (() => { const [opp, when] = gameLines(p); return `<div class="mx-game pr-opp">${opp || "&nbsp;"}</div><div class="mx-game pr-when">${when || "&nbsp;"}</div>`; })()
+        : `<div class="mx-game">${gameLineHtml(p)}${p.opp?.rank ? `<span class="pr-oprk"> ${oprkChip(p)}</span>` : ""}${wxChip(p.proId, gameStatusOf(p)?.state)}</div>`}
       <div class="mx-stats" ${p.short ? `title="${esc(p.line)}"` : ""}>${p.short ? esc(p.short) : "&nbsp;"}</div>
-      <div class="pr-details">${details.length ? details.map((d) => `<span class="pd">${d}</span>`).join("") : "&nbsp;"}</div>
+      ${cols ? "" : `<div class="pr-details">${details.length ? details.map((d) => `<span class="pd">${d}</span>`).join("") : "&nbsp;"}</div>`}
     </div></div>
-    ${cols ? usageCols(p.id) : ""}
+    ${cols ? rosterCols(p) : ""}
     <div class="mx-pts"><div class="mx-score">${pts}</div><div class="mx-proj">${f1(p.proj)}</div></div>
     ${action}
   </div>`;
@@ -2425,7 +2473,8 @@ function renderRoster() {
     const lc = lineupCheck(side, w, canEdit);
     const wv = waiverPlace(sel);
     const starters = `Starters${lc === LINEUP_OK ? ` <span class="lc-tick" title="Lineup is optimal by ESPN's week ${w.week} projections" aria-label="Lineup is optimal">✓</span>` : ""}${wv ? ` <span class="rh-wv">Waiver order: ${wv}</span>` : ""}`;
-    body = (lc === LINEUP_OK ? "" : lc) + list(starters, side.starters) + list("Bench", bench) + list("Injured reserve", ir) + rosterNews(side) + playoffSchedule(side);
+    const views = `<div class="seg rv-seg" role="tablist" aria-label="Columns">${ROSTER_VIEWS.map(([k, label]) => `<button type="button" data-rv="${k}" class="${rosterView() === k ? "active" : ""}" aria-selected="${rosterView() === k}">${label}</button>`).join("")}</div>`;
+    body = (lc === LINEUP_OK ? "" : lc) + views + list(starters, side.starters) + list("Bench", bench) + list("Injured reserve", ir) + rosterNews(side) + playoffSchedule(side);
   }
   const rosterValue = side && state.values?.byId?.size ? sum(side.players, (p) => valueOf(p.id) || 0) : null;
   const starterValue = side && state.values?.byId?.size ? sum(side.starters, (p) => valueOf(p.id) || 0) : null;
@@ -2457,6 +2506,20 @@ function renderRoster() {
   $("roster-team").addEventListener("change", (e) => { state.rosterTeam = e.target.value; store.set(key, e.target.value); renderRoster(); });
   $("my-star").addEventListener("click", () => { if (ownerTeam()) return; setMyTeam(sel); state.winWin = null; updateEspnLink(); renderRoster(); });
   $("mv-done")?.addEventListener("click", () => { state.lineupEdit.pick = null; renderRoster(); });
+  el.querySelectorAll("[data-rv]").forEach((b) => b.addEventListener("click", () => { state.rosterView = b.dataset.rv; store.set("ffb.rview", b.dataset.rv); renderRoster(); }));
+  // Schedule view: every row's week strip scrolls together, starters and bench alike.
+  const strips = [...el.querySelectorAll(".pr-sched")];
+  let syncing = false;
+  for (const st of strips) {
+    st.scrollLeft = state.schedScroll || 0;
+    st.addEventListener("scroll", () => {
+      if (syncing) return;
+      syncing = true;
+      state.schedScroll = st.scrollLeft;
+      for (const o of strips) if (o !== st) o.scrollLeft = st.scrollLeft;
+      requestAnimationFrame(() => { syncing = false; });
+    }, { passive: true });
+  }
   $("pd-open")?.addEventListener("click", (e) => { state.modalReturn = e.currentTarget; openPendingModal(); });
   $("mv-drop")?.addEventListener("click", () => { const p = picked; state.lineupEdit.pick = null; confirmDrop(sel, p); });
   // Lineup check buttons: one suggested swap, or the whole best lineup.
@@ -3099,12 +3162,13 @@ function wxTip(g) {
 }
 // Small chip for player cards: rain chance with a condition icon, or a stadium icon when the roof is closed.
 // liveState (from the scoreboard, which is fresher than the hourly forecast) hides it once the game ends.
-function wxChip(proId, liveState) {
+function wxChip(proId, liveState, compact = false) {
   const g = wxGame(proId);
   if (!g || g.state === "post" || liveState === "post") return "";
   if (wxIndoors(g)) return `<span class="wx wx-in" data-tip="${wxTip(g)}">🏟️</span>`;
   const f = g.forecast;
   if (!f) return "";
+  if (compact) return `<span class="wx ${f.precipProb >= 50 ? "wx-wet" : ""}" data-tip="${wxTip(g)}">${wxIcon(f.code)}${f.windMph >= 15 ? "💨" : ""}</span>`;
   return `<span class="wx ${f.precipProb >= 50 ? "wx-wet" : ""}" data-tip="${wxTip(g)}">${wxIcon(f.code)} ${f.precipProb}%${f.windMph >= 15 ? " 💨" : ""}</span>`;
 }
 // One-line summary for a game card on the Live games tab.
@@ -4040,6 +4104,12 @@ function renderPlayerModal(d, focusSp) {
       uAvg?.avg ? ["Snap %", pctTxt(uAvg.avg.pct)] : null,
       uAvg?.avg && uAvg.pos !== "QB" ? ["Tgt %", pctTxt(uAvg.avg.share)] : null,
       val ? ["Value", fmtVal(val.value)] : null,
+      ...(() => {
+        const r = state.week?.sides?.flatMap((x) => x.players).find((x) => String(x.id) === String(p.id)) || faData()?.players?.find((x) => String(x.id) === String(p.id));
+        if (!r) return [];
+        return [["PPR rk", r.pprRank ? `${pos}${Math.round(r.pprRank)}<small>wk ${state.week.week}</small>` : "–"], ["Pos rk", r.posRank ? `${pos}${r.posRank}` : "–"],
+          r.own != null ? ["Rost %", `${Math.round(r.own)}%`] : null, r.start != null ? ["Start %", `${Math.round(r.start)}%`] : null].filter(Boolean);
+      })(),
     ].filter(Boolean);
     const recent = weeks.map((w) => w.sp).sort((x, y) => y - x).slice(0, 3);
     const score = (sd) => (lg.state === "pre" ? "" : ` ${sd.score ?? ""}`);

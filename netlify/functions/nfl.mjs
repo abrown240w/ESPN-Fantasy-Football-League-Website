@@ -42,9 +42,14 @@ export default async (req) => {
     // games[proTeamId] = [opponentProTeamId, isHome, kickoff]; teams on bye are left out.
     const games = {};
     const byes = {};
+    const teamWeeks = {}; // teamWeeks[proTeamId][week] = [opponentProTeamId, isHome] for the whole season
     for (const t of sched.settings?.proTeams || []) {
       if (!t.id) continue;
       byes[t.id] = t.byeWeek;
+      teamWeeks[t.id] = Object.fromEntries(Object.entries(t.proGamesByScoringPeriod || {}).map(([w, gs]) => {
+        const x = gs?.[0];
+        return x ? [w, [x.homeProTeamId === t.id ? x.awayProTeamId : x.homeProTeamId, x.homeProTeamId === t.id]] : null;
+      }).filter(Boolean));
       const g = (t.proGamesByScoringPeriod?.[sp] || [])[0];
       if (g) {
         const home = g.homeProTeamId === t.id;
@@ -61,7 +66,7 @@ export default async (req) => {
       }
     }
 
-    return json(200, { games, byes, oprk }, {
+    return json(200, { games, byes, oprk, sched: teamWeeks }, {
       "cache-control": "public, max-age=900",
       "netlify-cdn-cache-control": "public, max-age=3600, stale-while-revalidate=21600",
     });

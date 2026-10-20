@@ -106,6 +106,7 @@
         appliedStatTotal: w.actual ?? 0,
         ...(withInjury ? { ratings: { 0: { positionalRanking: seasonRank[p.id] } } } : {}),
         player: { id: p.id, fullName: p.fullName, defaultPositionId: p.defaultPositionId, proTeamId: p.proTeamId, eligibleSlots: p.eligibleSlots, stats,
+          ownership: { percentOwned: Math.min(99.9, 40 + (p.id * 37) % 60), percentStarted: Math.min(99, 10 + (p.id * 53) % 85) },
           ...(withInjury ? {
             injuryStatus: p.injuryStatus, injured: p.injuryStatus !== "ACTIVE",
             rankings: { [wk]: [{ rankType: "PPR", rankSourceId: 0, averageRank: pprRank(p, wk) + Math.round(rand() * 4) / 2 }] },
@@ -271,6 +272,24 @@
     return { usesBudget: false, moves, pendingTrades, players, signedIn: true, tradeDebug: {} };
   }
 
+  // Whole-season schedule for the Roster tab's Schedule view: sched[team][week] = [opponent, home].
+  let schedMemo = null;
+  function demoSched() {
+    if (schedMemo) return schedMemo;
+    schedMemo = {};
+    for (let w = 1; w <= TOTAL_WEEKS; w++) {
+      let s = 7919 * w;
+      const r = () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296);
+      const ids = [...Array(30).keys()].map((i) => i + 1).concat([33, 34]);
+      const order = [...ids];
+      for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(r() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
+      for (let i = 2; i < order.length; i += 2) {
+        (schedMemo[order[i]] ||= {})[w] = [order[i + 1], true];
+        (schedMemo[order[i + 1]] ||= {})[w] = [order[i], false];
+      }
+    }
+    return schedMemo;
+  }
   // Same shape as /api/nfl: pro-team pairings and opponent ranks for a week.
   function nfl(sp) {
     let s = 7919 * sp;
@@ -290,7 +309,7 @@
       oprk[posId] = {};
       shuffle(ids).forEach((id, i) => (oprk[posId][id] = [i + 1, Math.round((8 + i * 0.6 + r() * 2) * 10) / 10]));
     }
-    return { games, byes, oprk };
+    return { games, byes, oprk, sched: demoSched() };
   }
 
   // Same shape as /api/live. Games in progress advance each time it's called.

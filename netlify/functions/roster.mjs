@@ -61,6 +61,13 @@ async function espnRead(leagueId, season, views) {
   return res.json();
 }
 const ownedTeams = (data) => (data.teams || []).filter((t) => (t.owners || []).some((o) => String(o).toUpperCase().replace(/[{}]/g, "") === swidRaw())).map((t) => t.id);
+function livePending(d) {
+  const all = [...(d.pendingTransactions || []), ...(d.transactions || [])];
+  const canceled = new Set(all.filter((t) => t.executionType === "CANCEL" || /^CANCEL/.test(t.status || "")).map((t) => String(t.relatedTransactionId)));
+  const seen = new Set();
+  return all.filter((t) => t && !seen.has(t.id) && seen.add(t.id))
+    .filter((t) => !/^(EXECUTED|CANCEL|FAIL|VETO|DECLINE)/.test(t.status || "") && !canceled.has(String(t.id)) && t.executionType !== "CANCEL");
+}
 const validLeague = (leagueId, season) => /^\d{1,12}$/.test(String(leagueId)) && /^\d{4}$/.test(String(season));
 // Send one transaction to ESPN as the saved account and log it.
 async function espnWrite(leagueId, season, payload, log) {
@@ -203,10 +210,7 @@ export default async (req, context) => {
       return json(502, { error: "upstream", message: "Couldn't load pending moves from ESPN." });
     }
     const mine = ownedTeams(data);
-    const all = [...(data.pendingTransactions || []), ...(data.transactions || [])];
-    const seen = new Set();
-    const list = all.filter((t) => t && !seen.has(t.id) && seen.add(t.id))
-      .filter((t) => !["EXECUTED", "CANCELED", "FAILED_INVALIDPLAYERSOURCE", "FAILED_ROSTERLIMIT"].includes(t.status))
+    const list = livePending(data)
       .filter((t) => mine.includes(t.teamId) || (t.items || []).some((i) => mine.includes(i.fromTeamId) || mine.includes(i.toTeamId)));
     // Player names for the items.
     const ids = [...new Set(list.flatMap((t) => (t.items || []).map((i) => i.playerId)))];
@@ -279,9 +283,10 @@ export default async (req, context) => {
     return json(200, { owner: sub.owner });
   }
 
-  // Cancel a pending waiver claim, withdraw a trade offer you sent, or decline one you got. ESPN
-  // doesn't document these, so a few known request shapes are tried in order; after each one ESPN is
-  // checked to see whether the move is still pending. Nothing here can make a new move.
+  // Cancel a pending waiver claim, withdraw a trade offer you sent, or decline one you got. The claim
+  // cancel is the shape ESPN's own site sends (captured by github.com/jwulff/fantasy-sports):
+  // { type: "WAIVER", executionType: "CANCEL", relatedTransactionId }. Trade offers use the same idea;
+  // if ESPN refuses, the next shape is tried. After each one the pending queue is re-read to confirm.
   if (action === "cancel" && req.method === "POST") {
     if (!signedIn(req)) return json(401, { error: "signed_out", message: "Sign in as the owner first." });
     if (!sameOrigin(req)) return json(403, { error: "origin", message: "Changes have to come from the site itself." });
@@ -296,18 +301,18 @@ export default async (req, context) => {
       return json(502, { error: "upstream", message: "Couldn't load your pending moves from ESPN." });
     }
     if (!ownedTeams(data).includes(teamId)) return json(403, { error: "not_yours", message: "That isn't your team." });
-    const pendingNow = (d) => [...(d.pendingTransactions || []), ...(d.transactions || [])].find((t) => String(t.id) === txId && !/^(EXECUTED|CANCEL|FAIL|VETO|DECLINE)/.test(t.status || ""));
+    const pendingNow = (d) => livePending(d).find((t) => String(t.id) === txId);
     const tx = pendingNow(data);
     if (!tx) return json(409, { error: "gone", message: "That move isn't pending anymore." });
     const mineInvolved = tx.teamId === teamId || (tx.items || []).some((i) => i.fromTeamId === teamId || i.toTeamId === teamId);
     if (!mineInvolved) return json(403, { error: "not_yours", message: "That move isn't yours." });
     const sp = data.scoringPeriodId || data.status?.latestScoringPeriod;
     const TX = `${WRITES}/seasons/${season}/segments/0/leagues/${leagueId}/transactions/`;
-    const base = { isLeagueManager: false, teamId, memberId: `{${swidRaw()}}`, scoringPeriodId: sp, executionType: "EXECUTE", relatedTransactionId: txId, items: [] };
-    const tries = kind === "trade-in"
-      ? [["POST", TX, { ...base, type: "TRADE_DECLINE" }]]
-      : [["POST", TX, { ...base, type: "CANCEL" }], ["DELETE", `${TX}${txId}`, null], ...(kind === "trade-out" ? [["POST", TX, { ...base, type: "TRADE_DECLINE" }]] : [])];
-    const headers = { "content-type": "application/json", accept: "application/json", "user-agent": "Mozilla/5.0 (fantasy-dashboard)", origin: "https://fantasy.espn.com", referer: "https://fantasy.espn.com/", cookie: `espn_s2=${process.env.ESPN_S2}; SWID=${process.env.SWID}` };
+    const base = { isLeagueManager: false, teamId, scoringPeriodId: sp, relatedTransactionId: txId };
+    const tries = kind === "claim" ? [["POST", TX, { ...base, type: tx.type === "FREEAGENT" ? "FREEAGENT" : "WAIVER", executionType: "CANCEL" }]]
+      : kind === "trade-out" ? [["POST", TX, { ...base, type: "TRADE_PROPOSAL", executionType: "CANCEL" }], ["POST", TX, { ...base, type: "TRADE_DECLINE", executionType: "EXECUTE" }]]
+      : [["POST", TX, { ...base, type: "TRADE_DECLINE", executionType: "EXECUTE" }], ["POST", TX, { ...base, type: "TRADE_PROPOSAL", executionType: "CANCEL" }]];
+    const headers = { "content-type": "application/json", accept: "application/json", "user-agent": "Mozilla/5.0 (fantasy-dashboard)", "x-fantasy-source": "kona", "x-fantasy-platform": "kona-PROD", origin: "https://fantasy.espn.com", referer: "https://fantasy.espn.com/", cookie: `espn_s2=${process.env.ESPN_S2}; SWID=${process.env.SWID}` };
     let lastMsg = "";
     for (const [method, url, body] of tries) {
       let res, out;
