@@ -14,6 +14,10 @@
 //         POST /api/roster/transaction {leagueId, season, teamId, add?, drop?, waiver?, bid?}  (pickups, claims, drops)
 //         GET  /api/roster/pending?leagueId=&season=   (your pending claims and trade offers; owner only)
 //         POST /api/roster/trade {leagueId, season, teamId, otherTeamId, send: [ids], receive: [ids], comment?}
+//         GET  /api/roster/chat?leagueId=&season=            your league chats (owner only)
+//         GET  /api/roster/chattopic?leagueId=&season=&topic=  one conversation's messages
+//         POST /api/roster/chatsend {leagueId, season, topic, text}
+//         POST /api/roster/chatnew  {leagueId, season, members: [memberIds], text}
 //         POST /api/roster/cancel {leagueId, season, teamId, txId, kind: claim | trade-out | trade-in}
 //         POST /api/roster/pushowner {endpoint, leagueId}  (marks this device's alerts as the owner's, so
 //                                    waiver reports can include missed claims)
@@ -323,6 +327,101 @@ export default async (req, context) => {
       try { if (!pendingNow(await espnRead(leagueId, season, ["mPendingTransactions"]))) return json(200, { ok: true }); } catch { return json(200, { ok: true, unverified: true }); }
     }
     return json(502, { error: "espn_refused", message: `ESPN didn't ${kind === "trade-in" ? "decline" : "cancel"} it${lastMsg ? `: ${lastMsg}` : ""}. You can do it in the ESPN app for now.` });
+  }
+
+  // ---------- League chat (ESPN's chat.espn.com service, same ESPN sign-in) ----------
+  if (["chat", "chattopic", "chatsend", "chatnew"].includes(action)) {
+    if (!signedIn(req)) return json(401, { error: "signed_out", message: "Sign in as the owner first." });
+    const isPost = req.method === "POST";
+    if (isPost && !sameOrigin(req)) return json(403, { error: "origin", message: "Use the site itself." });
+    const b = isPost ? await req.json().catch(() => ({})) : Object.fromEntries(new URL(req.url).searchParams);
+    const leagueId = String(b.leagueId || ""), season = String(b.season || defaultSeason());
+    if (!validLeague(leagueId, season)) return json(400, { error: "bad_request", message: "Missing league." });
+    const COMM = `https://lm-api-communication.fantasy.espn.com/apis/v3/games/ffl/seasons/${season}/segments/0/leagues/${leagueId}/communication/`;
+    const me = `{${swidRaw()}}`;
+    const headers = { accept: "application/json", "content-type": "application/json", "user-agent": "Mozilla/5.0 (fantasy-dashboard)", origin: "https://chat.espn.com", referer: "https://chat.espn.com/", cookie: `espn_s2=${process.env.ESPN_S2}; SWID=${process.env.SWID}` };
+    const comm = async (path, init = {}) => {
+      const res = await fetch(COMM + path, { ...init, headers });
+      const out = await res.json().catch(() => null);
+      if (!res.ok) throw Object.assign(new Error(out?.messages?.[0] || out?.details?.[0]?.message || `ESPN chat returned ${res.status}`), { status: res.status });
+      return out;
+    };
+    const norm = (id) => String(id || "").toUpperCase().replace(/[{}]/g, "");
+    // Who's who: managers and their teams.
+    let league;
+    try { league = await espnRead(leagueId, season, ["mTeam", "mSettings"]); } catch { return json(502, { error: "upstream", message: "Couldn't load the league from ESPN." }); }
+    const teamOf = {};
+    for (const t of league.teams || []) for (const o of t.owners || []) teamOf[norm(o)] = t;
+    const members = (league.members || []).map((m) => {
+      const t = teamOf[norm(m.id)];
+      const name = [m.firstName, m.lastName].filter(Boolean).join(" ") || m.displayName || "Manager";
+      return { id: m.id, name, first: m.firstName || name.split(" ")[0], teamId: t?.id ?? null, team: t ? (t.name || `${t.location || ""} ${t.nickname || ""}`.trim()) : "" };
+    });
+    const memberOf = (id) => members.find((m) => norm(m.id) === norm(id));
+    try {
+      if (action === "chat") {
+        const list = await comm("?view=chat_conversations&platform=chat");
+        const topics = (list.topics || []).filter((t) => t.type !== "ACTIVITY_TRANSACTIONS").map((t) => {
+          const others = (t.viewableBy || []).filter((x) => norm(x) !== norm(me)).map(memberOf).filter(Boolean);
+          return { id: t.id, type: t.type, unread: t.unreadMessageCount || 0, date: t.dateEdited || 0,
+            title: t.type === "CHAT_ALL_MEMBERS" ? (league.settings?.name || "League chat") : others.map((o) => o.first).join(", ") || "Chat",
+            members: others.map((o) => ({ name: o.name, team: o.team, teamId: o.teamId })) };
+        });
+        return json(200, { me: { id: me, teamId: memberOf(me)?.teamId ?? null }, topics, members: members.filter((m) => norm(m.id) !== norm(me)) });
+      }
+      if (action === "chattopic") {
+        if (!/^[\w-]{6,64}$/.test(String(b.topic || ""))) return json(400, { error: "bad_request" });
+        const c = await comm(`topics/${b.topic}?view=chat_conversation&platform=chat`);
+        // ESPN's automatic posts carry team and player ids; turn them into readable lines.
+        const ids = new Set();
+        for (const m of c.messages || []) for (const [k, v] of Object.entries(m.attributes || {})) if (/P\d+$/.test(k)) ids.add(Number(v));
+        const names = {};
+        if (ids.size) {
+          try {
+            const r = await fetch(`${READS}/seasons/${season}/players?scoringPeriodId=0&view=players_wl`, { headers: { accept: "application/json", "user-agent": "Mozilla/5.0 (fantasy-dashboard)", "x-fantasy-filter": JSON.stringify({ filterIds: { value: [...ids] } }) } });
+            for (const pl of (await r.json()) || []) names[pl.id] = pl.fullName;
+          } catch { /* ids only */ }
+        }
+        const teamName = (id) => { const t = (league.teams || []).find((x) => String(x.id) === String(id)); return t ? (t.name || `Team ${id}`) : `Team ${id}`; };
+        const activity = (a) => {
+          const parts = [];
+          for (let n = 1; n <= 12; n++) {
+            if (a[`team${n}`] == null) continue;
+            const adds = Object.keys(a).filter((k) => k.startsWith(`team${n}addP`) || (n === 1 && /^addP\d+$/.test(k))).map((k) => names[a[k]] || "a player");
+            const drops = Object.keys(a).filter((k) => k.startsWith(`team${n}dropP`) || (n === 1 && /^dropP\d+$/.test(k))).map((k) => names[a[k]] || "a player");
+            if (adds.length || drops.length) parts.push(`${teamName(a[`team${n}`])}: ${[adds.length ? `+ ${adds.join(", ")}` : "", drops.length ? `− ${drops.join(", ")}` : ""].filter(Boolean).join("  ")}`);
+          }
+          return parts;
+        };
+        const kind = { 264: "Player add", 265: "Player drop", 266: "Add / drop", 271: "Trade", 272: "Trade", 273: "Waivers processed" };
+        const messages = (c.messages || []).filter((m) => !m.isDeleted).map((m) => {
+          const who = memberOf(m.author);
+          const sys = m.messageTypeId !== 0;
+          return { id: m.id, date: m.date, mine: norm(m.author) === norm(me), author: who?.name || (sys ? "League" : "Manager"), team: who?.team || "",
+            text: m.content || "", system: sys, title: sys ? (kind[m.messageTypeId] || "League update") : "", lines: sys ? activity(m.attributes || {}) : [] };
+        }).sort((x, y) => x.date - y.date);
+        return json(200, { id: c.id, type: c.type, messages, total: c.totalMessageCount || messages.length });
+      }
+      if (action === "chatsend" && isPost) {
+        const text = String(b.text || "").trim();
+        if (!/^[\w-]{6,64}$/.test(String(b.topic || "")) || !text || text.length > 1000) return json(400, { error: "bad_request", message: "Write a message (up to 1,000 characters)." });
+        await comm(`topics/${b.topic}/messages/?source=${encodeURIComponent(me)}&platform=chat`, { method: "POST", body: JSON.stringify({ author: me, content: text, messageTypeId: 0 }) });
+        console.log(JSON.stringify({ event: "chat_send", ip, leagueId, at: new Date().toISOString() }));
+        return json(200, { ok: true });
+      }
+      if (action === "chatnew" && isPost) {
+        const text = String(b.text || "").trim();
+        const ids = (Array.isArray(b.members) ? b.members : []).map(String).filter((x) => memberOf(x));
+        if (!ids.length || !text || text.length > 1000) return json(400, { error: "bad_request", message: "Pick at least one manager and write a message." });
+        const out = await comm(`topics/?source=${encodeURIComponent(me)}&platform=chat`, { method: "POST", body: JSON.stringify({
+          messages: [{ author: me, content: text, messageTypeId: 0 }], subject: "", type: "CHAT_DIRECT_MESSAGE", viewableBy: [me, ...ids] }) });
+        console.log(JSON.stringify({ event: "chat_new", ip, leagueId, people: ids.length, at: new Date().toISOString() }));
+        return json(200, { ok: true, id: out?.id || null });
+      }
+    } catch (e) {
+      return json(e.status === 401 || e.status === 403 ? 403 : 502, { error: "chat", message: `ESPN chat: ${e.message}` });
+    }
+    return json(404, { error: "not_found" });
   }
 
   return json(404, { error: "not_found" });

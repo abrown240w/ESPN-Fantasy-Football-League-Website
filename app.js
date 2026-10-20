@@ -2367,7 +2367,7 @@ const rkCls = (r) => (!r ? "" : r <= 10 ? "tough" : r >= 23 ? "easy" : "");
 function erCols(p) {
   const v = erView(), dash = `<span class="muted">–</span>`;
   const c = (val, sub = "") => `<div class="erc">${val}${sub ? `<small>${sub}</small>` : ""}</div>`;
-  if (v === "scoring") return [c(p.seasonAvg != null ? f1(p.seasonAvg) : dash), c(p.seasonPts != null ? f1(p.seasonPts) : dash), c(p.lastPts != null ? f1(p.lastPts) : dash), c(f1(p.proj))];
+  if (v === "scoring") return [c(p.posRank ? `${esc(p.pos)}${p.posRank}` : dash), c(p.seasonAvg != null ? f1(p.seasonAvg) : dash), c(p.seasonPts != null ? f1(p.seasonPts) : dash), c(p.lastPts != null ? f1(p.lastPts) : dash), c(f1(p.proj))];
   if (v === "research") {
     const r = p.opp?.rank;
     return [c(r ? `<span class="rk ${rkCls(r)}">${ordinal(r)}</span>` : dash), c(p.own != null ? f1(p.own) : dash), c(p.start != null ? f1(p.start) : dash),
@@ -2398,7 +2398,7 @@ function erCols(p) {
 function erHeads() {
   const v = erView();
   const h = (l, tip = "") => `<div class="erc" ${tip ? `title="${tip}"` : ""}>${l}</div>`;
-  if (v === "scoring") return [h("Avg", "Points per game this season"), h("Pts", "Season points"), h("Last", "Last week"), h("Proj", "This week's projection")];
+  if (v === "scoring") return [h("Pos rk", "Season rank at the position"), h("Avg", "Points per game this season"), h("Pts", "Season points"), h("Last", "Last week"), h("Proj", "This week's projection")];
   if (v === "research") return [h("Opp rk", "Opponent's rank vs. the position (1st = toughest)"), h("%Rost"), h("%Start"), h("+/-", "Change in % rostered")];
   if (v === "usage") return [h("Snap", "Share of snaps last game"), h("Tgt", "Share of targets last game"), h("Rush", "Share of carries last game")];
   if (v === "schedule") return [h("Bye"), ...Array.from({ length: state.base.weeks - state.week.week + 1 }, (_, i) => h(`Wk ${state.week.week + i}`))];
@@ -2407,7 +2407,7 @@ function erHeads() {
 }
 // "Sun 12:00 PM @ATL (19th)", or the live clock / final score, plus a small weather icon.
 function erGameLine(p) {
-  const g = gameStatusOf(p), r = p.opp?.rank, wx = wxChip(p.proId, g?.state, true);
+  const g = gameStatusOf(p), r = p.opp?.rank, wx = ""; // weather left out to save room
   const opp = (abbr, home) => `<span class="rk ${rkCls(r)}">${home ? "" : "@"}${esc(abbr)}${r ? ` (${ordinal(r)})` : ""}</span>`;
   const kick = (d) => new Date(d).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" });
   if (g?.oppAbbr) {
@@ -2466,13 +2466,13 @@ function chipPopup(kind, teamId, side) {
   }
   if (kind === "awards") {
     const tally = ensureAwardTally(reopen);
-    if (!tally) return showModal(`${head("🏆", "Achievements")}<div class="loading small"><span class="spinner"></span> Counting weekly awards…</div>`);
+    if (!tally) return showModal(`${head("🏆", "Awards")}<div class="loading small"><span class="spinner"></span> Counting weekly awards…</div>`);
     const mine = tally[teamId] || {};
     const won = AWARD_ORDER.filter((k) => mine[k]?.length);
     const total = sum(won, (k) => mine[k].length);
     const rank = 1 + Object.values(state.base.teams).filter((o) => o.seed < t.seed).length;
     const pfRank = 1 + Object.values(state.base.teams).filter((o) => o.pf > t.pf).length;
-    return showModal(`${head("🏆", "Achievements", `${total} weekly award${total === 1 ? "" : "s"} this season`)}
+    return showModal(`${head("🏆", "Awards", `${total} weekly award${total === 1 ? "" : "s"} this season`)}
       <div class="pm-sheet"><div><span>Standing</span><strong>${ordinal(rank)}</strong></div><div><span>Record</span><strong>${recordStr(t)}</strong></div><div><span>Points for</span><strong>${f1(t.pf)}</strong><small>${ordinal(pfRank)}</small></div><div><span>Awards</span><strong>${total}</strong></div></div>
       ${won.length ? `<div class="chip-awards">${won.map((k) => `<div class="chip-award">${awardIcon(k, 26)}<div><strong>${AWARD_NAMES[k]}</strong><span class="muted small">Week${mine[k].length > 1 ? "s" : ""} ${mine[k].join(", ")}</span></div><b>×${mine[k].length}</b></div>`).join("")}</div>`
         : `<p class="muted">No weekly awards yet this season.</p>`}
@@ -2556,7 +2556,7 @@ function renderRoster() {
   const nAwards = tally ? sum(Object.values(tally), (wks) => wks.length) : null;
   const chips = [
     chip("news", "📰", "News", anyNews ? `<i class="er-dot"></i> New` : "Latest"),
-    chip("awards", "🏆", "Achievements", nAwards == null ? "View" : `${nAwards} award${nAwards === 1 ? "" : "s"}`),
+    chip("awards", "🏆", "Awards", nAwards == null ? "View" : `${nAwards} award${nAwards === 1 ? "" : "s"}`),
     canEdit ? chip("claims", "📋", "Claims", P ? `${claims} pending` : "…") : "",
     canEdit ? chip("trades", "⇄", "Trades", P ? `${offers} offer${offers === 1 ? "" : "s"}` : "…") : "",
     deadline ? chip("deadline", "📅", "Trade deadline", new Date(deadline).toLocaleString(undefined, { month: "numeric", day: "numeric", hour: "numeric", minute: "2-digit" })) : "",
@@ -2622,6 +2622,130 @@ function renderRoster() {
     const p = side.players.find((x) => String(x.id) === b.dataset.pid);
     if (p) { state.modalReturn = b; openUpgrades(p); }
   }));
+}
+
+// ---------- League chat (owner only) ----------
+// ESPN's league chat, read and written through the owner sign-in (netlify/functions/roster.mjs).
+// The 💬 button replaces the ESPN button when you're signed in as owner.
+const chatParams = (extra = {}) => new URLSearchParams({ leagueId: String(state.base.raw?.id || state.leagueId || ""), season: state.base.season, ...extra });
+async function chatGet(route, extra) {
+  const r = await fetch(`/api/roster/${route}?${chatParams(extra)}`);
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.message || `Request failed (${r.status})`);
+  return d;
+}
+async function chatPost(route, body) {
+  const r = await fetch(`/api/roster/${route}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ leagueId: String(state.base.raw?.id || state.leagueId || ""), season: state.base.season, ...body }) });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.message || `Request failed (${r.status})`);
+  return d;
+}
+// Unread dot on the button: checked when the league loads and every few minutes while the app is open.
+function ensureChatBadge() {
+  const key = String(state.base.raw?.id || state.leagueId || "");
+  if (state.chatBadgeFor === key && Date.now() - (state.chatBadgeAt || 0) < 3 * 60e3) return;
+  state.chatBadgeFor = key; state.chatBadgeAt = Date.now();
+  chatGet("chat").then((d) => { state.chatList = { key, data: d }; paintChatBadge(); }).catch(() => {});
+}
+function paintChatBadge() {
+  const n = sum(state.chatList?.data?.topics || [], (t) => t.unread || 0);
+  const dot = $("chat-dot");
+  if (dot) { dot.hidden = !n; dot.textContent = n > 9 ? "9+" : String(n || ""); }
+}
+setInterval(() => { if (document.visibilityState === "visible" && !$("chat-open")?.hidden) { state.chatBadgeAt = 0; ensureChatBadge(); } }, 3 * 60e3);
+const chatTime = (ms) => {
+  const d = new Date(ms), today = new Date();
+  return d.toDateString() === today.toDateString() ? d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) : d.toLocaleDateString(undefined, { month: "numeric", day: "numeric" });
+};
+function chatShell(inner) {
+  showModal(inner);
+  $("pl-modal").querySelector(".modal-card").classList.add("pm-full", "chat-card");
+}
+// The list: league chat, your matchup opponent, then everyone else.
+async function openChat() {
+  state.chatView = "list";
+  chatShell(`<div class="pm-head"><h2 id="pl-modal-title">💬 League chat</h2></div><div class="loading small"><span class="spinner"></span> Loading chats…</div>`);
+  let d;
+  try { d = await chatGet("chat"); state.chatList = { key: String(state.base.raw?.id || state.leagueId), data: d }; paintChatBadge(); }
+  catch (e) { return chatShell(`<div class="pm-head"><h2 id="pl-modal-title">💬 League chat</h2></div><div class="banner">${esc(e.message)}</div>`); }
+  if (state.chatView !== "list") return;
+  const me = String(d.me.teamId ?? myTeamId());
+  const wk = state.weekCache?.[state.base.current];
+  const mu = wk?.matchups?.find((m) => [m.home?.teamId, m.away?.teamId].map(String).includes(me));
+  const opp = mu ? String(String(mu.home?.teamId) === me ? mu.away?.teamId : mu.home?.teamId) : null;
+  const league = d.topics.filter((t) => t.type === "CHAT_ALL_MEMBERS");
+  const vsOpp = d.topics.filter((t) => t.type !== "CHAT_ALL_MEMBERS" && t.members.length === 1 && String(t.members[0].teamId) === opp);
+  const rest = d.topics.filter((t) => !league.includes(t) && !vsOpp.includes(t)).sort((a, b) => b.date - a.date);
+  const row = (t, isLeague) => `<button type="button" class="ct-row" data-topic="${esc(t.id)}">
+      ${isLeague ? `<span class="ct-ico">🏈</span>` : `<span class="ct-ico">${t.members.slice(0, 2).map((m) => (m.teamId != null ? logoImg(team(m.teamId), 26) : "")).join("")}</span>`}
+      <span class="ct-main"><strong>${esc(t.title)}</strong>${!isLeague ? `<span class="muted small">${esc(t.members.map((m) => m.team).filter(Boolean).join(", "))}</span>` : ""}</span>
+      <span class="ct-meta">${t.date ? `<span class="muted small">${chatTime(t.date)}</span>` : ""}${t.unread ? `<i class="ct-unread">${t.unread}</i>` : ""}</span></button>`;
+  const group = (label, list, isLeague) => (list.length ? `<div class="ct-group">${label}</div>${list.map((t) => row(t, isLeague)).join("")}` : "");
+  chatShell(`<div class="pm-head"><h2 id="pl-modal-title">💬 League chat</h2></div>
+    <div class="ct-list">${group("League chat", league, true)}${group("Matchup opponent", vsOpp)}${group("All chats", rest)}
+      ${!d.topics.length ? `<p class="muted">No chats yet.</p>` : ""}</div>
+    <button type="button" class="ct-new" id="ct-new" title="New chat" aria-label="New chat">✎</button>`);
+  $("pl-modal-body").querySelectorAll("[data-topic]").forEach((b) => b.addEventListener("click", () => {
+    const t = d.topics.find((x) => x.id === b.dataset.topic);
+    openChatTopic(t, d);
+  }));
+  $("ct-new").addEventListener("click", () => newChat(d));
+}
+// One conversation, newest at the bottom, with a reply box. Refreshes every 15 seconds while open.
+async function openChatTopic(t, list) {
+  state.chatView = t.id;
+  const title = `<div class="ct-head"><button type="button" class="ct-back" id="ct-back" aria-label="Back to chats">‹</button><h2 id="pl-modal-title">${esc(t.title)}</h2></div>`;
+  chatShell(`${title}<div class="ct-msgs" id="ct-msgs"><div class="loading small"><span class="spinner"></span> Loading messages…</div></div>
+    <form class="ct-send" id="ct-send"><textarea id="ct-text" rows="1" maxlength="1000" placeholder="Message"></textarea><button type="submit">Send</button></form><p class="small" id="ct-msg"></p>`);
+  $("ct-back").addEventListener("click", openChat);
+  const box = $("ct-msgs");
+  const load = async (stick) => {
+    let c;
+    try { c = await chatGet("chattopic", { topic: t.id }); } catch (e) { if (state.chatView === t.id) box.innerHTML = `<div class="banner">${esc(e.message)}</div>`; return; }
+    if (state.chatView !== t.id || !$("ct-msgs")) return;
+    const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
+    let lastDay = "";
+    box.innerHTML = c.messages.map((m) => {
+      const day = new Date(m.date).toDateString();
+      const sep = day !== lastDay ? `<div class="ct-day">${new Date(m.date).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}</div>` : "";
+      lastDay = day;
+      if (m.system) return `${sep}<div class="ct-sys"><strong>${esc(m.title)}</strong>${m.lines.map((l) => `<div>${esc(l)}</div>`).join("")}${m.text ? `<div>${esc(m.text)}</div>` : ""}<span class="muted small">${chatTime(m.date)}</span></div>`;
+      return `${sep}<div class="ct-msg ${m.mine ? "mine" : ""}">${m.mine ? "" : `<div class="ct-who">${esc(m.author)}${m.team ? ` <span class="muted">· ${esc(m.team)}</span>` : ""}</div>`}<div class="ct-bubble">${esc(m.text)}</div><span class="muted small">${new Date(m.date).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}</span></div>`;
+    }).join("") || `<p class="muted">No messages yet. Say something!</p>`;
+    if (stick || atBottom) box.scrollTop = box.scrollHeight;
+  };
+  await load(true);
+  clearInterval(state.chatTimer);
+  state.chatTimer = setInterval(() => { if ($("pl-modal").hidden || state.chatView !== t.id) { clearInterval(state.chatTimer); return; } load(false); }, 15000);
+  const text = $("ct-text");
+  text.addEventListener("input", () => { text.style.height = "auto"; text.style.height = `${Math.min(120, text.scrollHeight)}px`; });
+  text.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey && !/iPhone|iPad|Android/.test(navigator.userAgent)) { e.preventDefault(); $("ct-send").requestSubmit(); } });
+  $("ct-send").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const v = text.value.trim();
+    if (!v) return;
+    const btn = e.target.querySelector("button");
+    btn.disabled = true; $("ct-msg").textContent = "";
+    try { await chatPost("chatsend", { topic: t.id, text: v }); text.value = ""; text.style.height = "auto"; await load(true); }
+    catch (err) { $("ct-msg").innerHTML = `<span class="neg">${esc(err.message)}</span>`; }
+    btn.disabled = false;
+  });
+}
+// Start a chat with one or more managers.
+function newChat(list) {
+  state.chatView = "new";
+  chatShell(`<div class="ct-head"><button type="button" class="ct-back" id="ct-back" aria-label="Back to chats">‹</button><h2 id="pl-modal-title">New chat</h2></div>
+    <div class="ct-pick">${list.members.map((m) => `<label class="dr-opt"><input type="checkbox" value="${esc(m.id)}"> ${m.teamId != null ? logoImg(team(m.teamId), 22) : ""}<span><strong>${esc(m.name)}</strong> <span class="muted small">${esc(m.team)}</span></span></label>`).join("")}</div>
+    <form class="ct-send" id="ct-send"><textarea id="ct-text" rows="2" maxlength="1000" placeholder="First message"></textarea><button type="submit">Start chat</button></form><p class="small" id="ct-msg"></p>`);
+  $("ct-back").addEventListener("click", openChat);
+  $("ct-send").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const members = [...document.querySelectorAll(".ct-pick input:checked")].map((x) => x.value);
+    const btn = e.target.querySelector("button");
+    btn.disabled = true;
+    try { await chatPost("chatnew", { members, text: $("ct-text").value }); await openChat(); }
+    catch (err) { $("ct-msg").innerHTML = `<span class="neg">${esc(err.message)}</span>`; btn.disabled = false; }
+  });
 }
 
 // ---------- Push notifications ----------
@@ -3053,6 +3177,8 @@ const setMyTeam = (id) => { store.set(`ffb.myteam.${state.leagueId || "default"}
 function updateEspnLink() {
   const a = $("espn-open");
   if (!a || !state.base) return;
+  const chat = $("chat-open"), owner = !state.demo && !!ownerTeam();
+  if (chat) { chat.hidden = !owner; a.hidden = owner; if (owner) ensureChatBadge(); }
   const my = myTeamId(), season = state.base.season;
   a.href = my && state.base.teams[my]
     ? `${ESPN_FF}/team?leagueId=${espnLeague()}&teamId=${my}&seasonId=${season}`
@@ -4046,7 +4172,8 @@ function initPlayerModal() {
   const close = () => {
     m.hidden = true;
     document.body.classList.remove("modal-open");
-    m.querySelector(".modal-card").classList.remove("pm-full");
+    m.querySelector(".modal-card").classList.remove("pm-full", "chat-card");
+    clearInterval(state.chatTimer); state.chatView = null;
     state.modalReturn?.focus?.();
     if (state.newsReadChanged && state.tab === "roster") { state.newsReadChanged = false; renderRoster(); }
   };
@@ -4065,7 +4192,7 @@ function initPlayerModal() {
 // Open the shared popup with arbitrary content (e.g. the Roster tab's upgrade list).
 function showModal(html) {
   const m = $("pl-modal");
-  m.querySelector(".modal-card").classList.remove("pm-full");
+  m.querySelector(".modal-card").classList.remove("pm-full", "chat-card");
   $("pl-modal-body").innerHTML = html;
   m.hidden = false;
   document.body.classList.add("modal-open");
@@ -4396,7 +4523,7 @@ function keepState(el, draw) {
 
 function render() {
   if (!state.week) return;
-  if (!$("owner-btn").dataset.wired) { $("owner-btn").dataset.wired = "1"; $("owner-btn").addEventListener("click", openOwnerSignIn); $("notify-btn")?.addEventListener("click", openNotifications); }
+  if (!$("owner-btn").dataset.wired) { $("owner-btn").dataset.wired = "1"; $("owner-btn").addEventListener("click", openOwnerSignIn); $("notify-btn")?.addEventListener("click", openNotifications); $("chat-open")?.addEventListener("click", openChat); }
   ensureOwner();
   updateOwnerLink();
   if (!state.live && !state.liveBoot && state.tab !== "live") { state.liveBoot = true; refreshLive().finally(() => { state.liveBoot = false; }); }
@@ -4650,6 +4777,7 @@ function initSwipeTabs() {
   document.addEventListener("touchstart", (e) => {
     armed = false;
     scroller = null;
+    if (e.target.closest(".er-table")) return; // the roster table scrolls sideways; don't change tabs there
     // Over a table (or anything else that scrolls sideways), a long swipe still changes tabs once it
     // can't scroll any further that way.
     if (e.touches.length === 1 && state.week && !document.body.classList.contains("modal-open") && !e.target.closest(".topbar, select, input")) {
