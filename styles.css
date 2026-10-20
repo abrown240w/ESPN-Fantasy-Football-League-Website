@@ -1102,3 +1102,9 @@ table.data.bx-table th, table.data.bx-table td { padding: 6px 6px; font-size: .8
 .dc-table td.me { background: #fff7e0; font-weight: 700; }
 .dc-table td.dc-out .pl-link { color: var(--muted); text-decoration: line-through; }
 .dc-table .badge { font-size: .58rem; padding: 0 3px; }
+
+/* Rounded everywhere: lists clip their rows to the rounded corners, and highlighted rows and
+   inner panels get their own rounded corners. (clip, not hidden, so sticky score bars still stick.) */
+.pr-list, .card.mx, .card.game, .mini-tile { overflow: clip; }
+.pr-row, .mx-side, .news-item, .pick-row, .rh-stats, .trade-verdict, .mx-bench-head, .g-sit, .bx-panel, .pg-cat, .stick-bar { border-radius: 8px; }
+.pr-row[class*="is-"], .mx-side[class*="is-"] { margin: 1px 2px; }
