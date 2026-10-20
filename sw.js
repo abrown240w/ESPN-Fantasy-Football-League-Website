@@ -119,3 +119,28 @@ async function savedImage(e, req) {
     return Response.error();
   }
 }
+
+// ---------- Push notifications ----------
+// The server (netlify/functions/push-watch.mjs) sends { title, body, url, tag }. Tapping one opens the
+// site on the right tab, reusing the open app when there is one.
+self.addEventListener("push", (e) => {
+  let d = {};
+  try { d = e.data ? e.data.json() : {}; } catch { d = { body: e.data?.text() }; }
+  e.waitUntil(self.registration.showNotification(d.title || "Fantasy football", {
+    body: d.body || "", tag: d.tag, data: { url: d.url || "/" },
+    icon: "/icon-192.png", badge: "/icon-192.png",
+  }));
+});
+self.addEventListener("notificationclick", (e) => {
+  e.notification.close();
+  const url = new URL(e.notification.data?.url || "/", self.location.origin).href;
+  e.waitUntil((async () => {
+    const open = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    const win = open.find((c) => new URL(c.url).origin === self.location.origin);
+    if (win) {
+      win.postMessage({ type: "open", url });
+      return win.focus();
+    }
+    return self.clients.openWindow(url);
+  })());
+});

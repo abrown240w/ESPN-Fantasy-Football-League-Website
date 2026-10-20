@@ -1,9 +1,9 @@
-// Latest player updates (the short RotoWire notes ESPN shows on player cards) for up to 25 players.
+// Player updates (the short RotoWire notes ESPN shows on player cards) for up to 25 players: as much
+// history as ESPN keeps (up to 25 per player), newest first.
 // ESPN's news feed only takes one player per request, so they're fetched in parallel. General
 // articles that merely mention a player are skipped. Cached for 30 minutes.
 
 const FEED = "https://site.api.espn.com/apis/fantasy/v2/games/ffl/news/players";
-const MAX_AGE_MS = 14 * 864e5;
 
 function json(status, body, extraHeaders = {}) {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", ...extraHeaders } });
@@ -17,12 +17,13 @@ export default async (req) => {
   const players = {};
   await Promise.all(ids.map(async (id) => {
     try {
-      const res = await fetch(`${FEED}?limit=10&playerId=${id}`, { headers: { accept: "application/json", "user-agent": "Mozilla/5.0 (fantasy-dashboard)" } });
+      const res = await fetch(`${FEED}?limit=30&playerId=${id}`, { headers: { accept: "application/json", "user-agent": "Mozilla/5.0 (fantasy-dashboard)" } });
       if (!res.ok) return;
       const d = await res.json();
       players[id] = (d.feed || [])
-        .filter((a) => a.type === "Rotowire" && now - Date.parse(a.published) < MAX_AGE_MS)
-        .slice(0, 5)
+        .filter((a) => a.type === "Rotowire")
+        .sort((a, b) => Date.parse(b.published) - Date.parse(a.published))
+        .slice(0, 25)
         .map((a) => ({ headline: strip(a.headline), story: strip(a.story).slice(0, 600), published: a.published }));
     } catch { /* skip this player */ }
   }));

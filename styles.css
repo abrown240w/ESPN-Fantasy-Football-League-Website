@@ -1222,3 +1222,33 @@ h3.ta-sub:has(.rh-wv) { display: flex; align-items: baseline; gap: 6px; }
 .pm-acts .add-btn { margin-top: 0; }
 
 #mock-trade { scroll-margin-top: calc(var(--top-h, 110px) + 8px); }
+
+/* Notification settings */
+.nt-team { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
+.nt-team select { padding: 6px 8px; border-radius: 8px; border: 1px solid var(--border); font: inherit; }
+.nt-list { border: 1px solid var(--grid); border-radius: 10px; margin: 6px 0 12px; }
+.nt-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 10px; cursor: pointer; }
+.nt-row + .nt-row { border-top: 1px solid var(--grid); }
+.nt-row > span { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.nt-sw { appearance: none; -webkit-appearance: none; flex: none; width: 44px; height: 26px; border-radius: 13px; background: #c9d1db; position: relative; cursor: pointer; transition: background .2s; margin: 0; }
+.nt-sw::after { content: ""; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.3); transition: transform .2s; }
+.nt-sw:checked { background: #34c759; }
+.nt-sw:checked::after { transform: translateX(18px); }
+.nt-steps { padding-left: 20px; line-height: 1.7; }
+
+/* Player card: fixed height (no jumping between tabs), top-anchored on phones */
+.modal-card.pm-full { height: min(88vh, 860px); }
+@media (max-width: 640px) {
+  .modal { align-items: flex-start; padding: calc(env(safe-area-inset-top, 0px) + 10px) 6px 10px; }
+  .modal-card { border-radius: 16px; max-height: calc(100dvh - 20px - env(safe-area-inset-top, 0px)); }
+  .modal-card.pm-full { height: calc(100dvh - 20px - env(safe-area-inset-top, 0px)); }
+}
+.pm-tabs-wrap { position: relative; }
+.pm-more { position: absolute; right: -4px; top: 0; bottom: 1px; width: 34px; border: 0; padding: 0 0 0 10px; font: inherit; font-size: 1.1rem; font-weight: 800; color: var(--accent-ink); cursor: pointer;
+  background: linear-gradient(90deg, rgba(255,255,255,0), var(--surface) 45%); }
+.pm-more[hidden] { display: none; }
+.pm-allnews { margin-top: 4px; }
+.news-new { font-size: .6rem; margin-right: 6px; vertical-align: 1px; }
+/* Roster: unread news */
+.news-dot { margin-left: 5px; color: #d93025; text-decoration: none !important; vertical-align: -2px; line-height: 0; }
+.news-dot:hover { color: #a50e0e; }

@@ -29,7 +29,7 @@ const state = {
   // Only the leagues in LEAGUES can be opened; anything else falls back to the default.
   leagueId: [params.get("league"), store.get("ffb.league")].find((id) => LEAGUES.some((l) => l.id === id)) || "",
   season: params.get("season") || store.get("ffb.season") || "",
-  tab: store.get("ffb.tab") || "roster",
+  tab: [params.get("tab"), store.get("ffb.tab")].find((t) => ["roster", "matchups", "live", "players", "usage", "injuries", "trade", "transactions", "managers", "season", "history"].includes(t)) || "roster",
   base: null,
   week: null,
   weekCache: {},
@@ -876,6 +876,25 @@ const ago = (iso) => {
   return m < 60 ? `${m}m ago` : m < 1440 ? `${Math.round(m / 60)}h ago` : `${Math.round(m / 1440)}d ago`;
 };
 const newsItem = (n, who = "") => `<details class="news-item ${NEWS_ALERT.test(n.headline) ? "alert" : ""}"><summary>${who}<span class="news-head">${esc(n.headline)}</span> <span class="muted small">${ago(n.published)}</span></summary>${n.story ? `<p class="small">${esc(n.story)}</p>` : ""}</details>`;
+// Unread news: per device, the newest update you've seen for each player. Anything newer (from the
+// last 3 days, so a fresh device isn't flooded) counts as unread.
+const NEWS_FRESH_MS = 3 * 864e5;
+const seenNews = () => { try { return JSON.parse(store.get("ffb.newsSeen") || "{}"); } catch { return {}; } };
+const unreadNews = (pid, items = []) => {
+  const since = Math.max(seenNews()[pid] || 0, Date.now() - NEWS_FRESH_MS);
+  return items.filter((n) => Date.parse(n.published) > since);
+};
+function markNewsRead(pid, items = []) {
+  const newest = Math.max(0, ...items.map((n) => Date.parse(n.published) || 0));
+  const seen = seenNews();
+  if (!newest || (seen[pid] || 0) >= newest) return;
+  seen[pid] = newest;
+  for (const [k, v] of Object.entries(seen)) if (Date.now() - v > 30 * 864e5) delete seen[k]; // keep it small
+  store.set("ffb.newsSeen", JSON.stringify(seen));
+  state.newsReadChanged = true;
+}
+// Small red newspaper next to a name on the Roster tab: opens the player card.
+const newsDot = (p) => `<button type="button" class="pl-link news-dot" data-pid="${esc(p.id)}" title="Unread news" aria-label="Unread news for ${esc(p.name)}"><svg viewBox="0 0 20 20" width="15" height="15" aria-hidden="true"><path fill="currentColor" d="M3 4h11v11a2 2 0 0 0 2 2H5a2 2 0 0 1-2-2V4zm12 3h2v8a1 1 0 0 1-2 0V7zM5 6v3h4V6H5zm5 0v1h3V6h-3zm0 2v1h3V8h-3zm-5 3v1h8v-1H5zm0 2v1h8v-1H5z"/></svg></button>`;
 const newsCredit = () => `<p class="fc-credit small muted">Player news from ESPN / RotoWire.</p>`;
 // Roster tab: the most recent updates (last 4 days) for everyone on the roster.
 function rosterNews(side) {
@@ -1023,7 +1042,7 @@ const waiverTip = (p) => (p.waiverDate ? `<b>On waivers</b>Clears ${new Date(p.w
 
 // One player row in the matchup style: label | name / game line / stats / details | points & projection | optional action.
 // Rows get the same highlighting as the matchup screen (bold = playing, gold = on the field, red = red zone).
-function playerRow(p, { label, sp, action = "", owner = true } = {}) {
+function playerRow(p, { label, sp, action = "", owner = true, unread = false } = {}) {
   const pts = p.pts == null ? "–" : ptsLink(p.id, sp, f1(p.pts));
   let who = "";
   if (owner && p.owner) {
@@ -1047,7 +1066,7 @@ function playerRow(p, { label, sp, action = "", owner = true } = {}) {
   return `<div class="pr-row ${gsState(p)}">
     <div class="pr-label">${esc(label ?? p.pos)}</div>
     <div class="pr-info pr-has-hs">${headshot(p, 38)}<div class="pr-text">
-      <div class="mx-name">${plinkNm(p)}${injBadge(p)}</div>
+      <div class="mx-name">${plinkNm(p)}${injBadge(p)}${unread ? newsDot(p) : ""}</div>
       <div class="mx-game">${gameLineHtml(p)}${p.opp?.rank ? `<span class="pr-oprk"> ${oprkChip(p)}</span>` : ""}${wxChip(p.proId, gameStatusOf(p)?.state)}</div>
       <div class="mx-stats" ${p.short ? `title="${esc(p.line)}"` : ""}>${p.short ? esc(p.short) : "&nbsp;"}</div>
       <div class="pr-details">${details.length ? details.map((d) => `<span class="pd">${d}</span>`).join("") : "&nbsp;"}</div>
@@ -2376,8 +2395,11 @@ function renderRoster() {
     if (String(picked.id) === String(p.id)) return `<button type="button" class="mv-btn on" data-mv="${esc(p.id)}">Cancel</button>`;
     return canSwap(picked, p) ? `<button type="button" class="mv-btn to" data-mv="${esc(p.id)}">${p.starter ? "Swap" : "Here"}</button>` : `<span class="upg-none">–</span>`;
   };
+  // Unread news for this roster (same request as the Latest news section below).
+  const rn = side ? ensureNews(side.players.map((p) => p.id), () => { if (state.tab === "roster") render(); }) : null;
+  const hasUnread = (p) => !!rn && unreadNews(String(p.id), rn.players?.[p.id]).length > 0;
   const list = (title, players) => players.length
-    ? `<h3 class="ta-sub">${title}</h3><div class="pr-list mx">${players.map((p) => playerRow(rosteredRow(p), { label: p.slot, sp: w.sp, action: ed ? `<div class="pr-acts">${moveBtn(p)}${picked ? "" : upgradeBtn(p)}</div>` : actTeam() && String(sel) !== actTeam() ? `<div class="pr-acts">${moveBtns(p)}${upgradeBtn(p)}</div>` : upgradeBtn(p), owner: false })).join("")}</div>` : "";
+    ? `<h3 class="ta-sub">${title}</h3><div class="pr-list mx">${players.map((p) => playerRow(rosteredRow(p), { label: p.slot, sp: w.sp, unread: hasUnread(p), action: ed ? `<div class="pr-acts">${moveBtn(p)}${picked ? "" : upgradeBtn(p)}</div>` : actTeam() && String(sel) !== actTeam() ? `<div class="pr-acts">${moveBtns(p)}${upgradeBtn(p)}</div>` : upgradeBtn(p), owner: false })).join("")}</div>` : "";
 
   let body = `<p class="muted">${esc(t.name)} has no lineup for week ${w.week}.</p>`;
   if (side) {
@@ -2448,6 +2470,73 @@ function renderRoster() {
     const p = side.players.find((x) => String(x.id) === b.dataset.pid);
     if (p) { state.modalReturn = b; openUpgrades(p); }
   }));
+}
+
+// ---------- Push notifications ----------
+// Each device signs up per league for its own team and picks which alerts it wants.
+// The server side is netlify/functions/push.mjs (sign-up) and push-watch.mjs (sends them).
+const NOTIFY_KINDS = [
+  ["td", "Touchdowns", "One of your starters scores, with the points from the play"],
+  ["big", "Big plays", "A starter gains 15+ points on one play"],
+  ["bonus", "Bonuses", "A starter crosses a yardage bonus (100-yd rushing, 300-yd passing…)"],
+  ["injury", "Injury alerts", "A player's status changes: Questionable, Out, back to Active…"],
+  ["lineup", "Start/bench", "Sundays at 10:30 AM Central, if your bench is projected to outscore a starter"],
+  ["trade", "Trades", "A trade involving your team is accepted"],
+  ["waiver", "Waiver report", "One summary after each waiver run: who you got (and missed)"],
+];
+const pushPost = (action, body) => fetch(`/api/push/${action}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
+  .then(async (r) => { const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.message || `Request failed (${r.status})`); return d; });
+const b64ToBytes = (b64) => { const s = atob((b64 + "=".repeat((4 - (b64.length % 4)) % 4)).replace(/-/g, "+").replace(/_/g, "/")); return Uint8Array.from(s, (c) => c.charCodeAt(0)); };
+async function openNotifications() {
+  const lid = String(state.base.raw?.id || state.leagueId || ""), season = state.base.season;
+  const ios = /iPhone|iPad|iPod/.test(navigator.userAgent);
+  const standalone = matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+  const supported = "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+  const head = `<div class="pm-head"><h2 id="pl-modal-title">🔔 Notifications</h2></div>`;
+  if (state.demo) return showModal(`${head}<p class="muted">Notifications work on the real leagues, not the demo.</p>`);
+  if (ios && !standalone) return showModal(`${head}<p>On iPhone, notifications only work in the home-screen app.</p>
+    <ol class="nt-steps"><li>In Safari, tap <strong>Share</strong> → <strong>Add to Home Screen</strong>.</li><li>Open the site from the new icon.</li><li>Tap <strong>🔔 Notifications</strong> at the bottom again.</li></ol><p class="muted small">Needs iOS 16.4 or later.</p>`);
+  if (!supported) return showModal(`${head}<p class="muted">This browser doesn't support notifications.</p>`);
+  showModal(`${head}<div class="loading small"><span class="spinner"></span> Checking…</div>`);
+  const reg = await navigator.serviceWorker.ready;
+  let sub = await reg.pushManager.getSubscription();
+  let status = { subscribed: false };
+  if (sub) status = await pushPost("status", { endpoint: sub.endpoint, leagueId: lid, season }).catch(() => status);
+  const teamSel = String(status.teamId || myTeamId() || "");
+  const ids = Object.keys(state.base.teams).sort((a, b) => team(a).name.localeCompare(team(b).name));
+  const denied = Notification.permission === "denied";
+  showModal(`${head}
+    <p class="small muted">${esc(state.base.raw.settings?.name || "This league")} · alerts are only about your own team.${status.subscribed ? ` <strong class="pos">On for this device.</strong>` : ""}</p>
+    ${denied ? `<div class="banner small">Notifications are blocked for this app. Turn them on in your phone's Settings → Notifications, then come back.</div>` : ""}
+    <label class="nt-team small">Your team <select id="nt-team">${ids.map((id) => `<option value="${id}" ${id === teamSel ? "selected" : ""}>${esc(team(id).name)}</option>`).join("")}</select></label>
+    <div class="nt-list">${NOTIFY_KINDS.map(([k, label, desc]) => `<label class="nt-row"><span><strong>${label}</strong><span class="muted small">${desc}</span></span>
+      <input type="checkbox" class="nt-sw" data-k="${k}" ${status.prefs?.[k] === false ? "" : "checked"}></label>`).join("")}</div>
+    <div class="mv-actions"><button type="button" class="mv-go" id="nt-save" ${denied ? "disabled" : ""}>${status.subscribed ? "Save" : "Turn on notifications"}</button>
+      ${status.subscribed ? `<button type="button" class="mv-cancel" id="nt-test">Send a test</button><button type="button" class="mv-cancel" id="nt-off">Turn off</button>` : ""}</div>
+    <p id="nt-msg" class="small"></p>`);
+  const msg = (h) => { $("nt-msg").innerHTML = h; };
+  $("nt-save").addEventListener("click", async (e) => {
+    e.target.disabled = true;
+    try {
+      // iPhone only shows the permission prompt straight from a tap, so ask first.
+      if (Notification.permission !== "granted" && (await Notification.requestPermission()) !== "granted") throw new Error("Notifications weren't allowed.");
+      msg(`<span class="spinner"></span> Saving…`);
+      if (!sub) {
+        const { publicKey } = await fetch("/api/push/key").then((r) => r.json());
+        sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(publicKey) });
+      }
+      const prefs = Object.fromEntries([...document.querySelectorAll(".nt-sw")].map((c) => [c.dataset.k, c.checked]));
+      await pushPost("subscribe", { subscription: sub.toJSON(), leagueId: lid, season, teamId: Number($("nt-team").value), prefs });
+      // Signed in as the owner: waiver reports can include your missed claims too.
+      if (store.get("ffb.owner") === "1") await fetch("/api/roster/pushowner", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ endpoint: sub.endpoint, leagueId: lid, season }) }).catch(() => {});
+      msg(`<span class="pos">✓ Saved. You'll get alerts for ${esc(team($("nt-team").value).name)}.</span>`);
+      setTimeout(openNotifications, 1200);
+    } catch (err) { msg(`<span class="neg">${esc(err.message)}</span>`); e.target.disabled = false; }
+  });
+  $("nt-test")?.addEventListener("click", () => pushPost("test", { endpoint: sub.endpoint, leagueId: lid, season })
+    .then(() => msg(`<span class="pos">Sent. It should arrive in a few seconds.</span>`)).catch((err) => msg(`<span class="neg">${esc(err.message)}</span>`)));
+  $("nt-off")?.addEventListener("click", () => pushPost("unsubscribe", { endpoint: sub.endpoint, leagueId: lid, season })
+    .then(() => { msg("Turned off for this league."); setTimeout(openNotifications, 900); }).catch((err) => msg(`<span class="neg">${esc(err.message)}</span>`)));
 }
 
 // ---------- Owner lineup editing ----------
@@ -3777,7 +3866,9 @@ function initPlayerModal() {
   const close = () => {
     m.hidden = true;
     document.body.classList.remove("modal-open");
+    m.querySelector(".modal-card").classList.remove("pm-full");
     state.modalReturn?.focus?.();
+    if (state.newsReadChanged && state.tab === "roster") { state.newsReadChanged = false; renderRoster(); }
   };
   m.addEventListener("click", (e) => { if (e.target === m || e.target.closest(".modal-close")) close(); });
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !m.hidden) close(); });
@@ -3794,6 +3885,7 @@ function initPlayerModal() {
 // Open the shared popup with arbitrary content (e.g. the Roster tab's upgrade list).
 function showModal(html) {
   const m = $("pl-modal");
+  m.querySelector(".modal-card").classList.remove("pm-full");
   $("pl-modal-body").innerHTML = html;
   m.hidden = false;
   document.body.classList.add("modal-open");
@@ -3803,6 +3895,8 @@ function showModal(html) {
 
 async function openPlayer(id, focusSp) {
   const m = $("pl-modal"), body = $("pl-modal-body");
+  m.querySelector(".modal-card").classList.add("pm-full"); // same size on every tab, so switching tabs doesn't jump
+  state.pmNewsSnap = null;
   m.hidden = false;
   document.body.classList.add("modal-open");
   m.querySelector(".modal-close").focus();
@@ -3896,7 +3990,7 @@ function renderPlayerModal(d, focusSp) {
     : `<p class="muted small">No stats in this game yet.</p>`;
   const kick = (x) => new Date(x.date).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 
-  const tabs = [["overview", "Overview"], ["game", lg?.state === "in" ? `<span class="pm-live-dot"></span>Live` : "Game"], ["log", "Game log"], ["depth", "Depth chart"], ["news", "News"]];
+  const tabs = [["overview", "Overview"], ["game", lg?.state === "in" ? `<span class="pm-live-dot"></span>Live` : "Game"], ["log", "Game log"], ["news", "News"], ["depth", "Depth chart"]];
   if (!tabs.some(([k]) => k === state.pmTab)) state.pmTab = "overview";
   const tab = state.pmTab;
 
@@ -3915,8 +4009,16 @@ function renderPlayerModal(d, focusSp) {
     ].filter(Boolean);
     const recent = weeks.map((w) => w.sp).sort((x, y) => y - x).slice(0, 3);
     const score = (sd) => (lg.state === "pre" ? "" : ` ${sd.score ?? ""}`);
+    const nd = ensureNews([p.id], rerender), all = nd?.players?.[p.id] || [];
+    // What was unread when the card opened stays marked "New" while you flip tabs.
+    if (nd && !state.pmNewsSnap) { state.pmNewsSnap = unreadNews(String(p.id), all); markNewsRead(String(p.id), all); }
+    const fresh = state.pmNewsSnap || [];
+    const shown = fresh.length ? fresh.slice(0, 3) : all.slice(0, 1);
+    const newsBox = !nd ? "" : !all.length ? "" : `<h3 class="pm-sub">${fresh.length ? `News <span class="badge live">${fresh.length} new</span>` : "Latest news"}</h3>
+      <div class="news">${shown.map((n) => newsItem(n)).join("")}</div>${all.length > shown.length ? `<button type="button" class="link-btn pm-allnews" data-pmtab="news">All news (${all.length}) ›</button>` : ""}`;
     pane = `<div class="pm-sheet">${cells.map(([l, v]) => `<div><span>${l}</span><strong>${v}</strong></div>`).join("")}</div>
       ${seasonLine ? `<p class="pm-season small"><span class="muted">Season:</span> ${esc(seasonLine)}</p>` : ""}
+      ${newsBox}
       ${lg ? `<h3 class="pm-sub">This week <span class="pg-line">${esc(lg.away.abbr)}${score(lg.away)} @ ${esc(lg.home.abbr)}${score(lg.home)} · ${lg.state === "pre" ? esc(kick(lg)) : lg.state === "in" ? esc(lg.detail) : "Final"}</span></h3>${myLines}
         <button type="button" class="pg-go" data-pmtab="game">${lg.state === "in" ? "Watch the live game" : "See the game"} ›</button>` : ""}
       ${recent.length ? `<h3 class="pm-sub">Recent games</h3>${logTable(recent)}` : ""}`;
@@ -3952,9 +4054,11 @@ function renderPlayerModal(d, focusSp) {
   } else {
     const nd = ensureNews([p.id], rerender);
     const items = nd?.players?.[p.id] || [];
+    if (nd && !state.pmNewsSnap) { state.pmNewsSnap = unreadNews(String(p.id), items); markNewsRead(String(p.id), items); }
+    const isNew = new Set((state.pmNewsSnap || []).map((n) => n.published));
     pane = !nd ? `<div class="loading small"><span class="spinner"></span> Loading news…</div>`
-      : items.length ? `<div class="news">${items.map((n) => newsItem(n)).join("")}</div>${newsCredit()}`
-      : `<p class="muted small">No player updates in the last two weeks.</p>`;
+      : items.length ? `<div class="news">${items.map((n) => newsItem(n, isNew.has(n.published) ? `<span class="badge live news-new">NEW</span>` : "")).join("")}</div>${newsCredit()}`
+      : `<p class="muted small">No player updates from ESPN yet.</p>`;
   }
 
   body.innerHTML = `<div class="pm-head">
@@ -3963,9 +4067,23 @@ function renderPlayerModal(d, focusSp) {
         <div class="muted small">${pos}${p.proId ? ` · ${esc(PRO[p.proId] || "")}` : ""}${p.bye ? ` · Bye wk ${p.bye}` : ""}</div>
         <div class="pm-owner">${owner}</div>${moveBtns({ id: p.id, name: p.name, posId: p.posId, proId: p.proId }, true) ? `<div class="pm-acts">${moveBtns({ id: p.id, name: p.name, posId: p.posId, proId: p.proId }, true)}</div>` : ""}</div>
     </div>
-    <div class="pm-tabs" role="tablist">${tabs.map(([k, label]) => `<button type="button" role="tab" data-pmtab="${k}" aria-selected="${k === tab}" class="${k === tab ? "active" : ""}">${label}</button>`).join("")}</div>
+    <div class="pm-tabs-wrap"><div class="pm-tabs" role="tablist">${tabs.map(([k, label]) => `<button type="button" role="tab" data-pmtab="${k}" aria-selected="${k === tab}" class="${k === tab ? "active" : ""}">${label}</button>`).join("")}</div>
+      <button type="button" class="pm-more" aria-label="More tabs" hidden>»</button></div>
     <div class="pm-pane">${pane}</div>`;
-  body.querySelectorAll("[data-pmtab]").forEach((b) => b.addEventListener("click", () => { state.pmTab = b.dataset.pmtab; renderPlayerModal(d, focusSp); body.closest(".modal-card").scrollTop = 0; }));
+  body.querySelectorAll("[data-pmtab]").forEach((b) => b.addEventListener("click", () => {
+    const x = body.querySelector(".pm-tabs")?.scrollLeft || 0;
+    state.pmTab = b.dataset.pmtab;
+    renderPlayerModal(d, focusSp);
+    body.closest(".modal-card").scrollTop = 0;
+    const row = body.querySelector(".pm-tabs");
+    if (row) { row.scrollLeft = x; row.querySelector(".active")?.scrollIntoView({ block: "nearest", inline: "nearest" }); }
+  }));
+  // » shows while tabs are hidden off the right edge; tapping it scrolls them into view.
+  const tabRow = body.querySelector(".pm-tabs"), more = body.querySelector(".pm-more");
+  const updMore = () => { more.hidden = tabRow.scrollLeft + tabRow.clientWidth >= tabRow.scrollWidth - 4; };
+  tabRow.addEventListener("scroll", updMore, { passive: true });
+  more.addEventListener("click", () => tabRow.scrollBy({ left: tabRow.clientWidth * 0.7, behavior: "smooth" }));
+  requestAnimationFrame(updMore);
   body.querySelector("[data-golive]")?.addEventListener("click", (e) => goLiveGame(e.currentTarget.dataset.golive, e.currentTarget.dataset.side));
   body.querySelectorAll(".gl-pts").forEach((b) => b.addEventListener("click", () => {
     const row = b.closest("tr"), bd = row.nextElementSibling;
@@ -4070,7 +4188,7 @@ function keepState(el, draw) {
 
 function render() {
   if (!state.week) return;
-  if (!$("owner-btn").dataset.wired) { $("owner-btn").dataset.wired = "1"; $("owner-btn").addEventListener("click", openOwnerSignIn); }
+  if (!$("owner-btn").dataset.wired) { $("owner-btn").dataset.wired = "1"; $("owner-btn").addEventListener("click", openOwnerSignIn); $("notify-btn")?.addEventListener("click", openNotifications); }
   ensureOwner();
   updateOwnerLink();
   if (!state.live && !state.liveBoot && state.tab !== "live") { state.liveBoot = true; refreshLive().finally(() => { state.liveBoot = false; }); }
@@ -4155,6 +4273,8 @@ function renderLeagueSelect() {
 }
 
 let pendingWeek = parseInt(params.get("week")) || null;
+// A notification about a play opens that game on Live games.
+if (params.get("game")) { state.liveOpen = { [params.get("game")]: true }; state.liveSel = params.get("game"); }
 
 async function loadLeague(week) {
   renderLeagueSelect();
@@ -4468,6 +4588,7 @@ function initOffline() {
   const opened = Date.now();
   navigator.serviceWorker.addEventListener("message", (e) => {
     const m = e.data || {};
+    if (m.type === "open" && m.url) { location.href = m.url; return; }
     if (m.type === "offline") showOffline(m.at);
     else if (m.type === "online") showOffline(null);
     else if (m.type === "updated") {

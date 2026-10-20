@@ -1,0 +1,9 @@
+{
+  "name": "fantasy-football-breakdown",
+  "private": true,
+  "description": "Server functions for the fantasy football site. Only push notifications need these packages.",
+  "dependencies": {
+    "@netlify/blobs": "8.1.0",
+    "web-push": "3.6.7"
+  }
+}

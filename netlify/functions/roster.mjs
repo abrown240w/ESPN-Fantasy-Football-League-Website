@@ -14,8 +14,11 @@
 //         POST /api/roster/transaction {leagueId, season, teamId, add?, drop?, waiver?, bid?}  (pickups, claims, drops)
 //         GET  /api/roster/pending?leagueId=&season=   (your pending claims and trade offers; owner only)
 //         POST /api/roster/trade {leagueId, season, teamId, otherTeamId, send: [ids], receive: [ids], comment?}
+//         POST /api/roster/pushowner {endpoint, leagueId}  (marks this device's alerts as the owner's, so
+//                                    waiver reports can include missed claims)
 
 import { createHmac, createHash, timingSafeEqual } from "node:crypto";
+import { store as pushStore, subKey } from "../lib/push-common.mjs";
 
 const READS = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl";
 const WRITES = "https://lm-api-writes.fantasy.espn.com/apis/v3/games/ffl";
@@ -257,6 +260,22 @@ export default async (req, context) => {
       ],
     };
     return espnWrite(leagueId, season, payload, { event: "trade_proposal", ip, leagueId, season, teamId, other, send, receive, at: new Date().toISOString() });
+  }
+
+  if (action === "pushowner" && req.method === "POST") {
+    if (!signedIn(req)) return json(401, { error: "signed_out" });
+    if (!sameOrigin(req)) return json(403, { error: "origin" });
+    const b = await req.json().catch(() => ({}));
+    const leagueId = String(b.leagueId || ""), season = String(b.season || defaultSeason());
+    if (!validLeague(leagueId, season) || typeof b.endpoint !== "string") return json(400, { error: "bad_request" });
+    const s = pushStore(), key = subKey(b.endpoint, leagueId);
+    const sub = await s.get(key, { type: "json" });
+    if (!sub) return json(404, { error: "not_subscribed" });
+    let mine = [];
+    try { mine = ownedTeams(await espnRead(leagueId, season, ["mTeam"])); } catch { return json(502, { error: "upstream" }); }
+    sub.owner = mine.includes(Number(sub.teamId));
+    await s.setJSON(key, sub);
+    return json(200, { owner: sub.owner });
   }
 
   return json(404, { error: "not_found" });
