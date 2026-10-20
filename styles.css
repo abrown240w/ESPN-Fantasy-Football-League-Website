@@ -1044,15 +1044,15 @@ table.data.bx-table th, table.data.bx-table td { padding: 6px 6px; font-size: .8
 
 /* Phones: content runs to the screen edges; text outside cards keeps a small inset */
 @media (max-width: 640px) {
-  main.wrap { padding-left: 0; padding-right: 0; }
-  main .card, main .table-wrap, main .mini-tile { border-radius: 0; border-left-width: 0; border-right-width: 0; }
+  main.wrap { padding-left: 4px; padding-right: 4px; }
+  main .card, main .table-wrap { border-radius: 10px; }
   main .card { padding: 10px 8px; }
   main .view > :is(.section-head, .filters, p, h2, h3, .seg, .loading, .banner, .inj-legend, .riv-pick),
   main #pf-body > :is(.section-head, .filters, p, .loading),
-  main .view > div > :is(.section-head, .filters) { padding-left: 10px; padding-right: 10px; }
-  main .view > .seg, main #pf-view { margin-left: 10px; margin-right: 10px; padding: 0; }
+  main .view > div > :is(.section-head, .filters) { padding-left: 6px; padding-right: 6px; }
+  main .view > .seg, main #pf-view { margin-left: 6px; margin-right: 6px; padding: 0; }
   main .grid { gap: 6px; }
-  .mt-grid { padding: 0 6px; }
+  .mt-grid { padding: 0 2px; }
 }
 
 /* Button-bar filters (Players tab, injury report) */
