@@ -29,8 +29,8 @@ const state = {
   // Only the leagues in LEAGUES can be opened; anything else falls back to the default.
   leagueId: [params.get("league"), store.get("ffb.league")].find((id) => LEAGUES.some((l) => l.id === id)) || "",
   season: params.get("season") || store.get("ffb.season") || "",
-  tab: ({ usage: "players", league: "season" })[[params.get("tab"), store.get("ffb.tab")].find((t) => ["roster", "matchups", "live", "players", "usage", "injuries", "trade", "transactions", "managers", "season", "history", "league"].includes(t))]
-    || [params.get("tab"), store.get("ffb.tab")].find((t) => ["roster", "matchups", "live", "players", "injuries", "trade", "transactions", "managers", "season", "history"].includes(t)) || "roster",
+  tab: ({ usage: "players", injuries: "players", league: "season" })[[params.get("tab"), store.get("ffb.tab")].find((t) => ["roster", "matchups", "live", "players", "usage", "injuries", "trade", "transactions", "managers", "season", "history", "league"].includes(t))]
+    || [params.get("tab"), store.get("ffb.tab")].find((t) => ["roster", "matchups", "live", "players", "trade", "transactions", "managers", "season", "history"].includes(t)) || "roster",
   base: null,
   week: null,
   weekCache: {},
@@ -604,6 +604,18 @@ function showView(name) {
   ln.hidden = groupOf(name) !== "league";
   if (!ln.hidden) ln.innerHTML = LEAGUE_SUBS.map(([k, l]) => `<button type="button" data-sub="${k}" class="${k === name ? "active" : ""}">${l}</button>`).join("");
   paintLiveDot();
+  if (state.week) paintRosterNews();
+}
+// 📰 on the Roster tab while any of your players has news you haven't read.
+function paintRosterNews() {
+  const b = document.querySelector('#tabs button[data-tab="roster"]');
+  if (!b) return;
+  const me = myTeamId(), side = me && state.week?.sides?.find((x) => String(x.teamId) === String(me));
+  const nd = side ? ensureNews(side.players.map((p) => p.id), paintRosterNews) : null;
+  const n = nd ? side.players.filter((p) => unreadNews(String(p.id), nd.players?.[p.id]).length).length : 0;
+  const i = b.querySelector(".tab-news");
+  if (n && !i) b.insertAdjacentHTML("beforeend", `<i class="tab-news" title="Unread news for ${n} of your players">📰</i>`);
+  else if (!n && i) i.remove();
 }
 // The dot by "Live": red while an NFL game is being played, grey otherwise.
 function paintLiveDot() {
@@ -692,7 +704,7 @@ function renderMatchupsPhone(el, label) {
 }
 // Team names stay on one line: shrink the text until it fits (down to a floor), then trim with "…".
 function fitNames(root) {
-  requestAnimationFrame(() => root.querySelectorAll(".mx-team-id strong, .lg-id strong").forEach((n) => {
+  requestAnimationFrame(() => root.querySelectorAll(".mx-team-id strong, .lg-id strong, .er-pick strong, .er-id > strong").forEach((n) => {
     n.style.fontSize = "";
     let size = parseFloat(getComputedStyle(n).fontSize);
     const floor = size * 0.72;
@@ -910,11 +922,11 @@ function renderPlayers() {
 
 // The row at the top of Players and the Injury Report: Available | All players, and the Injury Report.
 const playersNav = (cur) => `<div class="pl-nav"><div class="seg">${[["avail", "Available"], ["all", "All players"]].map(([k, l]) => `<button type="button" data-plm="${k}" class="${cur === k ? "active" : ""}">${l}</button>`).join("")}</div>
-  <div class="seg"><button type="button" class="${cur === "inj" ? "active" : ""}" data-injr>🩺 Injury Report</button></div></div>`;
+  <div class="seg inj-seg"><button type="button" data-injr>🩺 Injury Report</button></div></div>`;
 document.addEventListener("click", (e) => {
   const m = e.target.closest(".pl-nav [data-plm]"), inj = e.target.closest(".pl-nav [data-injr]");
   if (m) { state.players.mode = m.dataset.plm; if (state.tab === "players") renderPlayers(); else switchTab("players"); }
-  else if (inj && state.tab !== "injuries") switchTab("injuries");
+  else if (inj) openInjuryReport();
 });
 
 // ---------- Playoff odds (Standings) ----------
@@ -1337,7 +1349,7 @@ function logoImg(t, size = 28) {
   if (!t.logo) return `<span class="logo logo-fb" style="--s:${size}px">${esc(initials)}</span>`;
   return `<img class="logo" style="--s:${size}px" src="${esc(t.logo)}" width="${size}" height="${size}" alt="" loading="lazy" referrerpolicy="no-referrer" data-fb="${esc(initials)}">`;
 }
-const teamName = (id, size = 22) => `<span class="tname">${logoImg(team(id), size)}<span>${esc(team(id).name)}</span></span>`;
+const teamName = (id, size = 22) => `<span class="tname" data-tpop="${esc(id)}">${logoImg(team(id), size)}<span>${esc(team(id).name)}</span></span>`;
 
 // Swap a logo that fails to load for the team's initials.
 // Player photo from ESPN's image service, resized (about 10 KB each); team logo for D/ST.
@@ -1480,7 +1492,7 @@ function renderManagers() {
     <div class="section-head"><h2>Manager report card</h2><span class="muted small">Optimal = the highest-scoring lineup possible from that roster this week</span></div>
     <div id="mg-table"></div>`;
   const cols = [
-    { key: "name", label: "Team", sort: (s) => team(s.teamId).name, render: (s) => `<div class="team-cell">${logoImg(team(s.teamId), 30)}<div><strong>${esc(team(s.teamId).name)}</strong><div class="small muted">${esc(team(s.teamId).owner)}</div></div></div>` },
+    { key: "name", label: "Team", sort: (s) => team(s.teamId).name, render: (s) => `<div class="team-cell" data-tpop="${s.teamId}">${logoImg(team(s.teamId), 30)}<div><strong>${esc(team(s.teamId).name)}</strong><div class="small muted">${esc(team(s.teamId).owner)}</div></div></div>` },
     { key: "score", label: "Score", num: true, render: (s) => `${f2(s.score)}${s.won === true ? ` <span class="badge">W</span>` : s.won === false ? ` <span class="badge">L</span>` : ""}` },
     { key: "vsProj", label: "vs Proj", num: true, sort: (s) => s.score - s.proj, render: (s) => `<span class="${clsSign(s.score - s.proj)}">${signed(s.score - s.proj)}</span>` },
     { key: "optimal", label: "Optimal", num: true, render: (s) => f1(s.optimal) },
@@ -1511,7 +1523,7 @@ function renderSeason() {
   const odds = playoffOdds();
   const cols = [
     { key: "rank", label: "#", num: true },
-    { key: "name", label: "Team", render: (r) => `<div class="team-cell">${logoImg(r, 34)}<div><strong>${esc(r.name)}</strong><div class="small muted">${esc(r.owner)}</div></div></div>` },
+    { key: "name", label: "Team", render: (r) => `<div class="team-cell" data-tpop="${r.id}">${logoImg(r, 34)}<div><strong>${esc(r.name)}</strong><div class="small muted">${esc(r.owner)}</div></div></div>` },
     { key: "wins", label: "Record", sort: (r) => r.winPct * 1000 + r.pf / 1e4, render: (r) => recordStr(r) },
     { key: "pf", label: "PF", num: true, render: (r) => f1(r.pf) },
     { key: "pa", label: "PA", num: true, render: (r) => f1(r.pa) },
@@ -1539,6 +1551,19 @@ function renderSeason() {
   $("st-table").insertAdjacentHTML("afterend", (odds && odds.weeksLeft ? `<p class="small muted st-odds-note">Playoff odds simulate the remaining ${odds.weeksLeft} week${odds.weeksLeft > 1 ? "s" : ""} 5,000 times using each team's scoring so far. Ties are broken by points for, which may differ from your league's tiebreaker.</p>` : "") + fcCredit());
   $("luck-chart").innerHTML = luckChart(season.rows);
   $("heatmap").innerHTML = heatmap(season);
+  // Season awards: how many of each weekly award every team has won (regular season).
+  el.insertAdjacentHTML("beforeend", `<div class="section-head"><h2>Season awards</h2><span class="muted small">Weekly awards won, regular season</span></div><div id="aw-table"></div>`);
+  const tally = ensureAwardTally(() => { if (state.tab === "season" && state.week) renderSeason(); });
+  if (!tally || tally === "loading") { $("aw-table").innerHTML = `<div class="loading small"><span class="spinner"></span> Counting weekly awards…</div>`; return; }
+  const awRows = season.rows.map((r) => { const aw = Object.fromEntries(AWARD_ORDER.map((k) => [k, (tally[r.id]?.[k] || []).length])); return { ...r, aw, total: sum(Object.values(aw)) }; });
+  const awCols = [
+    { key: "name", label: "Team", render: (r) => `<div class="team-cell" data-tpop="${r.id}">${logoImg(r, 28)}<div><strong>${esc(r.name)}</strong></div></div>` },
+    ...AWARD_ORDER.map((k) => ({ key: k, label: awardIcon(k, 18), title: AWARD_NAMES[k], num: true, sort: (r) => r.aw[k], render: (r) => (r.aw[k] ? String(r.aw[k]) : `<span class="muted">–</span>`) })),
+    { key: "total", label: "Total", num: true, render: (r) => `<strong>${r.total}</strong>` },
+  ];
+  const awSort = (state.awardSort ||= { key: "total", dir: -1 });
+  const drawAw = () => $("aw-table").replaceChildren(sortableTable(awCols, awRows, awSort, drawAw, { rowClass: (r) => myRow(r.id), tableClass: "aw-table" }));
+  drawAw();
 }
 
 function luckChart(rows) {
@@ -2499,6 +2524,39 @@ function upgradesFor(p, fa) {
   return fa.players.filter((u) => u.posId === p.posId && (u.proj || 0) >= (p.proj || 0) + UPGRADE_MIN_GAIN).sort((a, b) => b.proj - a.proj);
 }
 
+// ---------- A team's roster as a popup (from the League tab) ----------
+// The same rows as the Roster tab, read only (plus + / ⇄ buttons when you're signed in as owner).
+function openTeamRoster(teamId) {
+  const w = state.week, t = team(teamId), side = w.sides.find((x) => String(x.teamId) === String(teamId));
+  const row = (p) => `<div class="er-row ${gsState(p)}"><div class="er-l"><span class="sp ro">${p.slotId === BENCH ? "BE" : esc(SLOT[p.slotId] || p.slot)}</span>${headshot(p, 36)}<div class="er-info">
+      <div class="er-name">${plink(p.id, shortName(p.name))} ${p.posId === 16 ? "" : proIc(p.proId)}<span class="er-pos">${esc(p.pos)}</span>${injBadge(p)} ${moveBtns(p)}</div>
+      <div class="er-game">${erGameLine(p)}</div>${p.short ? `<div class="er-stats" title="${esc(p.line)}">${esc(p.short)}</div>` : ""}</div></div>
+    <div class="er-r rs">${erCols(rosteredRow(p)).join("")}</div></div>`;
+  const section = (title, list) => (list.length ? `<div class="er-sec"><div class="er-row er-hd"><div class="er-l">${title}</div><div class="er-r rs">${erHeads().join("")}</div></div>${list.map(row).join("")}</div>` : "");
+  const body = !side ? `<p class="muted">No lineup for week ${w.week}.</p>`
+    : section("Starters", side.starters) + section("Bench", side.bench.filter((p) => p.slotId !== IR)) + section("IR", side.bench.filter((p) => p.slotId === IR));
+  showModal(`<div class="pm-head">${logoImg(t, 44)}<div><h2 id="pl-modal-title">${esc(t.name)}</h2><div class="muted small">${esc(t.owner)} · ${recordStr(t)}${side ? ` · week ${w.week}: ${w.status === "upcoming" ? `proj ${f1(side.proj)}` : f2(side.score)}` : ""}</div></div></div>
+    <div class="card er-table tr-pop ev-${erView()}">${body}</div>
+    <button type="button" class="pg-go" id="tr-go">Open on the Roster tab ›</button>`);
+  $("pl-modal").querySelector(".modal-card").classList.add("pm-full");
+  // The stat columns of every row scroll together.
+  const strips = [...$("pl-modal-body").querySelectorAll(".rs")];
+  let syncing = false;
+  for (const stp of strips) stp.addEventListener("scroll", () => {
+    if (syncing) return;
+    syncing = true;
+    for (const o of strips) if (o !== stp) o.scrollLeft = stp.scrollLeft;
+    requestAnimationFrame(() => { syncing = false; });
+  }, { passive: true });
+  $("tr-go").addEventListener("click", () => { document.querySelector("#pl-modal .modal-close").click(); state.rosterTeam = String(teamId); switchTab("roster"); });
+}
+// Team names on the League tab open that team's roster.
+document.addEventListener("click", (e) => {
+  const c = e.target.closest("[data-tpop]");
+  if (!c || e.target.closest("button, a") || !e.target.closest("#view-season, #view-managers, #view-transactions, #view-trade, #view-history")) return;
+  openTeamRoster(c.dataset.tpop);
+});
+
 // ---------- Roster tab (laid out like the ESPN app) ----------
 // Header card with quick chips, Quick Lineup and a Views menu, then Starters / Bench / IR. Each row is
 // a slot pill, photo and three lines of info on the left, and the chosen view's columns on the right;
@@ -2612,7 +2670,7 @@ function chipPopup(kind, teamId, side) {
   if (kind === "waivers") {
     const teams = (state.base.raw.teams || []).filter((x) => x.waiverRank).sort((a, b) => a.waiverRank - b.waiverRank);
     const next = nextWaiverRun(), days = waiverDays();
-    return showModal(`${head("☰", "Waiver order", waiverPlace(teamId) ? `${waiverPlace(teamId)}` : "")}
+    return showModal(`${head("☰", "Waivers", waiverPlace(teamId) ? `${waiverPlace(teamId)}` : "")}
       <p class="muted small">${next ? `Next run ${fmtWhen(next)}` : "Waivers run overnight"}${days ? ` · runs ${days}` : ""}</p>
       <ol class="chip-order">${teams.map((x) => `<li class="${String(x.id) === String(teamId) ? "me" : ""}"><span class="wv-rk">${x.waiverRank}</span>${logoImg(team(x.id), 20)}<span>${esc(team(x.id).name)}</span></li>`).join("")}</ol>`);
   }
@@ -2708,11 +2766,11 @@ function renderRoster() {
   const nAwards = tally ? sum(Object.values(tally), (wks) => wks.length) : null;
   const chips = [
     chip("news", "📰", "News", anyNews ? `<i class="er-dot"></i> New` : "Latest"),
-    chip("awards", "🏆", "Awards", nAwards == null ? "View" : `${nAwards} award${nAwards === 1 ? "" : "s"}`),
+    waiverPlace(sel) ? chip("waivers", "☰", "Waivers", waiverPlace(sel)) : "",
     canEdit ? chip("claims", "📋", "Claims", P ? `${claims} pending` : "…") : "",
     canEdit ? chip("trades", "⇄", "Trades", P ? `${offers} offer${offers === 1 ? "" : "s"}` : "…") : "",
     deadline ? chip("deadline", "📅", "Trade deadline", new Date(deadline).toLocaleString(undefined, { month: "numeric", day: "numeric", hour: "numeric", minute: "2-digit" })) : "",
-    waiverPlace(sel) ? chip("waivers", "☰", "Waiver order", waiverPlace(sel)) : "",
+    chip("awards", "🏆", "Awards", nAwards == null ? "View" : `${nAwards} award${nAwards === 1 ? "" : "s"}`),
   ].join("");
   const opts = ids.map((id) => `<option value="${id}" ${id === String(sel) ? "selected" : ""}>${esc(team(id).name)}</option>`).join("");
   const head = `<div class="card er-head">
@@ -2728,6 +2786,7 @@ function renderRoster() {
     ${side ? playoffSchedule(side) : ""}
     ${fcCredit()}${nvCredit()}${wxCredit()}`;
 
+  fitNames(el);
   $("roster-team")?.addEventListener("change", (e) => { state.rosterTeam = e.target.value; store.set(key, e.target.value); renderRoster(); });
   $("my-star").addEventListener("click", () => { if (ownerTeam()) return; setMyTeam(sel); state.winWin = null; updateEspnLink(); renderRoster(); });
   el.querySelectorAll("[data-chip]").forEach((b) => b.addEventListener("click", () => { state.modalReturn = b; chipPopup(b.dataset.chip, sel, side); }));
@@ -2777,7 +2836,10 @@ function renderRoster() {
 // ---------- League chat (owner only) ----------
 // ESPN's league chat, read and written through the owner sign-in (netlify/functions/roster.mjs).
 // The 💬 button replaces the ESPN button when you're signed in as owner.
-const chatParams = (extra = {}) => new URLSearchParams({ leagueId: String(state.base.raw?.id || state.leagueId || ""), season: state.base.season, ...extra });
+// The league whose chats are open (the chat popup can switch between your leagues).
+const curLid = () => String(state.base.raw?.id || state.leagueId || "");
+const chatLid = () => state.chatLeague || curLid();
+const chatParams = (extra = {}) => new URLSearchParams({ leagueId: chatLid(), season: state.base.season, ...extra });
 async function chatGet(route, extra) {
   const r = await fetch(`/api/roster/${route}?${chatParams(extra)}`);
   const d = await r.json().catch(() => ({}));
@@ -2785,20 +2847,22 @@ async function chatGet(route, extra) {
   return d;
 }
 async function chatPost(route, body) {
-  const r = await fetch(`/api/roster/${route}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ leagueId: String(state.base.raw?.id || state.leagueId || ""), season: state.base.season, ...body }) });
+  const r = await fetch(`/api/roster/${route}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ leagueId: chatLid(), season: state.base.season, ...body }) });
   const d = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(d.message || `Request failed (${r.status})`);
   return d;
 }
-// Unread dot on the button: checked when the league loads and every few minutes while the app is open.
+// Unread count on the button, for all your leagues: checked when the site loads and every few minutes.
+const unreadOf = (d) => sum(d?.topics || [], (t) => t.unread || 0);
 function ensureChatBadge() {
-  const key = String(state.base.raw?.id || state.leagueId || "");
-  if (state.chatBadgeFor === key && Date.now() - (state.chatBadgeAt || 0) < 3 * 60e3) return;
-  state.chatBadgeFor = key; state.chatBadgeAt = Date.now();
-  chatGet("chat").then((d) => { state.chatList = { key, data: d }; paintChatBadge(); }).catch(() => {});
+  if (Date.now() - (state.chatBadgeAt || 0) < 3 * 60e3) return;
+  state.chatBadgeAt = Date.now();
+  for (const l of LEAGUES) {
+    chatGet("chat", { leagueId: l.id }).then((d) => { (state.chatCounts ||= {})[l.id] = unreadOf(d); paintChatBadge(); }).catch(() => {});
+  }
 }
 function paintChatBadge() {
-  const n = sum(state.chatList?.data?.topics || [], (t) => t.unread || 0);
+  const n = sum(Object.values(state.chatCounts || {}));
   const dot = $("chat-dot");
   if (dot) { dot.hidden = !n; dot.textContent = n > 9 ? "9+" : String(n || ""); }
 }
@@ -2811,27 +2875,35 @@ function chatShell(inner) {
   showModal(inner);
   $("pl-modal").querySelector(".modal-card").classList.add("pm-full", "chat-card");
 }
-// The list: league chat, your matchup opponent, then everyone else.
-async function openChat() {
+// The list: league chat, your matchup opponent, then everyone else. Buttons on top switch between your
+// leagues, each with its unread count. Opened from the 💬 button it starts on the league you're viewing.
+async function openChat(lid) {
+  if (typeof lid !== "string") lid = curLid();
+  state.chatLeague = lid;
   state.chatView = "list";
-  chatShell(`<div class="pm-head"><h2 id="pl-modal-title">💬 League chat</h2></div><div class="loading small"><span class="spinner"></span> Loading chats…</div>`);
+  const other = lid !== curLid(); // logos and matchups only exist for the league on screen
+  const lgBtns = () => (LEAGUES.length > 1 ? `<div class="seg ct-leagues">${LEAGUES.map((l) => `<button type="button" data-chatlg="${l.id}" class="${l.id === lid ? "active" : ""}">${esc(l.label)}${state.chatCounts?.[l.id] ? ` <i class="ct-unread">${state.chatCounts[l.id] > 9 ? "9+" : state.chatCounts[l.id]}</i>` : ""}</button>`).join("")}</div>` : "");
+  const head = () => `<div class="pm-head"><h2 id="pl-modal-title">💬 League chat</h2></div>${lgBtns()}`;
+  const bindLg = () => $("pl-modal-body").querySelectorAll("[data-chatlg]").forEach((b) => b.addEventListener("click", () => { if (b.dataset.chatlg !== state.chatLeague) openChat(b.dataset.chatlg); }));
+  chatShell(`${head()}<div class="loading small"><span class="spinner"></span> Loading chats…</div>`);
+  bindLg();
   let d;
-  try { d = await chatGet("chat"); state.chatList = { key: String(state.base.raw?.id || state.leagueId), data: d }; paintChatBadge(); }
-  catch (e) { return chatShell(`<div class="pm-head"><h2 id="pl-modal-title">💬 League chat</h2></div><div class="banner">${esc(e.message)}</div>`); }
-  if (state.chatView !== "list") return;
+  try { d = await chatGet("chat", { leagueId: lid }); state.chatList = { key: lid, data: d }; (state.chatCounts ||= {})[lid] = unreadOf(d); paintChatBadge(); }
+  catch (e) { chatShell(`${head()}<div class="banner">${esc(e.message)}</div>`); bindLg(); return; }
+  if (state.chatView !== "list" || state.chatLeague !== lid) return;
   const me = String(d.me.teamId ?? myTeamId());
-  const wk = state.weekCache?.[state.base.current];
+  const wk = other ? null : state.weekCache?.[state.base.current];
   const mu = wk?.matchups?.find((m) => [m.home?.teamId, m.away?.teamId].map(String).includes(me));
   const opp = mu ? String(String(mu.home?.teamId) === me ? mu.away?.teamId : mu.home?.teamId) : null;
   const league = d.topics.filter((t) => t.type === "CHAT_ALL_MEMBERS");
   const vsOpp = d.topics.filter((t) => t.type !== "CHAT_ALL_MEMBERS" && t.members.length === 1 && String(t.members[0].teamId) === opp);
   const rest = d.topics.filter((t) => !league.includes(t) && !vsOpp.includes(t)).sort((a, b) => b.date - a.date);
   const row = (t, isLeague) => `<button type="button" class="ct-row" data-topic="${esc(t.id)}">
-      ${isLeague ? `<span class="ct-ico">🏈</span>` : `<span class="ct-ico">${t.members.slice(0, 2).map((m) => (m.teamId != null ? logoImg(team(m.teamId), 26) : "")).join("")}</span>`}
+      ${isLeague ? `<span class="ct-ico">🏈</span>` : `<span class="ct-ico">${other ? "👤" : t.members.slice(0, 2).map((m) => (m.teamId != null ? logoImg(team(m.teamId), 26) : "")).join("")}</span>`}
       <span class="ct-main"><strong>${esc(t.title)}</strong>${!isLeague ? `<span class="muted small">${esc(t.members.map((m) => m.team).filter(Boolean).join(", "))}</span>` : ""}</span>
       <span class="ct-meta">${t.date ? `<span class="muted small">${chatTime(t.date)}</span>` : ""}${t.unread ? `<i class="ct-unread">${t.unread}</i>` : ""}</span></button>`;
   const group = (label, list, isLeague) => (list.length ? `<div class="ct-group">${label}</div>${list.map((t) => row(t, isLeague)).join("")}` : "");
-  chatShell(`<div class="pm-head"><h2 id="pl-modal-title">💬 League chat</h2></div>
+  chatShell(`${head()}
     <div class="ct-list">${group("League chat", league, true)}${group("Matchup opponent", vsOpp)}${group("All chats", rest)}
       ${!d.topics.length ? `<p class="muted">No chats yet.</p>` : ""}</div>
     <button type="button" class="ct-new" id="ct-new" title="New chat" aria-label="New chat">✎</button>`);
@@ -2840,6 +2912,7 @@ async function openChat() {
     openChatTopic(t, d);
   }));
   $("ct-new").addEventListener("click", () => newChat(d));
+  bindLg();
 }
 // One conversation, newest at the bottom, with a reply box. Refreshes every 15 seconds while open.
 async function openChatTopic(t, list) {
@@ -2847,7 +2920,7 @@ async function openChatTopic(t, list) {
   const title = `<div class="ct-head"><button type="button" class="ct-back" id="ct-back" aria-label="Back to chats">‹</button><h2 id="pl-modal-title">${esc(t.title)}</h2></div>`;
   chatShell(`${title}<div class="ct-msgs" id="ct-msgs"><div class="loading small"><span class="spinner"></span> Loading messages…</div></div>
     <form class="ct-send" id="ct-send"><textarea id="ct-text" rows="1" maxlength="1000" placeholder="Message"></textarea><button type="submit">Send</button></form><p class="small" id="ct-msg"></p>`);
-  $("ct-back").addEventListener("click", openChat);
+  $("ct-back").addEventListener("click", () => openChat(chatLid()));
   const box = $("ct-msgs");
   const load = async (stick) => {
     let c;
@@ -2860,7 +2933,7 @@ async function openChatTopic(t, list) {
       const sep = day !== lastDay ? `<div class="ct-day">${new Date(m.date).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}</div>` : "";
       lastDay = day;
       if (m.system) return `${sep}<div class="ct-sys"><strong>${esc(m.title)}</strong>${m.week ? `<div>Week ${m.week} is in the books.</div>` : ""}${m.lines.map((l) => `<div>${esc(l)}</div>`).join("")}${m.text ? `<div>${esc(m.text)}</div>` : ""}
-          ${m.week ? `<button type="button" class="ct-wk" data-week="${m.week}">See week ${m.week} matchups ›</button>` : ""}${/^Waiver/.test(m.title) ? `<button type="button" class="ct-wk" data-wrun="${m.date}">See every claim, in order ›</button>` : ""}<span class="muted small">${chatTime(m.date)}</span></div>`;
+          ${m.week && chatLid() === curLid() ? `<button type="button" class="ct-wk" data-week="${m.week}">See week ${m.week} matchups ›</button>` : ""}${/^Waiver/.test(m.title) && chatLid() === curLid() ? `<button type="button" class="ct-wk" data-wrun="${m.date}">See every claim, in order ›</button>` : ""}<span class="muted small">${chatTime(m.date)}</span></div>`;
       const body = m.img ? `<img class="ct-img ${m.sticker ? "sticker" : ""}" src="${esc(m.img)}" alt="${m.sticker ? "Sticker" : "GIF"}" loading="lazy">` : `<div class="ct-bubble">${esc(m.text)}</div>`;
       return `${sep}<div class="ct-msg ${m.mine ? "mine" : ""}">${m.mine ? "" : `<div class="ct-who">${esc(m.author)}${m.team ? ` <span class="muted">· ${esc(m.team)}</span>` : ""}</div>`}${body}<span class="muted small">${new Date(m.date).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}</span></div>`;
     }).join("") || `<p class="muted">No messages yet. Say something!</p>`;
@@ -2871,6 +2944,7 @@ async function openChatTopic(t, list) {
       t.readTo = newest;
       chatPost("chatread", { topic: t.id }).then(() => {
         for (const x of [t, ...(state.chatList?.data?.topics || []).filter((x) => x.id === t.id)]) x.unread = 0;
+        if (state.chatList?.key === chatLid()) (state.chatCounts ||= {})[chatLid()] = unreadOf(state.chatList.data);
         paintChatBadge();
       }).catch(() => {});
     }
@@ -2904,9 +2978,9 @@ async function openChatTopic(t, list) {
 function newChat(list) {
   state.chatView = "new";
   chatShell(`<div class="ct-head"><button type="button" class="ct-back" id="ct-back" aria-label="Back to chats">‹</button><h2 id="pl-modal-title">New chat</h2></div>
-    <div class="ct-pick">${list.members.map((m) => `<label class="dr-opt"><input type="checkbox" value="${esc(m.id)}"> ${m.teamId != null ? logoImg(team(m.teamId), 22) : ""}<span><strong>${esc(m.name)}</strong> <span class="muted small">${esc(m.team)}</span></span></label>`).join("")}</div>
+    <div class="ct-pick">${list.members.map((m) => `<label class="dr-opt"><input type="checkbox" value="${esc(m.id)}"> ${m.teamId != null && chatLid() === curLid() ? logoImg(team(m.teamId), 22) : ""}<span><strong>${esc(m.name)}</strong> <span class="muted small">${esc(m.team)}</span></span></label>`).join("")}</div>
     <form class="ct-send" id="ct-send"><textarea id="ct-text" rows="2" maxlength="1000" placeholder="First message"></textarea><button type="submit">Start chat</button></form><p class="small" id="ct-msg"></p>`);
-  $("ct-back").addEventListener("click", openChat);
+  $("ct-back").addEventListener("click", () => openChat(chatLid()));
   $("ct-send").addEventListener("submit", async (e) => {
     e.preventDefault();
     const members = [...document.querySelectorAll(".ct-pick input:checked")].map((x) => x.value);
@@ -3765,11 +3839,18 @@ const INJ_ORDER = { "Injured Reserve": 0, "Suspension": 1, "Out": 2, "Doubtful":
 const depthCols = (dep, pos) => (!dep ? [] : pos === "WR" ? [dep.WR1, dep.WR2, dep.WR3].filter(Boolean) : dep[pos] ? [dep[pos]] : []);
 const depthOut = (x) => /out|reserve|suspen|doubtful|pup|physically/i.test(x?.[2] || "");
 
-function renderInjuries() {
-  const el = $("view-injuries");
+// The Injury Report, as a popup over the Players tab.
+function openInjuryReport() {
+  showModal(`<div class="pm-head"><h2 id="pl-modal-title">🩺 Injury Report</h2></div><div class="inj-pop"></div>`);
+  $("pl-modal").querySelector(".modal-card").classList.add("pm-full");
+  const el = $("pl-modal-body").querySelector(".inj-pop");
+  const draw = () => { if (el.isConnected) renderInjuries(el, draw); };
+  draw();
+}
+function renderInjuries(el = $("view-injuries"), redraw = () => renderInjuries()) {
   ensureUsage(); // weeks missed and snap shares fill in when they arrive
   const D = ensureInjuries(), week = ensureCurrentRosters();
-  if (!D) { el.innerHTML = `<div class="loading"><span class="spinner"></span> Loading the injury report…</div>`; return; }
+  if (!D) { el.innerHTML = `<div class="loading"><span class="spinner"></span> Loading the injury report…</div>`; setTimeout(() => { if (el.isConnected) redraw(); }, 800); return; }
   if (D.error) { el.innerHTML = `<div class="banner">${esc(D.error)}</div>`; return; }
   const f = (state.injF ||= { pos: "ALL", roster: "all", mine: false, sort: { key: "status", dir: 1 } });
   const owners = new Map((week?.sides || []).flatMap((sd) => sd.players.map((p) => [String(p.id), sd.teamId])));
@@ -3835,7 +3916,7 @@ function renderInjuries() {
     .map((p) => ({ ...p, out: weeksOut(p), next: nextUp(p), fnext: fantasyNext(p) }))
     .map((p) => ({ ...p, ret: retWeek(p) }));
   const cols = [
-    { key: "name", label: "Player", cls: "pt-player", dir: 1, render: (p) => `<div class="pt-name">${plinkNm(p)}${injBadge({ injury: INJ_CODE[p.status] || p.status.toUpperCase() })} ${moveBtns({ id: p.id, name: p.name, posId: posIdOf(p.pos), proId: p.proId })}</div><div class="pt-sub">${esc(p.pos)} ${ownerTag(p.id)}</div>` },
+    { key: "name", label: "Player", cls: "pt-player", dir: 1, render: (p) => `<div class="pt-name inj-name">${plinkNm(p)}${injBadge({ injury: INJ_CODE[p.status] || p.status.toUpperCase() })}${moveBtns({ id: p.id, name: p.name, posId: posIdOf(p.pos), proId: p.proId })}</div><div class="pt-sub">${esc(p.pos)} ${ownerTag(p.id)}</div>` },
     { key: "status", label: "Status", dir: 1, sort: (p) => INJ_ORDER[p.status] ?? 9, render: (p) => esc(p.status) },
     { key: "type", label: "Injury", dir: 1, render: (p) => `<span ${p.note ? `data-tip="${esc(`<b>${esc(p.name)}</b>${esc(p.note)}`)}"` : ""}>${esc([p.type, p.detail].filter(Boolean).join(" – ") || (p.status === "Suspension" ? "Suspension" : "Not disclosed"))}${p.side ? ` <span class="muted">(${esc(p.side)})</span>` : ""}</span>` },
     { key: "recovery", label: "Typical recovery", title: "Typical time missed for this kind of injury (a rough guide)", dir: 1, sort: (p) => recovery(p), render: (p) => esc(recovery(p)) },
@@ -3845,8 +3926,7 @@ function renderInjuries() {
     { key: "fnext", label: "Fantasy fill-in", title: "Of his healthy backups, the one who played the most snaps last game", dir: 1, sort: (p) => p.fnext?.[1] || "~", render: (p) => who(p.fnext, p) },
   ];
   const btn = (key, val, label) => `<button type="button" data-${key}="${val}" class="${f[key] === val ? "active" : ""}">${label}</button>`;
-  el.innerHTML = `${playersNav("inj")}
-    <div class="filters inj-filters">
+  el.innerHTML = `<div class="filters inj-filters">
       <div class="seg">${["ALL", "QB", "RB", "WR", "TE", "K"].map((p) => btn("pos", p, p === "ALL" ? "All" : p)).join("")}</div>
       <div class="seg">${btn("roster", "all", "All")}${btn("roster", "available", "Available")}${btn("roster", "rostered", "On rosters")}</div>
     </div>
@@ -3854,7 +3934,7 @@ function renderInjuries() {
     <div id="inj-table"></div>
     <p class="fc-credit small muted">Injuries, return dates and depth charts from ESPN, updated hourly. Weeks out and snaps from <a href="https://github.com/nflverse/nflverse-data" target="_blank" rel="noopener">nflverse</a> (CC BY 4.0). Typical recovery times are rough guides.</p>`;
   const draw = () => {
-    const box = $("inj-table");
+    const box = el.querySelector("#inj-table");
     if (!rows.length) { box.innerHTML = `<p class="muted">No players match those filters.</p>`; return; }
     box.replaceChildren(sortableTable(cols, rows, f.sort, draw, { tableClass: "pt-table inj-table" }));
   };
@@ -3862,9 +3942,9 @@ function renderInjuries() {
   el.querySelectorAll("[data-pos],[data-roster]").forEach((b) => b.addEventListener("click", () => {
     if (b.dataset.pos) f.pos = b.dataset.pos;
     if (b.dataset.roster) f.roster = b.dataset.roster;
-    renderInjuries();
+    redraw();
   }));
-  $("inj-mine")?.addEventListener("change", (e) => { f.mine = e.target.checked; renderInjuries(); });
+  el.querySelector("#inj-mine")?.addEventListener("change", (e) => { f.mine = e.target.checked; redraw(); });
 }
 
 // ---------- Team usage tab ----------

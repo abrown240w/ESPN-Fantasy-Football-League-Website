@@ -1634,3 +1634,29 @@ main .mb-chip, main .lg-card { --ink: #0b0b0b; --ink-2: #52514e; --muted: #6f6d6
 /* Roster: Quick Lineup / Matchup stats as small buttons with tight spacing */
 .er-tools { gap: 6px; margin: 6px 0; }
 .er-btn { padding: 5px 10px; font-size: .82rem; border-radius: 16px; }
+
+/* Players row: the Injury Report button sits at the right edge */
+.pl-nav .inj-seg { margin-left: auto; }
+/* Injury Report player column: name, badge and buttons on one line, position and owner on the second */
+.inj-table td.pt-player, .inj-table th.pt-player { min-width: 178px; max-width: 200px; width: 178px; }
+.inj-table .pt-name.inj-name { display: flex; flex-wrap: nowrap !important; align-items: center; gap: 3px; white-space: nowrap; }
+.inj-name .pl-link { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.inj-name .add-btn, .inj-name .trade-btn { margin-left: 4px; flex: none; }
+.inj-table .pt-sub { white-space: nowrap; }
+.inj-pop .filters { padding: 0; }
+/* Team roster popup (League tab) */
+.tr-pop { padding: 0; margin: 4px 0 8px; }
+[data-tpop] { cursor: pointer; }
+/* Roster: Quick Lineup / view menu stay at the top while you scroll */
+.er-tools { position: sticky; top: var(--top-h, 0px); z-index: 6; background: #3b4f6b; padding: 4px 0; margin: 2px 0; }
+.er-id > strong, .er-pick strong { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 📰 on the Roster tab when your players have unread news */
+.tab-news { font-style: normal; font-size: .7rem; margin-left: 2px; }
+/* Chat: the leagues across the top */
+.ct-leagues { display: flex; width: 100%; margin: 0 0 8px; }
+.ct-leagues button { flex: 1 1 0; min-width: 0; padding: 6px 4px; font-size: .8rem; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ct-leagues .ct-unread { font-style: normal; }
+/* Season awards table */
+.aw-table th .aw-icon { vertical-align: middle; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .er-tools { background: #18202c; } }
+:root[data-theme="dark"] .er-tools { background: #18202c; }
