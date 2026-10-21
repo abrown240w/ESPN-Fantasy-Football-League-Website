@@ -231,6 +231,7 @@ function parsePlayer(entry, sp, teamId, rosterInfo = {}, nfl = null) {
     locked: !!entry.playerPoolEntry?.lineupLocked,
     line: statLine(pl.defaultPositionId, act?.stats),
     short: compactLine(pl.defaultPositionId, act?.stats),
+    tds: act?.stats ? TD_STATS.reduce((n, id) => n + (act.stats[id] || 0), 0) : 0, // touchdowns this week (passing TDs included)
     opp,
     pprRank: info.pprRank ?? null,
     own: pl.ownership?.percentOwned ?? info.own ?? null,
@@ -609,6 +610,7 @@ function renderMatchups() {
       <div class="${split ? "mu-pane" : "mu-detail"}" id="mu-pane">${sel ? matchupDetail(sel, true) : `<p class="muted">Pick a matchup.</p>`}</div>
     </div>
     <p class="muted small show-phone mu-note">${label}</p>`;
+  fitNames(el);
   el.querySelectorAll(".mini-tile[data-mu]").forEach((c) => c.addEventListener("click", () => {
     const m = w.matchups.find((x) => x.id === +c.dataset.mu);
     if (!m?.away || state.openMatchup === m.id) return;
@@ -620,6 +622,7 @@ function renderMatchups() {
     pane.classList.remove("swap");
     void pane.offsetWidth; // restart the fade
     pane.classList.add("swap");
+    fitNames(pane);
     updateStickies();
   }));
   updateStickies();
@@ -655,8 +658,19 @@ function renderMatchupsPhone(el, label) {
   if (state.muBarSmooth) bx.scrollLeft = state.muBarPrev ?? 0;
   if (on) bx.scrollTo({ left: Math.max(0, on.offsetLeft - (bx.clientWidth - on.offsetWidth) / 2), behavior: state.muBarSmooth ? "smooth" : "auto" });
   state.muBarSmooth = false;
+  fitNames(el);
   updateStickies();
 }
+// Team names stay on one line: shrink the text until it fits (down to a floor), then trim with "…".
+function fitNames(root) {
+  requestAnimationFrame(() => root.querySelectorAll(".mx-team-id strong, .lg-id strong").forEach((n) => {
+    n.style.fontSize = "";
+    let size = parseFloat(getComputedStyle(n).fontSize);
+    const floor = size * 0.72;
+    while (n.scrollWidth > n.clientWidth + 1 && size > floor) { size -= 0.5; n.style.fontSize = `${size}px`; }
+  }));
+}
+addEventListener("resize", () => { if (state.tab === "matchups") fitNames($("view-matchups")); });
 // All matchups as stacked cards; tap one to open it.
 function leagueSummary() {
   const w = state.week, st = w.status, me = String(myTeamId());
@@ -807,7 +821,7 @@ function matchupDetail(m, withHead = true) {
 
   return `<div class="card detail mx ${withHead ? "" : "attached"}">
     ${withHead ? `<div class="mx-top"><div class="mx-head">${headSide(home, H, false)}${headSide(away, A, true)}</div>
-    <div class="mx-wps">${wpBar(wpH, "var(--home)", false)}<span class="mx-wp-label">${st === "final" ? "Final" : "Win probability"}</span>${wpBar(wpA, "var(--away)", true)}</div>
+    <div class="mx-wps">${wpBar(wpH, "var(--home)", false)}<span class="mx-tds" title="Touchdowns by each team's starters this week (passing TDs count)"><b>${sum(home.starters, (p) => p.tds || 0)}</b><span>TD</span><b>${sum(away.starters, (p) => p.tds || 0)}</b></span>${wpBar(wpA, "var(--away)", true)}</div>
     ${st === "live" ? onFieldLine(m) : ""}</div>
     ${stickBar(`<span class="sb-team">${logoImg(H, 18)}${esc(H.abbrev)}</span><strong>${st === "upcoming" ? f1(home.proj) : f2(home.score)}</strong><span class="sb-mid">${st === "final" ? "Final" : `${pct(wpH)}–${pct(wpA)}`}</span><strong>${st === "upcoming" ? f1(away.proj) : f2(away.score)}</strong><span class="sb-team">${esc(A.abbrev)}${logoImg(A, 18)}</span>`)}` : ""}
     <div class="mx-rows">${rows.map((r) => row(r, false)).join("")}</div>

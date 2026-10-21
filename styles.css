@@ -1504,3 +1504,12 @@ html.standalone input, html.standalone select, html.standalone textarea { font-s
 main .mb-chip, main .lg-card { --ink: #0b0b0b; --ink-2: #52514e; --muted: #6f6d68; color: var(--ink); }
 /* Play arrows and labels can rise above the field onto the white card: a dark outline keeps them visible. */
 .field .play { filter: drop-shadow(0 0 1px rgba(0,0,0,.85)) drop-shadow(0 0 2px rgba(0,0,0,.35)); }
+/* Matchup header: touchdowns for each side between the win-probability bars. */
+.mx-tds { display: inline-flex; align-items: center; gap: 10px; border: 1px solid var(--border); background: var(--surface-2); border-radius: 999px; padding: 4px 14px; font-variant-numeric: tabular-nums; }
+.mx-tds b { font-size: 1.05rem; font-weight: 800; }
+.mx-tds span { font-size: .7rem; font-weight: 700; letter-spacing: .06em; color: var(--muted); }
+/* Matchup team names: a size smaller and always one line (app.js shrinks long ones to fit). */
+.mx-team-id strong, .lg-id strong { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; overflow-wrap: normal; display: block; }
+.mx-team-id strong { font-size: .9rem; }
+.lg-id strong { font-size: .95rem; }
+@media (max-width: 640px) { .mx-team-id strong { font-size: .85rem; } }
