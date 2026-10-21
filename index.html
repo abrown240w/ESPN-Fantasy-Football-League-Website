@@ -46,16 +46,10 @@
     </div>
     <nav class="wrap tabs" id="tabs" hidden>
       <button data-tab="roster" class="active">Roster</button>
-      <button data-tab="matchups">Matchups</button>
-      <button data-tab="live">Live games</button>
+      <button data-tab="matchups">Matchup</button>
+      <button data-tab="live"><i class="live-dot" id="live-dot" aria-hidden="true"></i>Live</button>
       <button data-tab="players">Players</button>
-      <button data-tab="usage">Team usage</button>
-      <button data-tab="injuries">Injury report</button>
-      <button data-tab="trade">Trade Analyzer</button>
-      <button data-tab="transactions">Transactions</button>
-      <button data-tab="managers">Weekly Snapshot</button>
-      <button data-tab="season">Standings</button>
-      <button data-tab="history">History</button>
+      <button data-tab="league">League</button>
     </nav>
   </header>
 
@@ -70,6 +64,7 @@
 
     <div id="loading" class="loading" hidden><span class="spinner"></span> Loading league data…</div>
 
+    <nav id="league-nav" class="subnav seg" hidden></nav>
     <section id="view-roster" class="view" hidden></section>
     <section id="view-matchups" class="view" hidden></section>
     <section id="view-live" class="view" hidden></section>
