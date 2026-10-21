@@ -683,6 +683,7 @@ function renderMatchupsPhone(el, label) {
   state.muBarSmooth = false;
   fitNames(el);
   updateStickies();
+  preloadMatchups();
 }
 // Team names stay on one line: shrink the text until it fits (down to a floor), then trim with "…".
 function fitNames(root) {
@@ -720,6 +721,20 @@ function pickMatchup(id, dir) {
   if (body && dir) { body.classList.remove("slide-left", "slide-right"); void body.offsetWidth; body.classList.add(dir > 0 ? "slide-left" : "slide-right"); }
   const bar = $("mu-bar"), top = document.querySelector(".topbar")?.getBoundingClientRect().height || 0;
   if (bar && bar.getBoundingClientRect().top < top) window.scrollTo({ top: scrollY + bar.getBoundingClientRect().top - top - 8 });
+}
+const muHtml = (id) => { const m = state.week.matchups.find((x) => x.id === id); return id === "league" ? leagueSummary() : m ? matchupDetail(m, true) : ""; };
+function muNeighbor(dir) {
+  const o = muOrder(), i = Math.max(0, o.indexOf(state.openMatchup));
+  return o[(i + dir + o.length) % o.length];
+}
+const muCached = (id) => { const c = state.muPre?.[id]; return c && c.week === state.week && Date.now() - c.at < 20e3 ? c.html : muHtml(id); };
+function preloadMatchups() {
+  const idle = window.requestIdleCallback || ((f) => setTimeout(f, 200));
+  idle(() => {
+    if (state.tab !== "matchups" || !state.week || MU_SPLIT.matches) return;
+    state.muPre = {};
+    for (const d of [1, -1]) { const id = muNeighbor(d); state.muPre[id] = { html: muHtml(id), at: Date.now(), week: state.week }; }
+  });
 }
 function stepMatchup(dir) {
   const order = muOrder(), i = Math.max(0, order.indexOf(state.openMatchup));
@@ -5128,7 +5143,8 @@ function switchTab(tab, from, leaving = false) {
 // Phones: swipe left / right to move to the next / previous tab. The page follows your finger with the
 // next tab already drawn beside it, so you see where you're going. Swipes that start on something that
 // scrolls sideways need a long pull at its edge; form controls and popups are left alone.
-// Matchups: a short swipe flips through the games (looping), a long one goes to the next tab.
+// The five tabs loop (League → Roster). Matchup: a short swipe flips through the games; League: a short
+// swipe moves through its sub-tabs (both looping); a long swipe goes to the next tab.
 // Draw a tab into its (hidden) section without switching to it, so it can slide in from the side.
 function renderInto(tab) {
   const prev = state.tab;
@@ -5141,16 +5157,15 @@ function preloadNeighbors() {
   if (!("ontouchstart" in window) || !state.week) return;
   const idle = window.requestIdleCallback || ((f) => setTimeout(f, 300));
   idle(() => {
-    for (const dir of [1, -1]) {
-      const t = neighborTab(dir);
-      if (t && t !== state.tab && Date.now() - (state.preDrawn?.[t] || 0) > 20e3) renderInto(t);
-    }
+    const subs = LEAGUE_SUBS.map(([k]) => k), si = subs.indexOf(state.tab);
+    const near = [neighborTab(1), neighborTab(-1), ...(si >= 0 ? [subs[(si + 1) % subs.length], subs[(si - 1 + subs.length) % subs.length]] : [])];
+    for (const t of near) if (t && t !== state.tab && Date.now() - (state.preDrawn?.[t] || 0) > 20e3) renderInto(t);
   });
 }
 function neighborTab(dir) {
   const groups = [...document.querySelectorAll("#tabs button[data-tab]")].map((b) => b.dataset.tab);
-  const g = groups[groups.indexOf(groupOf(state.tab)) + dir];
-  return g ? homeOf(g) : null;
+  const i = groups.indexOf(groupOf(state.tab));
+  return i < 0 ? null : homeOf(groups[(i + dir + groups.length) % groups.length]);
 }
 function initSwipeTabs() {
   if (!("ontouchstart" in window)) return;
@@ -5166,10 +5181,11 @@ function initSwipeTabs() {
   const view = () => $(`view-${state.tab}`);
   // The neighboring tab, shown beside the page while dragging.
   let peek = null;
-  const showPeek = (dir) => {
-    const tab = neighborTab(dir);
+  const subNeighbor = (dir) => { const subs = LEAGUE_SUBS.map(([k]) => k), i = Math.max(0, subs.indexOf(state.tab)); return subs[(i + dir + subs.length) % subs.length]; };
+  const showPeek = (dir, pick = neighborTab) => {
+    const tab = pick(dir);
     if (!tab) return null;
-    if (peek?.tab === tab) return peek;
+    if (peek?.tab === tab && peek.dir === dir) return peek;
     hidePeek();
     if (Date.now() - (state.preDrawn?.[tab] || 0) > 20e3) renderInto(tab);
     const el = $(`view-${tab}`), cur = view().getBoundingClientRect();
@@ -5188,15 +5204,13 @@ function initSwipeTabs() {
     if (tab !== state.tab) el.hidden = true;
     peek = null;
   };
-  const place = (dx) => {
-    const v = view(), dir = dx < 0 ? 1 : -1, p = showPeek(dir);
-    const x = p ? dx : dx * 0.25; // resist at the first / last tab
+  const place = (dx, pick) => {
+    const v = view(), dir = dx < 0 ? 1 : -1, p = showPeek(dir, pick);
     v.style.transition = "none";
-    v.style.transform = `translateX(${x}px)`;
-    if (p) p.el.style.transform = `translateX(${x + dir * W()}px)`;
-    if (peek && peek.dir !== dir) hidePeek();
+    v.style.transform = `translateX(${dx}px)`;
+    if (p) p.el.style.transform = `translateX(${dx + dir * W()}px)`;
   };
-  const settle = (go, dx) => {
+  const settle = (go, dx, leaving = true) => {
     const v = view(), dir = dx < 0 ? 1 : -1, p = peek;
     const ease = "transform .2s ease-out";
     v.style.transition = ease;
@@ -5206,10 +5220,47 @@ function initSwipeTabs() {
       v.style.transition = v.style.transform = "";
       const tab = p?.tab;
       hidePeek();
-      if (go && tab) switchTab(tab, "peek", true);
+      if (go && tab) switchTab(tab, "peek", leaving);
     }, 200);
   };
-  const mu = () => $("mu-body");
+  // Matchup: the next game slides in beside the open one.
+  let mp = null;
+  const muPeekHide = () => { if (mp) { mp.el.remove(); mp = null; } };
+  const muPeekShow = (dir) => {
+    const id = muNeighbor(dir);
+    if (mp?.id === id && mp.dir === dir) return mp;
+    muPeekHide();
+    const body = $("mu-body");
+    if (!body) return null;
+    body.parentElement.style.position = "relative";
+    const el = document.createElement("div");
+    el.className = "mu-detail mu-peek";
+    el.innerHTML = muCached(id);
+    Object.assign(el.style, { position: "absolute", top: `${body.offsetTop}px`, left: `${body.offsetLeft}px`, width: `${body.offsetWidth}px`, pointerEvents: "none", transition: "none" });
+    body.parentElement.appendChild(el);
+    fitNames(el);
+    mp = { id, el, dir };
+    return mp;
+  };
+  const muGap = () => ($("mu-body")?.offsetWidth || W()) + 12;
+  const placeMu = (dx) => {
+    const body = $("mu-body"), dir = dx < 0 ? 1 : -1, p = muPeekShow(dir);
+    body.style.transition = "none";
+    body.style.transform = `translateX(${dx}px)`;
+    if (p) p.el.style.transform = `translateX(${dx + dir * muGap()}px)`;
+  };
+  const settleMu = (go, dx) => {
+    const body = $("mu-body"), dir = dx < 0 ? 1 : -1, p = mp, ease = "transform .2s ease-out";
+    body.style.transition = ease;
+    body.style.transform = go ? `translateX(${-dir * muGap()}px)` : "translateX(0)";
+    if (p) { p.el.style.transition = ease; p.el.style.transform = go ? "translateX(0)" : `translateX(${dir * muGap()}px)`; }
+    setTimeout(() => {
+      const id = p?.id;
+      muPeekHide();
+      body.style.transition = body.style.transform = "";
+      if (go && id != null) pickMatchup(id, 0);
+    }, 200);
+  };
   document.addEventListener("touchstart", (e) => {
     armed = false; scroller = null; onTable = false; muSwipe = false; muMode = "games";
     if (e.touches.length !== 1 || !state.week || document.body.classList.contains("modal-open")) return;
@@ -5225,6 +5276,8 @@ function initSwipeTabs() {
       if (!sc.startAtLeft && !sc.startAtRight) return;
       scroller = sc;
     }
+    // League (phones): its sub-tabs, the same way as the games on Matchup.
+    if (groupOf(state.tab) === "league" && !MU_SPLIT.matches) { muSwipe = true; armed = true; return; }
     onTable = !!e.target.closest("table, .tbl, .table-wrap, .er-table"); // tables that fit still need the long pull
     armed = true;
   }, { passive: true });
@@ -5234,12 +5287,17 @@ function initSwipeTabs() {
     const dx = e.touches[0].clientX - sx, dy = e.touches[0].clientY - sy;
     if (muSwipe) {
       if (!dragging) {
-        if (Math.abs(dx) < 10 || Math.abs(dx) < Math.abs(dy) * 1.6) { if (Math.abs(dy) > 14) armed = false; return; }
+        if (scroller && !(dx > 0 ? scroller.startAtLeft : scroller.startAtRight)) { armed = false; return; }
+        if (Math.abs(dx) < (scroller ? 40 : 10) || Math.abs(dx) < Math.abs(dy) * 1.6) { if (Math.abs(dy) > 14) armed = false; return; }
         dragging = true;
       }
-      // Up to 35% of the screen it's a game flip (just the matchup moves); past that, the whole tab.
-      if (muMode === "games" && Math.abs(dx) > W() * 0.35) { muMode = "tab"; const m = mu(); if (m) { m.style.transition = "transform .12s"; m.style.transform = ""; } }
-      if (muMode === "games") { const m = mu(); if (m) { m.style.transition = "none"; m.style.transform = `translateX(${dx * 0.6}px)`; } }
+      // Up to 45% of the screen it's the next game (or League sub-tab) sliding in; past that, the next tab.
+      const league = groupOf(state.tab) === "league";
+      if (muMode === "games" && Math.abs(dx) > W() * 0.45) {
+        muMode = "tab";
+        if (!league) { muPeekHide(); const b = $("mu-body"); if (b) { b.style.transition = "transform .12s"; b.style.transform = ""; } }
+      }
+      if (muMode === "games") { if (league) place(dx, subNeighbor); else placeMu(dx); }
       else place(dx);
       return;
     }
@@ -5259,10 +5317,11 @@ function initSwipeTabs() {
     const wasDragging = dragging;
     dragging = false;
     if (muSwipe) {
-      const m = mu();
-      if (muMode === "tab") { settle(Math.abs(dx) > W() * 0.5 && !!neighborTab(dx < 0 ? 1 : -1), dx); return; }
-      if (m) { m.style.transition = m.style.transform = ""; }
-      if (wasDragging && Math.abs(dx) > 50) stepMatchup(dx < 0 ? 1 : -1);
+      if (muMode === "tab") { settle(Math.abs(dx) > W() * 0.6, dx); return; }
+      if (!wasDragging) return;
+      const go = Math.abs(dx) > W() * 0.2 || (Math.abs(dx) > 40 && Date.now() - t0 < 300);
+      if (groupOf(state.tab) === "league") settle(go, dx, false);
+      else settleMu(go, dx);
       return;
     }
     if (!wasDragging) return;
@@ -5270,8 +5329,7 @@ function initSwipeTabs() {
     settle(go, dx);
   }, { passive: true });
   document.addEventListener("touchcancel", () => {
-    if (dragging) { dragging = false; settle(false, 0); }
-    const m = mu(); if (m) m.style.transform = "";
+    if (dragging) { dragging = false; if (mp) settleMu(false, 0); else settle(false, 0); }
     armed = false;
   });
 }
