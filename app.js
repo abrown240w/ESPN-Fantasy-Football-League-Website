@@ -4962,8 +4962,40 @@ function setUrl() {
   history.replaceState(null, "", `${location.pathname}${q.toString() ? "?" + q.toString().replace("demo=", "demo") : ""}`);
 }
 
+// Leaving a tab (swiping or tapping to another one) puts it back the way it opens by default (views,
+// filters, sorts), so it's fresh next time. Jumps from a popup or player card into another tab don't.
+// The Trade Analyzer keeps a trade you're building.
+function resetTab(tab) {
+  if (tab === "roster") {
+    state.erView = "matchup"; store.set("ffb.erview", "matchup"); state.erScroll = 0;
+    // Back to your own team if the site knows it (owner sign-in or your ★ team); otherwise the team
+    // you were looking at stays.
+    if (ownerTeam() || store.get(`ffb.myteam.${state.leagueId || "default"}`)) { state.rosterTeam = null; store.set(`ffb.rosterteam.${state.leagueId || "default"}`, ""); }
+    if (state.lineupEdit) state.lineupEdit.pick = null;
+  } else if (tab === "players") {
+    Object.assign(state.players, { mode: "avail", mine: false, q: "", pos: "ALL", team: "ALL", sort: { key: "proj", dir: -1 } });
+  } else if (tab === "usage") {
+    Object.assign(state.players, { utTeam: "", utMode: "snap" });
+  } else if (tab === "matchups") {
+    state.openMatchup = null; // back to your own game
+  } else if (tab === "live") {
+    state.liveFilter = { show: "rostered", team: "ALL" };
+  } else if (tab === "injuries") {
+    state.injF = null;
+  } else if (tab === "transactions") {
+    state.txFilter = { team: "ALL", kind: "all" };
+  } else if (tab === "managers") {
+    state.managers.sort = { key: "score", dir: -1 };
+  } else if (tab === "season") {
+    state.standings.sort = { key: "rank", dir: 1 }; state.seasonSort = { key: "finish", dir: 1 };
+  } else if (tab === "history") {
+    state.historySel = "all"; state.historySort = { key: "titles", dir: -1 };
+  }
+}
+
 // Show a tab. `from` ("left"/"right") slides the new tab in after a swipe.
-function switchTab(tab, from) {
+function switchTab(tab, from, leaving = false) {
+  if (leaving && state.tab && state.tab !== tab) resetTab(state.tab);
   state.tab = tab;
   store.set("ffb.tab", tab);
   render();
@@ -5001,9 +5033,10 @@ function initSwipeTabs() {
     scroller = null;
     onTable = false;
     muSwipe = false;
-    // Matchups (phones): a swipe on the matchup header goes to the next / previous game.
+    // Matchups (phones): a swipe anywhere on the open matchup (header or players) or the scoreboard goes
+    // to the next / previous game instead of the next tab.
     if (state.tab === "matchups" && !MU_SPLIT.matches && e.touches.length === 1 && !document.body.classList.contains("modal-open")
-      && e.target.closest("#mu-body .mx-top, #mu-body .mu-swipe") && !e.target.closest("a, button")) {
+      && e.target.closest("#mu-body")) {
       muSwipe = true; sx = e.touches[0].clientX; sy = e.touches[0].clientY; t0 = Date.now();
       return;
     }
@@ -5056,7 +5089,7 @@ function initSwipeTabs() {
     if (muSwipe) {
       muSwipe = false;
       const t = e.changedTouches[0], dx = t.clientX - sx, dy = t.clientY - sy;
-      if (Math.abs(dx) > 45 && Math.abs(dx) > Math.abs(dy) * 1.5) stepMatchup(dx < 0 ? 1 : -1);
+      if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.8 && Date.now() - t0 < 800) stepMatchup(dx < 0 ? 1 : -1);
       return;
     }
     if (!armed) return;
@@ -5070,7 +5103,7 @@ function initSwipeTabs() {
       v.style.transform = go ? `translateX(${dx < 0 ? -innerWidth : innerWidth}px)` : "translateX(0)";
       setTimeout(() => {
         v.style.transition = v.style.transform = "";
-        if (go) switchTab(next.dataset.tab, dx < 0 ? "left" : "right");
+        if (go) switchTab(next.dataset.tab, dx < 0 ? "left" : "right", true);
       }, 180);
       return;
     }
@@ -5089,7 +5122,7 @@ function initSwipeTabs() {
       return;
     }
     const next = neighbor(dx < 0 ? 1 : -1);
-    if (next) switchTab(next.dataset.tab, dx < 0 ? "left" : "right");
+    if (next) switchTab(next.dataset.tab, dx < 0 ? "left" : "right", true);
   }, { passive: true });
   document.addEventListener("touchcancel", () => { if (dragging) { dragging = false; const v = view(); v.style.transition = "transform .18s"; v.style.transform = "translateX(0)"; } armed = false; });
 }
@@ -5097,7 +5130,7 @@ function initSwipeTabs() {
 function bindUi() {
   $("tabs").addEventListener("click", (e) => {
     const b = e.target.closest("button[data-tab]");
-    if (b) switchTab(b.dataset.tab);
+    if (b) switchTab(b.dataset.tab, null, true);
   });
   const go = async (w) => { state.openMatchup = null; await loadWeek(w); setUrl(); };
   $("week-select").addEventListener("change", (e) => go(+e.target.value));
