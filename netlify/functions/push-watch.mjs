@@ -205,7 +205,7 @@ async function transactionAlerts(lid, season, st, teams, out) {
   if (wonAll.length) {
     const lines = wonAll.map((t) => { const add = (t.items || []).find((i) => i.type === "ADD"); return `${teamName(t.teamId)}: ${add ? nm(add.playerId) : "a player"}`; });
     out.push({ league: true, actor: "", actors: wonAll.map((t) => String(t.teamId)), kinds: ["adds"], tag: `waiver-run-${lastProcessed}`,
-      title: "📥 Waiver claims processed", body: lines.join(" · "), url: `/?league=${lid}&tab=transactions` });
+      title: "📥 Waiver claims processed", body: lines.join(" · "), url: `/?league=${lid}&tab=transactions&waivers=${lastProcessed}` });
   }
   const byTeam = {};
   for (const t of fresh) (byTeam[t.teamId] ||= []).push(t);
@@ -219,7 +219,7 @@ async function transactionAlerts(lid, season, st, teams, out) {
       teamId: String(team), kinds: ["waiver"], tag: `waivers-${lastProcessed}`, title: "📋 Waivers processed",
       body: [got, missed].filter(Boolean).join(" · "),
       publicBody: got || null, // league-mates' failed claims are private: only the owner sees misses
-      url: `/?league=${lid}&tab=transactions`,
+      url: `/?league=${lid}&tab=transactions&waivers=${lastProcessed}`,
     });
   }
 }

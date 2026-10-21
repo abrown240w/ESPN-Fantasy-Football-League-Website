@@ -1441,3 +1441,27 @@ main.wrap { padding-top: 14px !important; }
 @media (max-width: 640px) { main.wrap { padding-top: 12px !important; } }
 .pl-mine { margin: 0 0 10px; padding: 0 10px; }
 @media (min-width: 641px) { .pl-mine { padding: 0; } }
+
+/* Home-screen app: no double-tap zoom, and fields big enough that iPhone doesn't zoom into them. */
+html.standalone, html.standalone body { touch-action: manipulation; -webkit-text-size-adjust: 100%; }
+html.standalone input, html.standalone select, html.standalone textarea { font-size: max(16px, 1em); }
+/* Roster: the team name is the team picker (an invisible select over the name). */
+.er-pick { position: relative; display: inline-block; max-width: 100%; cursor: pointer; }
+.er-pick strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.er-pick .caret { color: var(--accent-ink); font-size: .8rem; }
+.er-pick select { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; font-size: 16px; cursor: pointer; }
+/* Claim order */
+.pd-order { display: inline-flex; flex-direction: column; align-items: center; gap: 1px; margin-right: 6px; min-width: 26px; }
+.pd-order b { font-size: .8rem; line-height: 1; }
+.pd-order button { border: 1px solid var(--border); background: var(--surface); color: var(--accent-ink); border-radius: 6px; width: 26px; height: 20px; padding: 0; font-size: .6rem; line-height: 1; cursor: pointer; }
+.pd-order button:disabled { opacity: .3; cursor: default; }
+.pd-hint { margin: 6px 0 0; }
+/* Waiver results */
+.wr-list { display: flex; flex-direction: column; }
+.wr-row { display: flex; align-items: center; gap: 8px; padding: 8px 2px; border-top: 1px solid var(--border); }
+.wr-row:first-child { border-top: 0; }
+.wr-row.me { background: var(--accent-soft, rgba(0,0,0,.03)); border-radius: 8px; }
+.wr-row.lost .pd-main { opacity: .75; }
+.wr-n { min-width: 20px; text-align: center; font-weight: 700; font-size: .8rem; color: var(--muted); }
+.wr-st { font-size: .78rem; font-weight: 700; text-align: right; white-space: nowrap; }
+.wr-last { margin-left: auto; border: 1px solid var(--accent); background: var(--surface); color: var(--accent-ink); border-radius: 8px; padding: 3px 9px; font: inherit; font-size: .78rem; font-weight: 700; cursor: pointer; }

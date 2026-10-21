@@ -2375,7 +2375,8 @@ function erCols(p) {
   }
   if (v === "usage") {
     const u = usageOf(p.id);
-    return [c(u ? pctTxt(u.last.pct) : dash, u?.avg ? `avg ${pctTxt(u.avg.pct)}` : ""), c(u && u.pos !== "QB" ? pctTxt(u.last.share) : dash, u ? `${u.last.tgt} tgt` : ""), c(u ? pctTxt(u.last.rush) : dash, u ? `${u.last.car} att` : "")];
+    const avg = (k) => pctTxt(u.avg?.[k] ?? u.last[k]), last = (k) => `last ${pctTxt(u.last[k])}`;
+    return [c(u ? avg("pct") : dash, u ? last("pct") : ""), c(u && u.pos !== "QB" ? avg("share") : dash, u && u.pos !== "QB" ? last("share") : ""), c(u ? avg("rush") : dash, u ? last("rush") : "")];
   }
   if (v === "schedule") {
     const nfl = state.week?.nfl, sched = nfl?.sched?.[p.proId], out = [c(nfl?.byes?.[p.proId] || dash)];
@@ -2400,7 +2401,7 @@ function erHeads() {
   const h = (l, tip = "") => `<div class="erc" ${tip ? `title="${tip}"` : ""}>${l}</div>`;
   if (v === "scoring") return [h("Pos rk", "Season rank at the position"), h("Avg", "Points per game this season"), h("Pts", "Season points"), h("Last", "Last week"), h("Proj", "This week's projection")];
   if (v === "research") return [h("Opp rk", "Opponent's rank vs. the position (1st = toughest)"), h("%Rost"), h("%Start"), h("+/-", "Change in % rostered")];
-  if (v === "usage") return [h("Snap", "Share of snaps last game"), h("Tgt", "Share of targets last game"), h("Rush", "Share of carries last game")];
+  if (v === "usage") return [h("Snap", "Season average share of snaps, last game underneath"), h("Tgt", "Season share of team targets, last game underneath"), h("Rush", "Season share of team carries, last game underneath")];
   if (v === "schedule") return [h("Bye"), ...Array.from({ length: state.base.weeks - state.week.week + 1 }, (_, i) => h(`Wk ${state.week.week + i}`))];
   if (v === "rankings") return [h("Avg", "ESPN experts' average PPR rank this week"), h("Range", "Best to worst expert rank"), h("Pos rk", "Season rank at the position"), h("Value", "FantasyCalc trade value")];
   return [h("Score", "Points this week over the projection")];
@@ -2440,7 +2441,7 @@ function chipPopup(kind, teamId, side) {
     const next = nextWaiverRun(), deadline = state.base.raw.settings?.tradeSettings?.deadlineDate;
     const sub = kind === "claims" ? (next ? `next waiver run ${fmtWhen(next)}` : "") : (deadline ? `trade deadline ${fmtWhen(deadline)}` : "");
     const body = !P ? `<div class="loading small"><span class="spinner"></span> Loading from ESPN…</div>`
-      : list.length ? `<div class="pd-pop">${list.map((x) => pendingRow(x, (P.teams || [Number(teamId)]).map(Number))).join("")}</div>`
+      : list.length ? `<div class="pd-pop" data-pdk="${kind}">${sortPending(list).map((x) => pendingRow(x, (P.teams || [Number(teamId)]).map(Number))).join("")}${kind === "claims" ? claimHint(list) : ""}</div>`
       : `<p class="muted">${kind === "claims" ? "No pending waiver claims." : "No pending trade offers."}</p>`;
     showModal(`${head(kind === "claims" ? "📋" : "⇄", kind === "claims" ? "Claims" : "Trades", sub)}${body}
       ${kind === "trades" ? `<button type="button" class="pg-go" id="chip-ta">Build a trade in the Trade Analyzer ›</button>` : ""}`);
@@ -2562,23 +2563,21 @@ function renderRoster() {
     deadline ? chip("deadline", "📅", "Trade deadline", new Date(deadline).toLocaleString(undefined, { month: "numeric", day: "numeric", hour: "numeric", minute: "2-digit" })) : "",
     waiverPlace(sel) ? chip("waivers", "☰", "Waiver order", waiverPlace(sel)) : "",
   ].join("");
+  const opts = ids.map((id) => `<option value="${id}" ${id === String(sel) ? "selected" : ""}>${esc(team(id).name)}</option>`).join("");
   const head = `<div class="card er-head">
-      <div class="er-top">${logoImg(t, 48)}<div class="er-id"><strong>${esc(t.name)}</strong>
+      <div class="er-top">${logoImg(t, 48)}<div class="er-id">${ids.length > 1 ? `<label class="er-pick"><strong>${esc(t.name)} <span class="caret" aria-hidden="true">▾</span></strong><select id="roster-team" aria-label="Show team">${opts}</select></label>` : `<strong>${esc(t.name)}</strong>`}
           <span class="muted small">${esc(t.owner)} · ${recordStr(t)} · ${ordinal(standing)} <button type="button" class="my-star ${isMine ? "on" : ""}" id="my-star" title="${ownerTeam() ? "Your team is set by the owner sign-in" : isMine ? "This is your team" : "Make this my team"}">${isMine ? "★" : "☆"}</button></span></div>
         ${side ? `<div class="er-score"><strong>${st === "upcoming" ? "0.0" : f1(side.score)}</strong><small>${f1(st === "live" ? side.liveProj : side.proj)}</small></div>` : ""}</div>
       <div class="er-chips">${chips}</div></div>`;
   const viewLabel = ER_VIEWS.find(([k]) => k === erView())[1];
   const tools = side ? `<div class="er-tools">${canEdit ? `<button type="button" class="er-btn" id="er-quick">Quick Lineup</button>` : ""}<button type="button" class="er-btn" id="er-views">${viewLabel} <span class="caret">▾</span></button></div>` : "";
   const moving = picked ? `<div class="er-moving"><span>Moving <strong>${esc(picked.name)}</strong>: tap a highlighted spot</span><span class="rh-edit-btns"><button type="button" class="mv-cancel" id="mv-drop">Drop</button><button type="button" class="mv-done" id="mv-done">Cancel</button></span></div>` : "";
-  const opts = ids.map((id) => `<option value="${id}" ${id === String(sel) ? "selected" : ""}>${esc(team(id).name)} (${esc(team(id).owner)})</option>`).join("");
-
-  el.innerHTML = `<div class="section-head"><h2>Roster</h2><label class="small muted ta-me">Team <select id="roster-team">${opts}</select></label></div>
-    ${head}${tools}${moving}
+  el.innerHTML = `${head}${tools}${moving}
     <div class="card er-table ev-${erView()}">${table}</div>
     ${side ? playoffSchedule(side) : ""}
     ${fcCredit()}${nvCredit()}${wxCredit()}`;
 
-  $("roster-team").addEventListener("change", (e) => { state.rosterTeam = e.target.value; store.set(key, e.target.value); renderRoster(); });
+  $("roster-team")?.addEventListener("change", (e) => { state.rosterTeam = e.target.value; store.set(key, e.target.value); renderRoster(); });
   $("my-star").addEventListener("click", () => { if (ownerTeam()) return; setMyTeam(sel); state.winWin = null; updateEspnLink(); renderRoster(); });
   el.querySelectorAll("[data-chip]").forEach((b) => b.addEventListener("click", () => { state.modalReturn = b; chipPopup(b.dataset.chip, sel, side); }));
   $("er-views")?.addEventListener("click", () => {
@@ -2710,12 +2709,22 @@ async function openChatTopic(t, list) {
       const sep = day !== lastDay ? `<div class="ct-day">${new Date(m.date).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}</div>` : "";
       lastDay = day;
       if (m.system) return `${sep}<div class="ct-sys"><strong>${esc(m.title)}</strong>${m.week ? `<div>Week ${m.week} is in the books.</div>` : ""}${m.lines.map((l) => `<div>${esc(l)}</div>`).join("")}${m.text ? `<div>${esc(m.text)}</div>` : ""}
-          ${m.week ? `<button type="button" class="ct-wk" data-week="${m.week}">See week ${m.week} matchups ›</button>` : ""}<span class="muted small">${chatTime(m.date)}</span></div>`;
+          ${m.week ? `<button type="button" class="ct-wk" data-week="${m.week}">See week ${m.week} matchups ›</button>` : ""}${/^Waiver/.test(m.title) ? `<button type="button" class="ct-wk" data-wrun="${m.date}">See every claim, in order ›</button>` : ""}<span class="muted small">${chatTime(m.date)}</span></div>`;
       const body = m.img ? `<img class="ct-img ${m.sticker ? "sticker" : ""}" src="${esc(m.img)}" alt="${m.sticker ? "Sticker" : "GIF"}" loading="lazy">` : `<div class="ct-bubble">${esc(m.text)}</div>`;
       return `${sep}<div class="ct-msg ${m.mine ? "mine" : ""}">${m.mine ? "" : `<div class="ct-who">${esc(m.author)}${m.team ? ` <span class="muted">· ${esc(m.team)}</span>` : ""}</div>`}${body}<span class="muted small">${new Date(m.date).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}</span></div>`;
     }).join("") || `<p class="muted">No messages yet. Say something!</p>`;
     if (stick || atBottom) box.scrollTop = box.scrollHeight;
+    // Mark it read on ESPN (and clear the count here) whenever something newer than last time shows up.
+    const newest = Math.max(0, ...c.messages.map((m) => m.date));
+    if (newest > (t.readTo || 0) && !document.hidden) {
+      t.readTo = newest;
+      chatPost("chatread", { topic: t.id }).then(() => {
+        for (const x of [t, ...(state.chatList?.data?.topics || []).filter((x) => x.id === t.id)]) x.unread = 0;
+        paintChatBadge();
+      }).catch(() => {});
+    }
     box.querySelectorAll("img.ct-img").forEach((im) => im.addEventListener("load", () => { if (stick) box.scrollTop = box.scrollHeight; }, { once: true }));
+    box.querySelectorAll("[data-wrun]").forEach((b) => b.addEventListener("click", () => openWaiverRun(Number(b.dataset.wrun))));
     box.querySelectorAll("[data-week]").forEach((b) => b.addEventListener("click", async () => {
       document.querySelector("#pl-modal .modal-close").click();
       switchTab("matchups");
@@ -2908,14 +2917,56 @@ function ensurePending() {
   }
   return c?.key === k ? c.data : null;
 }
-// Demo: one made-up claim so the layout can be seen.
+// Demo: a few made-up claims so the layout (and reordering) can be seen.
 function demoPending() {
+  if (state.demoPending) return state.demoPending;
   const fa = faData(), me = actTeam(), side = state.week.sides.find((x) => String(x.teamId) === me);
-  const add = fa?.players?.find((p) => p.status === "W"), drop = side?.bench.slice(-1)[0];
-  if (!add || !drop) return { pending: [] };
-  return { pending: [{ id: "demo", type: "WAIVER", status: "PENDING", teamId: Number(me), bid: 0, process: add.waiverDate,
-    items: [{ playerId: add.id, type: "ADD", to: Number(me), info: [add.name, add.posId, add.proId] }, { playerId: drop.id, type: "DROP", from: Number(me), info: [drop.name, drop.posId, drop.proId] }] }] };
+  const adds = (fa?.players || []).filter((p) => p.status === "W").slice(0, 3), drop = side?.bench.slice(-1)[0];
+  if (!adds.length || !drop) return { pending: [] };
+  return (state.demoPending = { pending: adds.map((add, i) => ({ id: `demo${i}`, type: "WAIVER", status: "PENDING", teamId: Number(me), bid: 0, subOrder: i + 1, process: add.waiverDate,
+    items: [{ playerId: add.id, type: "ADD", to: Number(me), info: [add.name, add.posId, add.proId] }, { playerId: drop.id, type: "DROP", from: Number(me), info: [drop.name, drop.posId, drop.proId] }] })) });
 }
+// Your claims in the order ESPN will try them: higher bids first (budget leagues), then your order,
+// then oldest first for claims you've never reordered. Trades keep their place after the claims.
+const usesFaab = () => !!state.base.raw.settings?.acquisitionSettings?.isUsingAcquisitionBudget;
+function claimSort(a, b) {
+  return (usesFaab() ? (b.bid || 0) - (a.bid || 0) : 0) || (a.subOrder ?? 999) - (b.subOrder ?? 999) || (a.proposed || 0) - (b.proposed || 0);
+}
+const sortPending = (list) => [...list.filter((t) => t.type === "WAIVER").sort(claimSort), ...list.filter((t) => t.type !== "WAIVER")];
+// Move a claim one place up (-1) or down (+1). Shown right away; ESPN gets the whole new order.
+async function moveClaim(id, dir) {
+  const P = ensurePending(), me = actTeam();
+  const t = P?.pending?.find((x) => String(x.id) === id);
+  if (!t) return;
+  const list = P.pending.filter((x) => x.type === "WAIVER" && x.teamId === t.teamId).sort(claimSort);
+  const i = list.indexOf(t), j = i + dir;
+  if (j < 0 || j >= list.length || (usesFaab() && (list[j].bid || 0) !== (t.bid || 0))) return;
+  [list[i], list[j]] = [list[j], list[i]];
+  const before = list.map((x) => x.subOrder);
+  list.forEach((x, k) => { x.subOrder = k + 1; });
+  repaintPending();
+  try { await sendMove("reorder", { teamId: Number(me), order: list.map((x) => String(x.id)) }); }
+  catch (err) {
+    list.forEach((x, k) => { x.subOrder = before[k]; });
+    state.pending = null; repaintPending();
+    showModal(`<div class="pm-head"><h2 id="pl-modal-title">Claim order</h2></div><p class="neg">${esc(err.message)}</p>`);
+  }
+}
+// Redraw whatever is showing pending moves.
+function repaintPending() {
+  const body = $("pl-modal-body");
+  if (!$("pl-modal").hidden && body.querySelector(".pd-pop")) {
+    if (body.querySelector('[data-pdk="claims"]')) chipPopup("claims", state.rosterTeam || actTeam(), state.week.sides.find((x) => String(x.teamId) === String(state.rosterTeam || actTeam())));
+    else if (state.pdModal) openPendingModal();
+  }
+  if (["transactions", "roster"].includes(state.tab)) render();
+}
+document.addEventListener("click", (e) => {
+  const w = e.target.closest(".wr-last[data-wrun]");
+  if (w) openWaiverRun(0);
+  const b = e.target.closest("[data-claim-move]");
+  if (b) moveClaim(b.dataset.claimMove, Number(b.dataset.dir));
+});
 // Cancel a pending claim, withdraw a trade offer you sent, or decline one you got.
 function cancelPending(t, kind, label) {
   const me = actTeam();
@@ -2946,12 +2997,17 @@ function pendingRow(t, mine) {
   }
   const adds = (t.items || []).filter((i) => i.type === "ADD"), drops = (t.items || []).filter((i) => i.type === "DROP");
   const when = t.process || (adds[0] && clears(adds[0].playerId)) || nextWaiverRun();
-  const faab = !!state.base.raw.settings?.acquisitionSettings?.isUsingAcquisitionBudget;
-  return `<div class="pd-row"><span class="pd-kind ${t.type === "WAIVER" ? "wv" : ""}">${t.type === "WAIVER" ? "Claim" : "Add"}</span><div class="pd-main">
+  const faab = usesFaab();
+  // Claim order: number, and arrows when there's more than one.
+  const queue = t.type === "WAIVER" ? (ensurePending()?.pending || []).filter((x) => x.type === "WAIVER" && x.teamId === t.teamId).sort(claimSort) : [];
+  const qi = queue.indexOf(t), canSwap = (j) => queue[j] && (!faab || (queue[j].bid || 0) === (t.bid || 0));
+  const order = queue.length > 1 && qi >= 0 ? `<span class="pd-order"><button type="button" data-claim-move="${esc(t.id)}" data-dir="-1" ${canSwap(qi - 1) ? "" : "disabled"} aria-label="Move up">▲</button><b>${qi + 1}</b><button type="button" data-claim-move="${esc(t.id)}" data-dir="1" ${canSwap(qi + 1) ? "" : "disabled"} aria-label="Move down">▼</button></span>` : "";
+  return `<div class="pd-row">${order}<span class="pd-kind ${t.type === "WAIVER" ? "wv" : ""}">${t.type === "WAIVER" ? "Claim" : "Add"}</span><div class="pd-main">
     <div>${adds.length ? `<span class="pos">+</span> ${adds.map(nm).join(", ")}` : ""}${drops.length ? ` <span class="neg">−</span> ${drops.map(nm).join(", ")}` : ""}</div>
     <div class="muted small">${when ? `Processes ${fmtWhen(when)}` : "Processes at the next waiver run"}${faab && t.bid != null ? ` · bid $${t.bid}` : ""}</div></div>
     <button type="button" class="pd-cancel" data-cancel="${esc(t.id)}" data-kind="claim" data-label="Cancel claim">Cancel</button></div>`;
 }
+const claimHint = (list) => (list.filter((t) => t.type === "WAIVER").length > 1 ? `<p class="muted small pd-hint">Claims process top to bottom: #1 is tried first.${usesFaab() ? " Higher bids still go first; arrows reorder claims with the same bid." : ""}</p>` : "");
 // Popup with your pending moves (Roster tab button). Fills in when the list arrives.
 function openPendingModal() {
   const me = actTeam();
@@ -2960,10 +3016,51 @@ function openPendingModal() {
   state.pdModal = true;
   showModal(`<div class="pm-head">${logoImg(team(me), 44)}<div><h2 id="pl-modal-title">Pending moves</h2>
       <div class="muted small">${esc(team(me).name)}${waiverPlace(me) ? ` · ${waiverPlace(me)} in waiver order` : ""}${next ? ` · next waiver run ${fmtWhen(next)}` : ""}</div></div></div>
-    <div class="pd-pop">${!P ? `<div class="loading small"><span class="spinner"></span> Loading from ESPN…</div>`
+    <div class="pd-pop" data-pdk="all">${!P ? `<div class="loading small"><span class="spinner"></span> Loading from ESPN…</div>`
       : P.error && !P.pending.length ? `<p class="muted small">${esc(P.error)}</p>`
-      : P.pending.length ? P.pending.map((t) => pendingRow(t, (P.teams || [Number(me)]).map(Number))).join("")
+      : P.pending.length ? `${sortPending(P.pending).map((t) => pendingRow(t, (P.teams || [Number(me)]).map(Number))).join("")}${claimHint(P.pending)}`
       : `<p class="muted">No pending claims or trade offers.</p>`}</div>`);
+}
+
+// One waiver run: every claim in the order ESPN processed it, won or missed (misses only for the owner).
+const WAIVER_FAIL = {
+  FAILED_INVALIDPLAYERSOURCE: "Player already taken", FAILED_PLAYERALREADYDROPPED: "Drop player already gone", FAILED_ROSTERLIMIT: "Roster full",
+  FAILED_AUCTIONBUDGETEXCEEDED: "Over budget", FAILED_ROSTERLOCK: "Roster locked", FAILED_POSITIONLIMIT: "Position limit", FAILED_TRADELOCK: "Player in a trade",
+};
+const failText = (s) => WAIVER_FAIL[s] || (s || "").replace(/^FAILED_?/, "").toLowerCase().replace(/^./, (x) => x.toUpperCase()) || "Not processed";
+async function openWaiverRun(at) {
+  const title = `<div class="pm-head"><h2 id="pl-modal-title">📋 Waiver results</h2></div>`;
+  showModal(`${title}<div class="loading small"><span class="spinner"></span> Loading from ESPN…</div>`);
+  let d;
+  try {
+    if (state.demo) d = demoWaiverRun();
+    else {
+      const r = await fetch(`/api/roster/waivers?${new URLSearchParams({ leagueId: String(state.base.raw?.id || state.leagueId || ""), season: state.base.season, at: String(at || "") })}`);
+      d = await r.json();
+      if (!r.ok) throw new Error(d.message || "Couldn't load the waiver results.");
+    }
+  } catch (e) { return showModal(`${title}<div class="banner">${esc(e.message)}</div>`); }
+  const me = myTeamId();
+  const nm = (i) => (i.info ? `${plink(i.playerId, i.info[0])} <span class="muted small">${POS[i.info[1]] || ""}</span>` : `Player ${esc(i.playerId)}`);
+  const rows = d.claims.map((c, k) => {
+    const add = c.items.filter((i) => i.type === "ADD"), drop = c.items.filter((i) => i.type === "DROP"), won = c.status === "EXECUTED";
+    return `<div class="wr-row ${won ? "won" : "lost"} ${String(c.teamId) === String(me) ? "me" : ""}"><span class="wr-n">${k + 1}</span>${logoImg(team(c.teamId), 26)}
+      <div class="pd-main"><div><strong>${esc(team(c.teamId).name)}</strong>${c.bid != null ? ` <span class="muted small">$${c.bid}</span>` : ""}</div>
+        <div class="small">${add.length ? `<span class="pos">+</span> ${add.map(nm).join(", ")}` : ""}${drop.length ? ` <span class="neg">−</span> ${drop.map(nm).join(", ")}` : ""}</div></div>
+      <span class="wr-st">${won ? `<span class="pos">✓ Won</span>` : `<span class="neg">✗ ${esc(failText(c.status))}</span>`}</span></div>`;
+  }).join("");
+  const won = d.claims.filter((c) => c.status === "EXECUTED").length;
+  showModal(`<div class="pm-head"><div><h2 id="pl-modal-title">📋 Waiver results</h2><div class="muted small">${d.at ? fmtWhen(d.at) : ""}${d.claims.length ? ` · ${won} won${d.owner ? ` · ${d.claims.length - won} missed` : ""}` : ""}</div></div></div>
+    ${d.claims.length ? `<p class="muted small">In the order ESPN processed them.</p><div class="wr-list">${rows}</div>` : `<p class="muted">No processed claims found for that run.</p>`}
+    ${d.hidden ? `<p class="muted small">${d.hidden} claim${d.hidden === 1 ? "" : "s"} that didn't go through ${d.hidden === 1 ? "is" : "are"} hidden. Sign in as the owner to see them.</p>` : ""}`);
+}
+// Demo: a made-up run from this week's waiver players.
+function demoWaiverRun() {
+  const fa = faData(), ids = Object.keys(state.base.teams);
+  const pl = (fa?.players || []).slice(0, 6);
+  const fails = ["FAILED_INVALIDPLAYERSOURCE", "FAILED_ROSTERLIMIT"];
+  return { owner: true, at: Date.now() - 6 * 3600e3, hidden: 0, claims: pl.map((p, k) => ({ id: `w${k}`, teamId: Number(ids[(k * 3) % ids.length]), status: k === 2 || k === 4 ? fails[k % 2] : "EXECUTED", bid: null,
+    items: [{ playerId: p.id, type: "ADD", info: [p.name, p.posId, p.proId] }] })) };
 }
 
 // Transactions tab: next waiver run, your pending moves (owner) and the waiver order.
@@ -2975,9 +3072,9 @@ function waiverSection() {
   const pending = !me ? "" : `<div class="card pd-card"><div class="pd-head"><strong>Your pending moves</strong></div>${
     !P ? `<div class="loading small"><span class="spinner"></span> Loading…</div>`
     : P.error && !P.pending.length ? `<p class="muted small">${esc(P.error)}</p>`
-    : P.pending.length ? P.pending.map((t) => pendingRow(t, (P.teams || [Number(me)]).map(Number))).join("")
+    : P.pending.length ? `${sortPending(P.pending).map((t) => pendingRow(t, (P.teams || [Number(me)]).map(Number))).join("")}${claimHint(P.pending)}`
     : `<p class="muted small">No pending claims or trade offers.</p>`}</div>`;
-  return `<div class="section-head"><h2>Waivers</h2><span class="muted small">${next ? `Next run ${fmtWhen(next)}` : "Next run: overnight"}${days ? ` · runs ${days}` : ""}</span></div>
+  return `<div class="section-head"><h2>Waivers</h2><span class="muted small">${next ? `Next run ${fmtWhen(next)}` : "Next run: overnight"}${days ? ` · runs ${days}` : ""}</span><button type="button" class="wr-last" data-wrun="">Last run results ›</button></div>
     ${pending}
     <div class="card wv-order"><div class="pd-head"><strong>Waiver order</strong>${me && waiverPlace(me) ? ` <span class="muted small">You're ${waiverPlace(me)}</span>` : ""}</div>
       <ol>${teams.map((t) => `<li class="${myRow(t.id)}"><span class="wv-rk">${t.waiverRank}</span>${logoImg(team(t.id), 20)}<span>${esc(team(t.id).name)}</span></li>`).join("")}</ol></div>`;
@@ -3300,7 +3397,9 @@ function usageCalc(pl, sp) {
   const avgOf = (list) => {
     if (!list.length) return null;
     const tgt = sum(list, (w) => pl.w[w][2]), teamTgt = sum(list, (w) => teamOf(w, pl.w[w][3])[1]);
-    return { pct: sum(list, (w) => pl.w[w][1]) / list.length, share: teamTgt ? (tgt / teamTgt) * 100 : null, tgt: tgt / list.length, games: list.length };
+    const car = sum(list, (w) => pl.w[w][4] || 0), teamCar = sum(list, (w) => teamOf(w, pl.w[w][3])[2] || 0);
+    return { pct: sum(list, (w) => pl.w[w][1]) / list.length, share: teamTgt ? (tgt / teamTgt) * 100 : null, tgt: tgt / list.length,
+      rush: teamCar ? (car / teamCar) * 100 : null, car: car / list.length, games: list.length };
   };
   const played = wks.filter((w) => pl.w[w][0] > 0 || pl.w[w][2] > 0);
   return { pos: pl.pos, team, last, avg: avgOf(played), prior: avgOf(played.filter((w) => w < lastWk)) };
@@ -4617,6 +4716,7 @@ function renderLeagueSelect() {
 }
 
 let pendingWeek = parseInt(params.get("week")) || null;
+let pendingWaivers = params.has("waivers") ? Number(params.get("waivers")) || 0 : null;
 // A notification about a play opens that game on Live games.
 if (params.get("game")) { state.liveOpen = { [params.get("game")]: true }; state.liveSel = params.get("game"); }
 
@@ -4638,6 +4738,7 @@ async function loadLeague(week) {
   const wk = Math.min(Math.max(week || pendingWeek || b.current, 1), b.weeks);
   pendingWeek = null;
   await loadWeek(wk);
+  if (pendingWaivers != null) { const at = pendingWaivers; pendingWaivers = null; openWaiverRun(at); }
 }
 
 function renderHeader() {
@@ -4775,7 +4876,7 @@ function initSwipeTabs() {
     }
     return false;
   };
-  let onHeader = false, scroller = null;
+  let onHeader = false, scroller = null, onTable = false;
   // The element a touch would scroll sideways, if any.
   const sideScroller = (el) => {
     for (; el && el !== document.body; el = el.parentElement) {
@@ -4786,6 +4887,7 @@ function initSwipeTabs() {
   document.addEventListener("touchstart", (e) => {
     armed = false;
     scroller = null;
+    onTable = false;
     if (e.target.closest(".er-table")) return; // the roster table scrolls sideways; don't change tabs there
     // Over a table (or anything else that scrolls sideways), a long swipe still changes tabs once it
     // can't scroll any further that way.
@@ -4806,6 +4908,7 @@ function initSwipeTabs() {
     if (e.target.closest(".fx-alert")) return; // scoring banners handle their own swipes
     onHeader = !!e.target.closest(".topbar-inner");
     if (e.target.closest("input, textarea") || (!onHeader && (e.target.closest("select, .topbar") || scrollsSideways(e.target)))) return;
+    onTable = !onHeader && !!e.target.closest("table, .tbl, .table-wrap"); // tables that fit still need the long pull
     sx = e.touches[0].clientX;
     sy = e.touches[0].clientY;
     t0 = Date.now();
@@ -4819,10 +4922,10 @@ function initSwipeTabs() {
     if (!armed || onHeader) return;
     const dx = e.touches[0].clientX - sx, dy = e.touches[0].clientY - sy;
     if (!dragging) {
-      if (scroller) {
-        // Only once the table is at its edge in the swipe direction, and after a longer pull.
-        const atEdge = dx > 0 ? scroller.startAtLeft : scroller.startAtRight;
-        if (!atEdge || Math.abs(dx) < 70 || Math.abs(dx) < Math.abs(dy) * 1.6) { if (Math.abs(dy) > 20 || !atEdge) armed = Math.abs(dy) <= 20; return; }
+      if (scroller || onTable) {
+        // Only once the table is at its edge in the swipe direction, and after a long, flat pull.
+        const atEdge = !scroller || (dx > 0 ? scroller.startAtLeft : scroller.startAtRight);
+        if (!atEdge || Math.abs(dx) < 120 || Math.abs(dx) < Math.abs(dy) * 2.5) { if (Math.abs(dy) > 20 || !atEdge) armed = Math.abs(dy) <= 20; return; }
       } else if (Math.abs(dx) < 14 || Math.abs(dx) < Math.abs(dy) * 1.6) { if (Math.abs(dy) > 14) armed = false; return; }
       dragging = true;
     }
@@ -4838,7 +4941,7 @@ function initSwipeTabs() {
     if (dragging) {
       dragging = false;
       const v = view(), next = neighbor(dx < 0 ? 1 : -1);
-      const go = next && (scroller ? Math.abs(dx) > innerWidth * 0.4 : Math.abs(dx) > innerWidth * 0.28 || (Math.abs(dx) > 50 && Date.now() - t0 < 300));
+      const go = next && (scroller || onTable ? Math.abs(dx) > innerWidth * 0.6 : Math.abs(dx) > innerWidth * 0.28 || (Math.abs(dx) > 50 && Date.now() - t0 < 300));
       v.style.transition = "transform .18s ease-out";
       v.style.transform = go ? `translateX(${dx < 0 ? -innerWidth : innerWidth}px)` : "translateX(0)";
       setTimeout(() => {
@@ -4847,7 +4950,7 @@ function initSwipeTabs() {
       }, 180);
       return;
     }
-    if (Math.abs(dx) < 70 || Math.abs(dx) < Math.abs(dy) * 2 || Date.now() - t0 > 700) return;
+    if (scroller || onTable || Math.abs(dx) < 70 || Math.abs(dx) < Math.abs(dy) * 2 || Date.now() - t0 > 700) return; // no quick flicks over tables
     if (onHeader) {
       const wk = state.week.week + (dx < 0 ? 1 : -1);
       if (wk < 1 || wk > state.base.weeks) return;

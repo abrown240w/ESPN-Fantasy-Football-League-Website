@@ -18,6 +18,10 @@
 //         GET  /api/roster/chattopic?leagueId=&season=&topic=  one conversation's messages
 //         POST /api/roster/chatsend {leagueId, season, topic, text}
 //         POST /api/roster/chatnew  {leagueId, season, members: [memberIds], text}
+//         POST /api/roster/chatread {leagueId, season, topic}   marks a conversation read
+//         POST /api/roster/reorder {leagueId, season, teamId, order: [claim ids]}  your claim processing order
+//         GET  /api/roster/waivers?leagueId=&season=&at=   one waiver run's claims in processing order
+//                                    (failed claims only for the signed-in owner)
 //         POST /api/roster/cancel {leagueId, season, teamId, txId, kind: claim | trade-out | trade-in}
 //         POST /api/roster/pushowner {endpoint, leagueId}  (marks this device's alerts as the owner's, so
 //                                    waiver reports can include missed claims)
@@ -241,10 +245,88 @@ export default async (req, context) => {
     return json(200, {
       teams: mine,
       pending: list.map((t) => ({
-        id: t.id, type: t.type, status: t.status, teamId: t.teamId, bid: t.bidAmount ?? null,
+        id: t.id, type: t.type, status: t.status, teamId: t.teamId, bid: t.bidAmount ?? null, subOrder: t.subOrder ?? null,
         proposed: t.proposedDate || null, process: t.processDate || null, expires: t.expirationDate || null,
         items: (t.items || []).map((i) => ({ playerId: i.playerId, type: i.type, from: i.fromTeamId ?? null, to: i.toTeamId ?? null, info: names[i.playerId] || null })),
       })),
+    });
+  }
+
+  // Put your waiver claims in the order they should process (first = tried first). This is the request
+  // ESPN's own site sends (reorderPendingTransactions in its code): POST teams/{teamId}/pendingTransactions
+  // with [{ id, subOrder }], subOrder counting up from 1. In budget leagues higher bids still go first.
+  if (action === "reorder" && req.method === "POST") {
+    if (!signedIn(req)) return json(401, { error: "signed_out", message: "Sign in as the owner first." });
+    if (!sameOrigin(req)) return json(403, { error: "origin", message: "Changes have to come from the site itself." });
+    const b = await req.json().catch(() => ({}));
+    const season = String(b.season || defaultSeason()), leagueId = String(b.leagueId || ""), teamId = Number(b.teamId);
+    const order = Array.isArray(b.order) ? b.order.map(String) : [];
+    if (!validLeague(leagueId, season) || !Number.isInteger(teamId) || order.length < 2 || order.length > 30
+      || !order.every((id) => /^[\w-]{6,64}$/.test(id)) || new Set(order).size !== order.length) {
+      return json(400, { error: "bad_request", message: "That claim order doesn't look right." });
+    }
+    let data;
+    try { data = await espnRead(leagueId, season, ["mTeam", "mPendingTransactions", "mStatus"]); } catch {
+      return json(502, { error: "upstream", message: "Couldn't load your claims from ESPN." });
+    }
+    if (!ownedTeams(data).includes(teamId)) return json(403, { error: "not_yours", message: "That isn't your team." });
+    const claims = livePending(data).filter((t) => t.type === "WAIVER" && t.teamId === teamId);
+    if (!order.every((id) => claims.some((c) => String(c.id) === id))) return json(409, { error: "stale", message: "Your claims changed on ESPN since this page loaded. Refresh and try again." });
+    let res, out;
+    try {
+      res = await fetch(`${WRITES}/seasons/${season}/segments/0/leagues/${leagueId}/teams/${teamId}/pendingTransactions`, {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json", "user-agent": "Mozilla/5.0 (fantasy-dashboard)", "x-fantasy-source": "kona", "x-fantasy-platform": "kona-PROD", origin: "https://fantasy.espn.com", referer: "https://fantasy.espn.com/", cookie: `espn_s2=${process.env.ESPN_S2}; SWID=${process.env.SWID}` },
+        body: JSON.stringify(order.map((id, i) => ({ id, subOrder: i + 1 }))),
+      });
+      out = await res.json().catch(() => null);
+    } catch { return json(502, { error: "upstream", message: "Couldn't reach ESPN." }); }
+    const espnMsg = out?.messages?.[0] || out?.details?.[0]?.message || "";
+    console.log(JSON.stringify({ event: "claim_order", ip, leagueId, teamId, n: order.length, result: res.status, espnMsg, at: new Date().toISOString() }));
+    if (!res.ok) return json(502, { error: "espn_refused", message: `ESPN didn't accept the new order${espnMsg ? `: ${espnMsg}` : ` (${res.status})`}.` });
+    return json(200, { ok: true });
+  }
+
+  // One waiver run, every claim in the order ESPN processed it (by its processing time, to the
+  // millisecond). Claims that failed are only included for the signed-in owner.
+  if (action === "waivers" && req.method === "GET") {
+    const p = new URL(req.url).searchParams;
+    const leagueId = p.get("leagueId"), season = p.get("season") || String(defaultSeason()), at = Number(p.get("at")) || 0;
+    if (!validLeague(leagueId, season)) return json(400, { error: "bad_request" });
+    const owner = signedIn(req);
+    let claims, usesBudget;
+    try {
+      const info = await espnRead(leagueId, season, ["mStatus", "mSettings"]);
+      usesBudget = !!info.settings?.acquisitionSettings?.isUsingAcquisitionBudget;
+      const latest = info.status?.latestScoringPeriod || info.scoringPeriodId || 1;
+      // The period the run happened in: around `at` if given, else the last couple of periods.
+      const periods = [...new Set([latest, latest - 1, latest - 2].filter((x) => x >= 1))];
+      const pages = await Promise.all(periods.map(async (sp) => {
+        const r = await fetch(`${READS}/seasons/${season}/segments/0/leagues/${leagueId}?view=mTransactions2&scoringPeriodId=${sp}`, { headers: { accept: "application/json", "user-agent": "Mozilla/5.0 (fantasy-dashboard)", cookie: `espn_s2=${process.env.ESPN_S2}; SWID=${process.env.SWID}` } });
+        return r.ok ? r.json() : {};
+      }));
+      const byId = new Map();
+      for (const pg of pages) for (const t of pg.transactions || []) byId.set(t.id, t);
+      claims = [...byId.values()].filter((t) => t.type === "WAIVER" && t.processDate && t.executionType !== "CANCEL" && t.status && !/^(PENDING|CANCEL)/.test(t.status))
+        .sort((a, b) => a.processDate - b.processDate);
+    } catch { return json(502, { error: "upstream", message: "Couldn't load the waiver results from ESPN." }); }
+    // Split into runs (a run's claims are processed within seconds of each other).
+    const runs = [];
+    for (const t of claims) { const r = runs.at(-1); if (r && t.processDate - r.at(-1).processDate < 30 * 60e3) r.push(t); else runs.push([t]); }
+    const run = (at && runs.find((r) => at >= r[0].processDate - 15 * 60e3 && at <= r.at(-1).processDate + 6 * 3600e3)) || runs.at(-1) || [];
+    const shown = owner ? run : run.filter((t) => t.status === "EXECUTED");
+    const ids = [...new Set(shown.flatMap((t) => (t.items || []).map((i) => i.playerId)))];
+    const names = {};
+    if (ids.length) {
+      try {
+        const r = await fetch(`${READS}/seasons/${season}/players?scoringPeriodId=0&view=players_wl`, { headers: { accept: "application/json", "user-agent": "Mozilla/5.0 (fantasy-dashboard)", "x-fantasy-filter": JSON.stringify({ filterIds: { value: ids } }) } });
+        for (const pl of (await r.json()) || []) names[pl.id] = [pl.fullName, pl.defaultPositionId, pl.proTeamId];
+      } catch { /* ids only */ }
+    }
+    return json(200, {
+      owner, usesBudget, at: run[0]?.processDate || null, hidden: run.length - shown.length,
+      claims: shown.map((t) => ({ id: t.id, teamId: t.teamId, status: t.status, bid: usesBudget ? t.bidAmount || 0 : null, at: t.processDate,
+        items: (t.items || []).map((i) => ({ playerId: i.playerId, type: i.type, info: names[i.playerId] || null })) })),
     });
   }
 
@@ -341,7 +423,7 @@ export default async (req, context) => {
   }
 
   // ---------- League chat (ESPN's chat.espn.com service, same ESPN sign-in) ----------
-  if (["chat", "chattopic", "chatsend", "chatnew"].includes(action)) {
+  if (["chat", "chattopic", "chatsend", "chatnew", "chatread"].includes(action)) {
     if (!signedIn(req)) return json(401, { error: "signed_out", message: "Sign in as the owner first." });
     const isPost = req.method === "POST";
     if (isPost && !sameOrigin(req)) return json(403, { error: "origin", message: "Use the site itself." });
@@ -426,6 +508,12 @@ export default async (req, context) => {
         if (!/^[\w-]{6,64}$/.test(String(b.topic || "")) || !text || text.length > 1000) return json(400, { error: "bad_request", message: "Write a message (up to 1,000 characters)." });
         await comm(`topics/${b.topic}/messages/?source=${encodeURIComponent(me)}&platform=chat`, { method: "POST", body: JSON.stringify({ author: me, content: text, messageTypeId: 0 }) });
         console.log(JSON.stringify({ event: "chat_send", ip, leagueId, at: new Date().toISOString() }));
+        return json(200, { ok: true });
+      }
+      // Mark a conversation read up to now (what ESPN's chat app sends when you open one).
+      if (action === "chatread" && isPost) {
+        if (!/^[\w-]{6,64}$/.test(String(b.topic || ""))) return json(400, { error: "bad_request" });
+        await comm(`topics/${b.topic}/lastRead`, { method: "POST", body: "{}" });
         return json(200, { ok: true });
       }
       if (action === "chatnew" && isPost) {
