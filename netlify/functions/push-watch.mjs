@@ -13,7 +13,7 @@
 //                      (free-agent moves one at a time; a waiver run as one summary)
 // The first time it sees a league it just records the current state, so nothing old is announced.
 
-import { store, allSubs, sendPush, espn, playerNames } from "../lib/push-common.mjs";
+import { store, allSubs, sendPush, espn, playerNames, waiverOrder } from "../lib/push-common.mjs";
 
 const SCOREBOARD = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard";
 const SITE = () => process.env.URL || "https://brownleague.netlify.app";
@@ -250,15 +250,19 @@ async function transactionAlerts(lid, season, st, teams, out) {
     }
   }
   if (!waiverReady) return;
+  // In the order ESPN processed them (ties settled with the waiver order right after the run).
+  let ranks = null;
+  try { ranks = Object.fromEntries(((await espn(lid, season, ["mTeam"])).teams || []).map((t) => [t.id, t.waiverRank])); } catch { /* processing times only */ }
+  const ordered = waiverOrder(fresh, ranks);
   // The waiver run for the whole league, as one summary (successful claims are public).
-  const wonAll = fresh.filter((t) => t.status === "EXECUTED");
+  const wonAll = ordered.filter((t) => t.status === "EXECUTED");
   if (wonAll.length) {
     const lines = wonAll.map((t) => { const add = (t.items || []).find((i) => i.type === "ADD"); return `${teamName(t.teamId)}: ${add ? nm(add.playerId) : "a player"}`; });
     out.push({ league: true, actor: "", actors: wonAll.map((t) => String(t.teamId)), kinds: ["adds"], tag: `waiver-run-${lastProcessed}`,
       title: "📥 Waiver claims processed", body: lines.join(" · "), url: `/?league=${lid}&tab=transactions&waivers=${lastProcessed}` });
   }
   const byTeam = {};
-  for (const t of fresh) (byTeam[t.teamId] ||= []).push(t);
+  for (const t of ordered) (byTeam[t.teamId] ||= []).push(t);
   for (const [team, list] of Object.entries(byTeam)) {
     if (!teams.has(String(team))) continue;
     const won = list.filter((t) => t.status === "EXECUTED"), lost = list.filter((t) => t.status !== "EXECUTED");

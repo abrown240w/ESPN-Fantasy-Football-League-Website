@@ -27,7 +27,7 @@
 //                                    waiver reports can include missed claims)
 
 import { createHmac, createHash, timingSafeEqual } from "node:crypto";
-import { store as pushStore, subKey } from "../lib/push-common.mjs";
+import { store as pushStore, subKey, waiverOrder } from "../lib/push-common.mjs";
 
 const READS = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl";
 const WRITES = "https://lm-api-writes.fantasy.espn.com/apis/v3/games/ffl";
@@ -294,9 +294,10 @@ export default async (req, context) => {
     const leagueId = p.get("leagueId"), season = p.get("season") || String(defaultSeason()), at = Number(p.get("at")) || 0;
     if (!validLeague(leagueId, season)) return json(400, { error: "bad_request" });
     const owner = signedIn(req);
-    let claims, usesBudget;
+    let claims, usesBudget, ranks;
     try {
-      const info = await espnRead(leagueId, season, ["mStatus", "mSettings"]);
+      const info = await espnRead(leagueId, season, ["mStatus", "mSettings", "mTeam"]);
+      ranks = Object.fromEntries((info.teams || []).map((t) => [t.id, t.waiverRank]));
       usesBudget = !!info.settings?.acquisitionSettings?.isUsingAcquisitionBudget;
       const latest = info.status?.latestScoringPeriod || info.scoringPeriodId || 1;
       // The period the run happened in: around `at` if given, else the last couple of periods.
@@ -313,7 +314,9 @@ export default async (req, context) => {
     // Split into runs (a run's claims are processed within seconds of each other).
     const runs = [];
     for (const t of claims) { const r = runs.at(-1); if (r && t.processDate - r.at(-1).processDate < 30 * 60e3) r.push(t); else runs.push([t]); }
-    const run = (at && runs.find((r) => at >= r[0].processDate - 15 * 60e3 && at <= r.at(-1).processDate + 6 * 3600e3)) || runs.at(-1) || [];
+    const found = (at && runs.find((r) => at >= r[0].processDate - 15 * 60e3 && at <= r.at(-1).processDate + 6 * 3600e3)) || runs.at(-1) || [];
+    // Today's waiver order only says who won in what order for the most recent run.
+    const run = waiverOrder(found, found === runs.at(-1) && !usesBudget ? ranks : null);
     const shown = owner ? run : run.filter((t) => t.status === "EXECUTED");
     const ids = [...new Set(shown.flatMap((t) => (t.items || []).map((i) => i.playerId)))];
     const names = {};

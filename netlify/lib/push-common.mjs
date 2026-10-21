@@ -74,3 +74,21 @@ export async function playerNames(season, ids) {
   for (const p of (await res.json().catch(() => [])) || []) out[p.id] = [p.fullName, p.defaultPositionId, p.proTeamId];
   return out;
 }
+
+// The order ESPN processed one waiver run's claims in. Each claim's processDate is to the millisecond,
+// but several claims often share one, so ties are settled the way waivers actually work: a team whose
+// claim succeeds drops to the bottom of the waiver order, so right after the run the winners sit at the
+// bottom in the order they won (`ranks`: teamId -> waiverRank after the run; only pass it for the most
+// recent run). A team's own failed claim comes just before its win in the same instant, and a claim that
+// failed because the player was already taken always comes after the claim that took him.
+export function waiverOrder(claims, ranks) {
+  const rk = (t) => Number(ranks?.[t.teamId] ?? 99) - (t.status === "EXECUTED" ? 0 : 0.5);
+  const list = [...claims].sort((a, b) => (a.processDate || 0) - (b.processDate || 0) || (ranks ? rk(a) - rk(b) : 0));
+  const addOf = (t) => (t.items || []).find((i) => i.type === "ADD")?.playerId;
+  for (const w of list.filter((t) => t.status === "EXECUTED")) {
+    const i = list.indexOf(w);
+    const early = list.slice(0, i).filter((t) => t.status !== "EXECUTED" && addOf(t) != null && addOf(t) === addOf(w) && t.teamId !== w.teamId);
+    for (const f of early) { list.splice(list.indexOf(f), 1); list.splice(list.indexOf(w) + 1, 0, f); }
+  }
+  return list;
+}
