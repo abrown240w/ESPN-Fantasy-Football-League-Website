@@ -598,9 +598,11 @@ function renderMatchups() {
   // Every matchup as a small tile up top (phones: a grid; desktop: a column on the left); the selected
   // one fills the rest of the screen. Starts on your own matchup.
   const mine = w.matchups.find((m) => [m.home?.teamId, m.away?.teamId].map(String).includes(String(myTeamId())));
-  if (!w.matchups.some((m) => m.id === state.openMatchup && m.away)) state.openMatchup = (mine?.away ? mine : w.matchups.find((m) => m.away))?.id ?? null;
-  const sel = w.matchups.find((m) => m.id === state.openMatchup);
   const split = MU_SPLIT.matches;
+  // Phones can also be on the league summary ("league"); otherwise default to your own matchup.
+  if (!(state.openMatchup === "league" && !split) && !w.matchups.some((m) => m.id === state.openMatchup && m.away)) state.openMatchup = (mine?.away ? mine : w.matchups.find((m) => m.away))?.id ?? null;
+  if (!split) return renderMatchupsPhone(el, label);
+  const sel = w.matchups.find((m) => m.id === state.openMatchup);
   el.innerHTML = `<div class="section-head"><h2>Week ${w.week} matchups ${statusBadge(w.status)}</h2><span class="muted small hide-phone">${label}</span></div>
     <div class="${split ? "mu-split" : "mu-stack"}">
       <div class="${split ? "mu-list" : "mt-grid"}">${w.matchups.map(matchupTile).join("")}</div>
@@ -622,6 +624,71 @@ function renderMatchups() {
   }));
   updateStickies();
 }
+// ---------- Matchups on phones (laid out like the ESPN app) ----------
+// A bar of every game that slides sideways (League Scores first), and under it either the league
+// summary (all matchups as stacked cards) or one matchup. Swipe the matchup header to go to the next game.
+const shortOwner = (n = "") => { const p = String(n).trim().split(/\s+/); return p.length > 1 ? `${p[0][0]}. ${p.slice(1).join(" ")}` : n; };
+function streakHtml(id) {
+  const r = state.base.raw.teams?.find((t) => String(t.id) === String(id))?.record?.overall;
+  if (!r?.streakLength || !r.streakType) return "";
+  const k = r.streakType === "WIN" ? "W" : r.streakType === "LOSS" ? "L" : "T";
+  return ` <span class="${k === "W" ? "pos" : k === "L" ? "neg" : ""}">(${k}${r.streakLength})</span>`;
+}
+const muOrder = () => ["league", ...state.week.matchups.filter((m) => m.away).map((m) => m.id)];
+function renderMatchupsPhone(el, label) {
+  const w = state.week, st = w.status, cur = state.openMatchup;
+  const val = (sd) => (st === "upcoming" ? f1(sd.proj) : f2(sd.score));
+  const games = w.matchups.filter((m) => m.away);
+  const chip = (m) => (m.id === cur
+    ? `<button type="button" class="mb-chip on" data-mb="${m.id}">${logoImg(team(m.home.teamId), 22)}<span class="vs">vs</span>${logoImg(team(m.away.teamId), 22)}</button>`
+    : `<button type="button" class="mb-chip" data-mb="${m.id}">${logoImg(team(m.home.teamId), 20)}<b>${val(m.home)}</b><span class="vs">vs</span><b>${val(m.away)}</b>${logoImg(team(m.away.teamId), 20)}</button>`);
+  const bar = `<div class="mu-bar" id="mu-bar"><button type="button" class="mb-chip lg ${cur === "league" ? "on" : ""}" data-mb="league">📅 League Scores</button>${games.map(chip).join("")}</div>`;
+  const sel = games.find((m) => m.id === cur);
+  el.innerHTML = `${bar}<div class="mu-detail" id="mu-body">${sel ? matchupDetail(sel, true) : leagueSummary()}</div>
+    <p class="muted small mu-note">${label}</p>`;
+  el.querySelectorAll("[data-mb]").forEach((b) => b.addEventListener("click", () => {
+    const id = b.dataset.mb === "league" ? "league" : +b.dataset.mb;
+    if (id !== state.openMatchup) pickMatchup(id, muOrder().indexOf(id) > muOrder().indexOf(state.openMatchup) ? 1 : -1);
+  }));
+  // Keep the chosen chip in view (gliding there after a change).
+  const bx = $("mu-bar"), on = bx.querySelector(".on");
+  if (state.muBarSmooth) bx.scrollLeft = state.muBarPrev ?? 0;
+  if (on) bx.scrollTo({ left: Math.max(0, on.offsetLeft - (bx.clientWidth - on.offsetWidth) / 2), behavior: state.muBarSmooth ? "smooth" : "auto" });
+  state.muBarSmooth = false;
+  updateStickies();
+}
+// All matchups as stacked cards; tap one to open it.
+function leagueSummary() {
+  const w = state.week, st = w.status, me = String(myTeamId());
+  const row = (sd, lead) => {
+    const t = team(sd.teamId);
+    return `<div class="lg-row ${lead === false ? "trail" : ""}">${logoImg(t, 40)}<div class="lg-id"><strong>${esc(t.name)}</strong><span>${esc(shortOwner(t.owner))} <i>|</i> ${recordStr(t)}${streakHtml(sd.teamId)}</span></div>
+      <div class="lg-pts"><strong>${st === "upcoming" ? f1(sd.proj) : f2(sd.score)}</strong><small>${st === "upcoming" ? "proj" : f1(st === "live" ? sd.liveProj : sd.proj)}</small></div></div>`;
+  };
+  const cards = w.matchups.map((m) => {
+    if (!m.away) return `<div class="lg-card bye">${row(m.home, null)}<div class="muted small lg-bye">Bye</div></div>`;
+    const lead = st === "upcoming" || m.home.score === m.away.score ? null : m.home.score > m.away.score;
+    const mine = [m.home.teamId, m.away.teamId].map(String).includes(me);
+    return `<button type="button" class="lg-card ${mine ? "mine" : ""}" data-mb="${m.id}">${row(m.home, lead == null ? null : lead)}${row(m.away, lead == null ? null : !lead)}</button>`;
+  }).join("");
+  return `<div class="mu-swipe mu-lghead"><strong>Week ${w.week} scoreboard</strong> ${statusBadge(w.status)}</div><div class="lg-list">${cards}</div>`;
+}
+// Open a game (or the league summary) and slide it in from the side it came from.
+function pickMatchup(id, dir) {
+  state.muBarPrev = $("mu-bar")?.scrollLeft ?? 0;
+  state.muBarSmooth = true;
+  state.openMatchup = id;
+  renderMatchups();
+  const body = $("mu-body");
+  if (body && dir) { body.classList.remove("slide-left", "slide-right"); void body.offsetWidth; body.classList.add(dir > 0 ? "slide-left" : "slide-right"); }
+  const bar = $("mu-bar"), top = document.querySelector(".topbar")?.getBoundingClientRect().height || 0;
+  if (bar && bar.getBoundingClientRect().top < top) window.scrollTo({ top: scrollY + bar.getBoundingClientRect().top - top - 8 });
+}
+function stepMatchup(dir) {
+  const order = muOrder(), next = order[order.indexOf(state.openMatchup) + dir];
+  if (next != null) pickMatchup(next, dir);
+}
+
 // Small matchup tile: both fantasy teams with their scores (projections before kickoff) and the win chance.
 function matchupTile(m) {
   const st = state.week.status;
@@ -733,7 +800,7 @@ function matchupDetail(m, withHead = true) {
   const wpH = m.wp, wpA = 1 - m.wp;
   const headSide = (s, t, right) => `<div class="mx-team ${right ? "right" : ""}">
       ${logoImg(t, 44)}
-      <div class="mx-team-id"><strong>${esc(t.name)}</strong><span class="muted small">${esc(t.owner)} · ${recordStr(t)}</span></div>
+      <div class="mx-team-id"><strong>${esc(t.name)}</strong><span class="muted small">${esc(t.owner)} · ${recordStr(t)}${streakHtml(t.id)}</span></div>
       <div class="mx-total">${st === "upcoming" ? f1(s.proj) : f2(s.score)}<small>${st === "upcoming" ? "projected" : `proj ${f1(st === "live" ? s.liveProj : s.proj)}`}</small></div>
     </div>`;
   const wpBar = (v, color, right) => `<div class="mx-wp ${right ? "right" : ""}"><span class="mx-wp-pct">${pct(v)}</span><div class="mx-wp-track"><div style="width:${v * 100}%;background:${color}"></div></div></div>`;
@@ -777,7 +844,7 @@ function renderPlayers() {
   const draw = () => {
     const q = f.q.toLowerCase();
     const rows = pool.filter((p) => (f.pos === "ALL" || p.pos === f.pos) && (!q || p.name.toLowerCase().includes(q)));
-    drawPlayerTable($("pl-list"), ["player", ...(actTeam() ? ["act"] : []), "pos", "owner", "opp", "proj", "pts", "own", "snap", "tgt", "seasonPts", "pprRank", "posRank", "value"], rows, f.sort, w.sp, "No players match those filters.");
+    drawPlayerTable($("pl-list"), ["player", ...(actTeam() ? ["act"] : []), "pos", "owner", "opp", "proj", "pts", "own", "snap", "tgt", "rush", "seasonPts", "pprRank", "posRank", "value"], rows, f.sort, w.sp, "No players match those filters.");
   };
   $("pl-q").addEventListener("input", (e) => { f.q = e.target.value; draw(); });
   bindPosSeg("pl-pos", (v) => (f.pos = v), draw);
@@ -1093,11 +1160,11 @@ function schedStrip(p) {
   }
   return `<div class="pr-sched">${cells.join("")}</div>`;
 }
-// Three usage columns for the Roster tab (last game): share of snaps, targets and carries.
+// Three usage columns (season average): share of snaps, targets and carries.
 function usageCols(id) {
-  const u = usageOf(id);
+  const u = usageOf(id), avg = (k) => (u ? u.avg?.[k] ?? u.last[k] : null);
   const cell = (v, lbl, tip) => `<div class="pu" title="${tip}"><b>${v == null ? "–" : pctTxt(v)}</b><span>${lbl}</span></div>`;
-  return `<div class="pr-use" ${u ? `data-tip="${usageTip(u)}"` : ""}>${cell(u?.last.pct, "Snap", "Share of the team's offensive snaps last game")}${cell(u && u.pos !== "QB" ? u.last.share : null, "Tgt", "Share of the team's targets last game")}${cell(u?.last.rush, "Rush", "Share of the team's rushing attempts last game")}</div>`;
+  return `<div class="pr-use" ${u ? `data-tip="${usageTip(u)}"` : ""}>${cell(avg("pct"), "Snap", "Season share of the team's offensive snaps")}${cell(u && u.pos !== "QB" ? avg("share") : null, "Tgt", "Season share of the team's targets")}${cell(avg("rush"), "Rush", "Season share of the team's rushing attempts")}</div>`;
 }
 function playerRow(p, { label, sp, action = "", owner = true, unread = false, cols = false, faStats = false } = {}) {
   const pts = p.pts == null ? "–" : ptsLink(p.id, sp, f1(p.pts));
@@ -1173,8 +1240,9 @@ const PCOLS = {
   seasonPts: { key: "seasonPts", label: "Season", title: "Season fantasy points", num: true, render: (p) => (p.seasonPts == null ? DASH : f1(p.seasonPts)) },
   pprRank: { key: "pprRank", label: "PPR rk", title: "ESPN PPR rank at the position", num: true, dir: 1, render: (p) => posRankHtml(p, p.pprRank) },
   posRank: { key: "posRank", label: "Score rk", title: "Scoring rank at the position this season", num: true, dir: 1, render: (p) => posRankHtml(p, p.posRank) },
-  snap: { key: "snap", label: "Snap %", title: "Share of the team's offensive snaps in its last game (avg = season average)", num: true, render: snapCell, sort: (p) => usageOf(p.id)?.last.pct ?? null },
-  tgt: { key: "tgt", label: "Tgt %", title: "Share of the team's targets in its last game (avg = season average)", num: true, render: tgtCell, sort: (p) => { const u = usageOf(p.id); return u && u.pos !== "QB" ? u.last.share : null; } },
+  snap: { key: "snap", label: "Snap %", title: "Season share of the team's offensive snaps (last game underneath)", num: true, render: snapCell, sort: (p) => { const u = usageOf(p.id); return u ? u.avg?.pct ?? u.last.pct : null; } },
+  tgt: { key: "tgt", label: "Tgt %", title: "Season share of the team's targets (last game underneath)", num: true, render: tgtCell, sort: (p) => { const u = usageOf(p.id); return u && u.pos !== "QB" ? u.avg?.share ?? u.last.share : null; } },
+  rush: { key: "rush", label: "Rush %", title: "Season share of the team's carries (last game underneath)", num: true, render: rushCell, sort: (p) => { const u = usageOf(p.id); return u ? u.avg?.rush ?? u.last.rush : null; } },
   value: { key: "value", label: "Value", title: "FantasyCalc trade value", num: true, render: (p) => valueCell(p.id), sort: (p) => valueOf(p.id) },
   act: { key: "", label: "", cls: "pt-act", render: (p) => moveBtns(p) },
 };
@@ -1534,33 +1602,54 @@ function fieldGraphic(g) {
   const fd = dir && f.distance && !goal ? spot + dir * f.distance : null;
   const possColor = poss?.color || "#ffffff";
 
+  // Faux 3D: the field is laid out flat (x across, depth 30 far … 150 near) and drawn tilted back —
+  // squashed in depth, with the far sideline narrower. Plays and labels are drawn upright on top.
+  const TOP = narrow ? 36 : 50, C = narrow ? 0.58 : 0.6, FAR = 0.84, VH = TOP + 120 * C + 4;
+  const P = (xu, d) => { const t = (d - 30) / 120, s = FAR + (1 - FAR) * t; return [+(W / 2 + (xu - W / 2) * s).toFixed(1), +(TOP + (d - 30) * C).toFixed(1)]; };
+  const quad = (x1, x2, attrs) => `<polygon points="${[P(x1, 30), P(x2, 30), P(x2, 150), P(x1, 150)].map((p) => p.join(",")).join(" ")}" ${attrs}/>`;
+  const vline = (xu, attrs) => { const [a, b] = P(xu, 30), [c, d] = P(xu, 150); return `<line x1="${a}" y1="${b}" x2="${c}" y2="${d}" ${attrs}/>`; };
+  const X = (a) => P(x(a), 96)[0]; // a yard line's screen x at mid-field depth, where plays are drawn
+
   const parts = [];
   // Grass with 10-yard stripes, end zones in team colors.
-  parts.push(`<rect x="${EZ}" y="30" width="${100 * S}" height="120" fill="#2e7d32"/>`);
-  for (let a = 0; a < 100; a += 20) parts.push(`<rect x="${x(a + 10)}" y="30" width="${10 * S}" height="120" fill="#348a39"/>`);
-  parts.push(`<rect x="0" y="30" width="${EZ}" height="120" fill="${away.color || "#555"}"/><rect x="${W - EZ}" y="30" width="${EZ}" height="120" fill="${home.color || "#555"}"/>`);
-  parts.push(`<text x="${EZ / 2}" y="90" class="ez" transform="rotate(-90 ${EZ / 2} 90)">${esc(away.abbr)}</text><text x="${W - EZ / 2}" y="90" class="ez" transform="rotate(90 ${W - EZ / 2} 90)">${esc(home.abbr)}</text>`);
+  parts.push(quad(EZ, W - EZ, `fill="#2e7d32"`));
+  for (let a = 0; a < 100; a += 20) parts.push(quad(x(a + 10), x(a + 10) + 10 * S, `fill="#348a39"`));
+  parts.push(quad(0, EZ, `fill="${away.color || "#555"}"`), quad(W - EZ, W, `fill="${home.color || "#555"}"`));
+  // Team names painted in each end zone, in the same perspective as the field: the text is laid out
+  // flat (running up the left end zone, down the right one, tops toward the outside) and mapped onto the
+  // tilted field at that spot.
+  // Sized to fit (about 100 of the end zone's 120 units long, 60% of its width) and clipped to it.
+  const ezText = (cx, abbr, flip, x0) => {
+    const [mx, my] = P(cx, 90), s = flip ? -1 : 1;
+    const [ax, ay] = P(cx, 90 - s), [bx, by] = P(cx + s, 90); // one unit along the text, one unit "down" the letters
+    const m = [ax - mx, ay - my, bx - mx, by - my, mx, my].map((v) => +v.toFixed(3)).join(" ");
+    const fs = Math.min(EZ * 0.6, 100 / (0.72 * Math.max(2, String(abbr).length))).toFixed(1);
+    const id = `ez-${esc(g.id)}-${flip ? "h" : "a"}`;
+    return `<clipPath id="${id}">${quad(x0, x0 + EZ, "")}</clipPath><g clip-path="url(#${id})"><text class="ez" style="font-size:${fs}px" transform="matrix(${m})">${esc(abbr)}</text></g>`;
+  };
+  parts.push(ezText(EZ / 2, away.abbr, false, 0), ezText(W - EZ / 2, home.abbr, true, W - EZ));
   // Red zone and the current drive.
-  if (g.redZone && dir) { const gl = dir > 0 ? 100 : 0; parts.push(`<rect x="${Math.min(x(gl), x(gl - dir * 20))}" y="30" width="${20 * S}" height="120" fill="#e53935" opacity=".22"/>`); }
-  if (driveStart != null && poss) parts.push(`<rect x="${Math.min(x(driveStart), x(spot))}" y="30" width="${Math.abs(x(driveStart) - x(spot))}" height="120" fill="${possColor}" opacity=".3"/>`);
-  // Yard lines and numbers.
-  for (let a = 5; a < 100; a += 5) parts.push(`<line x1="${x(a)}" x2="${x(a)}" y1="30" y2="150" stroke="#fff" stroke-opacity="${a % 10 ? 0.25 : 0.6}" stroke-width="2"/>`);
-  for (let a = 10; a < 100; a += 10) parts.push(`<text x="${x(a)}" y="146" class="yd">${a <= 50 ? a : 100 - a}</text>`);
-  parts.push(`<line x1="${EZ}" x2="${EZ}" y1="30" y2="150" stroke="#fff" stroke-width="4"/><line x1="${W - EZ}" x2="${W - EZ}" y1="30" y2="150" stroke="#fff" stroke-width="4"/>`);
+  if (g.redZone && dir) { const gl = dir > 0 ? 100 : 0; parts.push(quad(Math.min(x(gl), x(gl - dir * 20)), Math.min(x(gl), x(gl - dir * 20)) + 20 * S, `fill="#e53935" opacity=".22"`)); }
+  if (driveStart != null && poss) parts.push(quad(Math.min(x(driveStart), x(spot)), Math.max(x(driveStart), x(spot)), `fill="${possColor}" opacity=".3"`));
+  // Yard lines and numbers (numbers along the near sideline).
+  for (let a = 5; a < 100; a += 5) parts.push(vline(x(a), `stroke="#fff" stroke-opacity="${a % 10 ? 0.25 : 0.6}" stroke-width="2"`));
+  for (let a = 10; a < 100; a += 10) { const [px, py] = P(x(a), 145); parts.push(`<text class="yd" transform="translate(${px} ${py}) scale(1 ${C + 0.2})">${a <= 50 ? a : 100 - a}</text>`); }
+  parts.push(vline(EZ, `stroke="#fff" stroke-width="4"`), vline(W - EZ, `stroke="#fff" stroke-width="4"`));
   // First-down line (yellow) and line of scrimmage (blue).
-  if (fd != null && fd > 0 && fd < 100) parts.push(`<line x1="${x(fd)}" x2="${x(fd)}" y1="30" y2="150" stroke="#fdd835" stroke-width="5"/>`);
-  parts.push(`<line x1="${x(spot)}" x2="${x(spot)}" y1="30" y2="150" stroke="#42a5f5" stroke-width="5"/>`);
+  if (fd != null && fd > 0 && fd < 100) parts.push(vline(x(fd), `stroke="#fdd835" stroke-width="5"`));
+  parts.push(vline(x(spot), `stroke="#42a5f5" stroke-width="5"`));
   // Last play, drawn from where the ball actually started to where it ended:
   //   pass: arc + arrowhead · incomplete: dotted arc ending in an X · run: straight arrow
   //   sack: straight arrow back, red · kick/punt/FG: high arc · penalty: yellow flag + dashed line
   //   interception/fumble lost: red line + label. Yardage comes from the spots, not ESPN's stat line.
+  const playFrom = parts.length; // everything after this is the last play, drawn with a dark outline
   if (lp && lp.start != null && lp.end != null) {
     const text = shown.text || "";
     const kind = playKind(lp.type, text);
     const offDir = lp.teamId === home.proId ? 1 : lp.teamId === away.proId ? -1 : dir || 1; // direction the snapping team moves
     let endA = lp.end;
     if (kind === "incomplete") endA = lp.start + offDir * (/deep/i.test(text) ? 20 : 8); // no target spot recorded
-    const xs = x(lp.start), xe = x(endA), Y = 96, mid = (xs + xe) / 2;
+    const xs = X(lp.start), xe = X(endA), Y = P(0, 96)[1], mid = (xs + xe) / 2;
     const gained = Math.round((lp.end - lp.start) * offDir);
     const ydsTxt = (n) => `${n > 0 ? "+" : ""}${n} yds`;
     const tag = (txt, y, cls = "lp-yds") => parts.push(`<text x="${Math.min(W - EZ - 30, Math.max(EZ + 30, mid))}" y="${y}" class="${cls}">${esc(txt)}</text>`);
@@ -1578,7 +1667,7 @@ function fieldGraphic(g) {
       // then a red arrow back the other way for the return.
       const isInt = /INTERCEPT/i.test(text) || /interception/i.test(lp.type);
       const flip = textSpot(text, isInt ? /INTERCEPTED by .*? at ([A-Z]{2,3}) (-?\d+)/ : /RECOVERED by .*? at ([A-Z]{2,3}) (-?\d+)/, home, away);
-      const xt = flip != null ? x(flip) : xs;
+      const xt = flip != null ? X(flip) : xs;
       if (flip != null && Math.abs(xt - xs) >= 4) {
         parts.push(isInt ? `<path d="M${xs} ${Y} Q${(xs + xt) / 2} ${Y - 2 * Math.min(38, 14 + Math.abs(xt - xs) / 8)} ${xt} ${Y}" fill="none" stroke="#fff" stroke-width="4" stroke-dasharray="8 6"/>`
           : `<path d="M${xs} ${Y} L${xt} ${Y}" stroke="#fff" stroke-width="4"/>`);
@@ -1594,7 +1683,7 @@ function fieldGraphic(g) {
         : textSpot(text, /(?:kicks|punts) \d+ yards? (?:from [A-Z]{2,3} -?\d+ )?to ([A-Z]{2,3}) (-?\d+)/, home, away);
       if (/field goal|extra point/i.test(lp.type)) land = lp.end;
       if (land == null) land = lp.end;
-      const xl = x(land), lift = Math.min(52, 22 + Math.abs(xl - xs) / 6);
+      const xl = X(land), lift = Math.min(52, 22 + Math.abs(xl - xs) / 6);
       if (Math.abs(xl - xs) >= 4) parts.push(`<path d="M${xs} ${Y} Q${(xs + xl) / 2} ${Y - lift * 2} ${xl} ${Y}" fill="none" stroke="#fff" stroke-width="4" stroke-dasharray="14 6" ${Math.abs(xe - xl) < 4 ? `marker-end="url(#arrow-${esc(g.id)})"` : ""}/>`);
       const ret = Math.round(Math.abs(lp.end - land));
       if (ret >= 1 && !/field goal|extra point/i.test(lp.type)) parts.push(`<path d="M${xl} ${Y + 6} L${xe} ${Y + 6}" stroke="#fff" stroke-width="4" marker-end="url(#arrow-${esc(g.id)})"/>`);
@@ -1603,13 +1692,13 @@ function fieldGraphic(g) {
         : /field goal/i.test(lp.type) ? `FG${fgd ? ` ${fgd} yds` : ""} ${good ? "✓" : "✗"}`
         : /extra point/i.test(lp.type) ? `XP ${good ? "✓" : "✗"}`
         : `Kickoff${kd ? ` ${kd} yds` : ""}${/touchback/i.test(text) ? " · touchback" : ret >= 1 ? ` · ${ret} yd return` : ""}`;
-      tag(`${what}${hasFlag(text) ? ` · 🚩 ${flagName(text)}` : ""}`, Math.max(54, Y - lift - 8));
+      tag(`${what}${hasFlag(text) ? ` · 🚩 ${flagName(text)}` : ""}`, Math.max(16, Y - lift - 8));
     } else if (far) {
       const aerial = kind === "pass" || kind === "incomplete";
       const lift = aerial ? Math.min(38, 14 + Math.abs(xe - xs) / 8) : 0;
       const path = aerial ? `M${xs} ${Y} Q${mid} ${Y - lift * 2} ${xe} ${Y}` : `M${xs} ${Y} L${xe} ${Y}`;
       const color = kind === "sack" || kind === "safety" ? "#ef5350" : "#fff";
-      const tagY = aerial ? Math.max(54, Y - lift - 8) : Y - 12;
+      const tagY = aerial ? Math.max(16, Y - lift - 8) : Y - 12;
       if (kind === "incomplete") {
         parts.push(`<path d="${path}" fill="none" stroke="#fff" stroke-width="4" stroke-dasharray="2 9" stroke-linecap="round"/>`);
         parts.push(`<path d="M${xe - 9} ${Y - 9} L${xe + 9} ${Y + 9} M${xe + 9} ${Y - 9} L${xe - 9} ${Y + 9}" stroke="#fff" stroke-width="5" stroke-linecap="round"/>`);
@@ -1623,9 +1712,9 @@ function fieldGraphic(g) {
   const arrowWord = dir > 0 ? "←" : dir < 0 ? "→" : "";
   const label = `${poss ? `${poss.abbr} ball ` : ""}${g.downDistance || ""}`.trim();
   return `<div class="field-wrap">
-    <svg class="field ${narrow ? "narrow" : ""}" viewBox="0 ${narrow ? 26 : 0} ${W} ${narrow ? 128 : 160}" role="img" aria-label="${esc(label || "Field position")}">
+    <svg class="field ${narrow ? "narrow" : ""}" viewBox="0 0 ${W} ${VH}" role="img" aria-label="${esc(label || "Field position")}">
       <defs>${[["arrow", "#fff"], ["arrowy", "#fdd835"], ["arrowr", "#ef5350"]].map(([id, fill]) => `<marker id="${id}-${esc(g.id)}" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="${fill}"/></marker>`).join("")}</defs>
-      ${parts.join("")}
+      ${parts.slice(0, playFrom).join("")}<g class="play">${parts.slice(playFrom).join("")}</g>
     </svg>
     <div class="field-caption">${poss ? `<strong>${esc(poss.abbr)}</strong> ball ${arrowWord} · ` : ""}${esc(g.downDistance || f.possText || "")}${f.driveDesc ? ` <span class="muted">· Drive: ${esc(f.driveDesc)}</span>` : ""}</div>
   </div>`;
@@ -3413,18 +3502,24 @@ const usageTip = (u) => esc(`<b>Week ${u.last.wk}${u.last.out ? " · didn't play
 function snapCell(p) {
   const u = usageOf(p.id);
   if (!u) return DASH;
-  return `<span data-tip="${usageTip(u)}">${pctTxt(u.last.pct)}${usageTrend(u.last.pct, u.prior?.pct)}</span><div class="pt-sub">avg ${pctTxt(u.avg?.pct)}</div>`;
+  return `<span data-tip="${usageTip(u)}">${pctTxt(u.avg?.pct ?? u.last.pct)}${usageTrend(u.last.pct, u.prior?.pct)}</span><div class="pt-sub">last ${pctTxt(u.last.pct)}</div>`;
 }
 function tgtCell(p) {
   const u = usageOf(p.id);
   if (!u || u.pos === "QB") return DASH;
-  return `<span data-tip="${usageTip(u)}">${pctTxt(u.last.share)}${usageTrend(u.last.share ?? 0, u.prior?.share)}</span><div class="pt-sub">${u.last.tgt} tgt · avg ${pctTxt(u.avg?.share)}</div>`;
+  return `<span data-tip="${usageTip(u)}">${pctTxt(u.avg?.share ?? u.last.share)}${usageTrend(u.last.share ?? 0, u.prior?.share)}</span><div class="pt-sub">last ${pctTxt(u.last.share)}</div>`;
 }
-// One-line summary for player cards: "Snaps 84% · Tgt 22% (wk 5)".
+function rushCell(p) {
+  const u = usageOf(p.id);
+  if (!u) return DASH;
+  return `<span data-tip="${usageTip(u)}">${pctTxt(u.avg?.rush ?? u.last.rush)}${usageTrend(u.last.rush ?? 0, u.prior?.rush)}</span><div class="pt-sub">last ${pctTxt(u.last.rush)}</div>`;
+}
+// One-line summary for player rows: season shares, "Snaps 84% · Tgt 22%".
 function usageBrief(id) {
   const u = usageOf(id);
   if (!u) return "";
-  return `<span data-tip="${usageTip(u)}">Snaps ${pctTxt(u.last.pct)}${usageTrend(u.last.pct, u.prior?.pct)}${u.pos !== "QB" && u.last.share != null ? ` · Tgt ${pctTxt(u.last.share)}` : ""}</span>`;
+  const avg = (k) => u.avg?.[k] ?? u.last[k];
+  return `<span data-tip="${usageTip(u)}">Snaps ${pctTxt(avg("pct"))}${usageTrend(u.last.pct, u.prior?.pct)}${u.pos !== "QB" && avg("share") != null ? ` · Tgt ${pctTxt(avg("share"))}` : ""}${u.pos === "RB" && avg("rush") != null ? ` · Rush ${pctTxt(avg("rush"))}` : ""}</span>`;
 }
 
 // ---------- Game-day weather (Open-Meteo) ----------
@@ -4876,7 +4971,7 @@ function initSwipeTabs() {
     }
     return false;
   };
-  let onHeader = false, scroller = null, onTable = false;
+  let onHeader = false, scroller = null, onTable = false, muSwipe = false;
   // The element a touch would scroll sideways, if any.
   const sideScroller = (el) => {
     for (; el && el !== document.body; el = el.parentElement) {
@@ -4888,7 +4983,13 @@ function initSwipeTabs() {
     armed = false;
     scroller = null;
     onTable = false;
-    if (e.target.closest(".er-table")) return; // the roster table scrolls sideways; don't change tabs there
+    muSwipe = false;
+    // Matchups (phones): a swipe on the matchup header goes to the next / previous game.
+    if (state.tab === "matchups" && !MU_SPLIT.matches && e.touches.length === 1 && !document.body.classList.contains("modal-open")
+      && e.target.closest("#mu-body .mx-top, #mu-body .mu-swipe") && !e.target.closest("a, button")) {
+      muSwipe = true; sx = e.touches[0].clientX; sy = e.touches[0].clientY; t0 = Date.now();
+      return;
+    }
     // Over a table (or anything else that scrolls sideways), a long swipe still changes tabs once it
     // can't scroll any further that way.
     if (e.touches.length === 1 && state.week && !document.body.classList.contains("modal-open") && !e.target.closest(".topbar, select, input")) {
@@ -4906,9 +5007,9 @@ function initSwipeTabs() {
     if (e.touches.length !== 1 || !state.week || document.body.classList.contains("modal-open")) return;
     // Swipes on the header (above the tabs) change the week; anywhere below switches tabs.
     if (e.target.closest(".fx-alert")) return; // scoring banners handle their own swipes
-    onHeader = !!e.target.closest(".topbar-inner");
-    if (e.target.closest("input, textarea") || (!onHeader && (e.target.closest("select, .topbar") || scrollsSideways(e.target)))) return;
-    onTable = !onHeader && !!e.target.closest("table, .tbl, .table-wrap"); // tables that fit still need the long pull
+    onHeader = false; // swipes on the header do nothing
+    if (e.target.closest("input, textarea, select, .topbar") || scrollsSideways(e.target)) return;
+    onTable = !onHeader && !!e.target.closest("table, .tbl, .table-wrap, .er-table"); // tables that fit still need the long pull
     sx = e.touches[0].clientX;
     sy = e.touches[0].clientY;
     t0 = Date.now();
@@ -4935,6 +5036,12 @@ function initSwipeTabs() {
     v.style.transform = `translateX(${dragX}px)`;
   }, { passive: true });
   document.addEventListener("touchend", (e) => {
+    if (muSwipe) {
+      muSwipe = false;
+      const t = e.changedTouches[0], dx = t.clientX - sx, dy = t.clientY - sy;
+      if (Math.abs(dx) > 45 && Math.abs(dx) > Math.abs(dy) * 1.5) stepMatchup(dx < 0 ? 1 : -1);
+      return;
+    }
     if (!armed) return;
     armed = false;
     const t = e.changedTouches[0], dx = t.clientX - sx, dy = t.clientY - sy;

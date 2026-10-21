@@ -244,12 +244,12 @@ table.data tr:last-child td { border-bottom: 0; }
 .lp.bump { animation: bump 2.5s ease-out; }
 @keyframes bump { 0% { background: #fff1b8; } 100% { background: transparent; } }
 .field-wrap { padding: 12px 16px 0; }
-.field { display: block; width: 100%; height: auto; border-radius: 8px; overflow: hidden; }
-.field .ez { fill: #fff; font: 800 40px var(--font); text-anchor: middle; dominant-baseline: middle; letter-spacing: 2px; }
+.field { display: block; width: 100%; height: auto; overflow: visible; }
+.field .ez { fill: #fff; font: 800 64px var(--font); text-anchor: middle; dominant-baseline: middle; letter-spacing: 1px; }
 .field .yd { fill: #fff; fill-opacity: .75; font: 700 22px var(--font); text-anchor: middle; }
 .field .lp-yds { fill: #fff; font: 800 24px var(--font); text-anchor: middle; paint-order: stroke; stroke: rgba(0,0,0,.45); stroke-width: 4px; }
 .field .poss-lbl { font: 800 26px var(--font); text-anchor: middle; paint-order: stroke; stroke: #fff; stroke-width: 6px; }
-.field.narrow .ez { font-size: 30px; }
+.field.narrow .ez { font-size: 36px; }
 .field.narrow .yd { font-size: 18px; }
 .field.narrow .lp-yds { font-size: 22px; }
 .field.narrow .poss-lbl { font-size: 22px; }
@@ -1465,3 +1465,42 @@ html.standalone input, html.standalone select, html.standalone textarea { font-s
 .wr-n { min-width: 20px; text-align: center; font-weight: 700; font-size: .8rem; color: var(--muted); }
 .wr-st { font-size: .78rem; font-weight: 700; text-align: right; white-space: nowrap; }
 .wr-last { margin-left: auto; border: 1px solid var(--accent); background: var(--surface); color: var(--accent-ink); border-radius: 8px; padding: 3px 9px; font: inherit; font-size: .78rem; font-weight: 700; cursor: pointer; }
+
+/* Matchup header, ESPN-app style: logo and score on top, the full team name underneath, then win probability. */
+.mx-team { grid-template-columns: auto 1fr; grid-template-areas: "logo total" "id id"; gap: 6px 10px; align-items: center; }
+.mx-team.right { grid-template-columns: 1fr auto; grid-template-areas: "total logo" "id id"; }
+.mx-team .mx-total { font-size: 2.1rem; }
+.mx-team-id strong { font-size: 1rem; }
+.mx-wp-label { background: var(--accent); color: #fff; border-radius: 999px; padding: 5px 14px; font-size: .85rem; }
+@media (max-width: 640px) { .mx-team .mx-total { font-size: 1.85rem; } .mx-team-id strong { font-size: .95rem; } }
+
+/* Matchups on phones: game bar, league scoreboard */
+.mu-bar { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; padding: 2px 2px 10px; margin: 0 -2px 2px; }
+.mu-bar::-webkit-scrollbar { display: none; }
+.mb-chip { flex: none; display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--ink); border-radius: 999px; padding: 6px 12px; font: inherit; font-size: .85rem; white-space: nowrap; cursor: pointer; }
+.mb-chip.on { border: 2px solid var(--ink); padding: 5px 16px; }
+.mb-chip.lg { font-weight: 700; }
+.mb-chip b { font-variant-numeric: tabular-nums; }
+.mb-chip .vs { color: var(--muted); font-size: .75rem; }
+#mu-body.slide-left { animation: slide-from-right .22s ease-out; }
+#mu-body.slide-right { animation: slide-from-left .22s ease-out; }
+@media (prefers-reduced-motion: reduce) { #mu-body.slide-left, #mu-body.slide-right { animation: none; } }
+.mu-lghead { display: flex; align-items: center; gap: 8px; padding: 4px 2px 10px; font-size: .9rem; text-transform: uppercase; letter-spacing: .04em; }
+.lg-list { display: flex; flex-direction: column; gap: 10px; }
+.lg-card { display: block; width: 100%; text-align: left; font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 4px 14px; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.12); }
+.lg-card.mine { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.lg-card.bye { cursor: default; }
+.lg-bye { padding: 0 0 8px 52px; }
+.lg-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; }
+.lg-row .logo, .lg-row img { flex: none; }
+.lg-id { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.lg-id strong { font-size: 1.02rem; line-height: 1.25; overflow-wrap: anywhere; }
+.lg-id span { font-size: .8rem; color: var(--muted); }
+.lg-id i { font-style: normal; opacity: .5; margin: 0 2px; }
+.lg-pts { text-align: right; flex: none; }
+.lg-pts strong { display: block; font-size: 1.35rem; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.lg-pts small { color: var(--muted); font-size: .75rem; }
+.lg-row.trail .lg-pts strong { color: var(--muted); }
+main .mb-chip, main .lg-card { --ink: #0b0b0b; --ink-2: #52514e; --muted: #6f6d68; color: var(--ink); }
+/* Play arrows and labels can rise above the field onto the white card: a dark outline keeps them visible. */
+.field .play { filter: drop-shadow(0 0 1px rgba(0,0,0,.85)) drop-shadow(0 0 2px rgba(0,0,0,.35)); }

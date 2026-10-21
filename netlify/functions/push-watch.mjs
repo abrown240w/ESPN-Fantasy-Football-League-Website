@@ -160,7 +160,8 @@ async function transactionAlerts(lid, season, st, teams, out) {
     trades.push({ items: (src.items || []).filter((i) => i.type === "TRADE"), processed: t.status === "EXECUTED" });
   }
   // Waivers: report a run once it has finished (nothing new for 5 minutes).
-  const fresh = all.filter((t) => t.type === "WAIVER" && t.status && t.status !== "PENDING" && !seenWaivers.has(t.id));
+  // Only claims ESPN actually ran: won (EXECUTED) or missed (FAILED_*). Canceled claims aren't reported.
+  const fresh = all.filter((t) => t.type === "WAIVER" && t.executionType !== "CANCEL" && (t.status === "EXECUTED" || /^FAIL/.test(t.status || "")) && !seenWaivers.has(t.id));
   const lastProcessed = Math.max(0, ...fresh.map((t) => t.processDate || t.proposedDate || 0));
   const waiverReady = fresh.length && Date.now() - lastProcessed > 5 * 60e3;
   if (waiverReady || first) for (const t of fresh) seenWaivers.add(t.id);
