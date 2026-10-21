@@ -660,7 +660,12 @@ function streakHtml(id) {
   const k = r.streakType === "WIN" ? "W" : r.streakType === "LOSS" ? "L" : "T";
   return ` <span class="${k === "W" ? "pos" : k === "L" ? "neg" : ""}">(${k}${r.streakLength})</span>`;
 }
-const muOrder = () => ["league", ...state.week.matchups.filter((m) => m.away).map((m) => m.id)];
+// Swipe (and game bar) order: your game first, then the rest in order, and League Scores always last.
+const muOrder = () => {
+  const ids = state.week.matchups.filter((m) => m.away).map((m) => m.id), me = String(myTeamId() || "");
+  const i = Math.max(0, state.week.matchups.filter((m) => m.away).findIndex((m) => [m.home.teamId, m.away.teamId].map(String).includes(me)));
+  return [...ids.slice(i), ...ids.slice(0, i), "league"];
+};
 function renderMatchupsPhone(el, label) {
   const w = state.week, st = w.status, cur = state.openMatchup;
   const val = (sd) => (st === "upcoming" ? f1(sd.proj) : f2(sd.score));
@@ -668,7 +673,7 @@ function renderMatchupsPhone(el, label) {
   const chip = (m) => (m.id === cur
     ? `<button type="button" class="mb-chip on" data-mb="${m.id}">${logoImg(team(m.home.teamId), 22)}<span class="vs">vs</span>${logoImg(team(m.away.teamId), 22)}</button>`
     : `<button type="button" class="mb-chip" data-mb="${m.id}">${logoImg(team(m.home.teamId), 20)}<b>${val(m.home)}</b><span class="vs">vs</span><b>${val(m.away)}</b>${logoImg(team(m.away.teamId), 20)}</button>`);
-  const bar = `<div class="mu-bar" id="mu-bar"><button type="button" class="mb-chip lg ${cur === "league" ? "on" : ""}" data-mb="league">📅 League Scores</button>${games.map(chip).join("")}</div>`;
+  const bar = `<div class="mu-bar" id="mu-bar">${muOrder().map((id) => (id === "league" ? `<button type="button" class="mb-chip lg ${cur === "league" ? "on" : ""}" data-mb="league">📅 League Scores</button>` : chip(games.find((m) => m.id === id)))).join("")}</div>`;
   const sel = games.find((m) => m.id === cur);
   el.innerHTML = `${bar}<div class="mu-detail" id="mu-body">${sel ? matchupDetail(sel, true) : leagueSummary()}</div>
     <p class="muted small mu-note">${label}</p>`;
@@ -1509,7 +1514,7 @@ function renderSeason() {
     { key: "name", label: "Team", render: (r) => `<div class="team-cell">${logoImg(r, 34)}<div><strong>${esc(r.name)}</strong><div class="small muted">${esc(r.owner)}</div></div></div>` },
     { key: "wins", label: "Record", sort: (r) => r.winPct * 1000 + r.pf / 1e4, render: (r) => recordStr(r) },
     { key: "pf", label: "PF", num: true, render: (r) => f1(r.pf) },
-    { key: "pa", label: "PA", num: true, cls: "hide-sm", render: (r) => f1(r.pa) },
+    { key: "pa", label: "PA", num: true, render: (r) => f1(r.pa) },
     { key: "avg", label: "Avg", num: true, render: (r) => f1(r.avg) },
     { key: "recent", label: "Last 3", num: true, cls: "hide-sm", title: "Average score over the last 3 games", render: (r) => f1(r.recent) },
     { key: "apPct", label: "All-play", num: true, title: "Record if every team played every other team each week", render: (r) => `${r.apW}-${r.apL}` },
@@ -5140,11 +5145,9 @@ function switchTab(tab, from, leaving = false) {
   }
 }
 
-// Phones: swipe left / right to move to the next / previous tab. The page follows your finger with the
-// next tab already drawn beside it, so you see where you're going. Swipes that start on something that
-// scrolls sideways need a long pull at its edge; form controls and popups are left alone.
-// The five tabs loop (League → Roster). Matchup: a short swipe flips through the games; League: a short
-// swipe moves through its sub-tabs (both looping); a long swipe goes to the next tab.
+// Phones: the five main tabs don't swipe. On Matchup a swipe flips through the games, and on League
+// through its sub-tabs (both looping), with the next one already drawn and sliding in beside the page.
+// A swipe that starts on a sideways-scrolling table only counts from the end it's resting at.
 // Draw a tab into its (hidden) section without switching to it, so it can slide in from the side.
 function renderInto(tab) {
   const prev = state.tab;
@@ -5158,7 +5161,7 @@ function preloadNeighbors() {
   const idle = window.requestIdleCallback || ((f) => setTimeout(f, 300));
   idle(() => {
     const subs = LEAGUE_SUBS.map(([k]) => k), si = subs.indexOf(state.tab);
-    const near = [neighborTab(1), neighborTab(-1), ...(si >= 0 ? [subs[(si + 1) % subs.length], subs[(si - 1 + subs.length) % subs.length]] : [])];
+    const near = si >= 0 ? [subs[(si + 1) % subs.length], subs[(si - 1 + subs.length) % subs.length]] : [];
     for (const t of near) if (t && t !== state.tab && Date.now() - (state.preDrawn?.[t] || 0) > 20e3) renderInto(t);
   });
 }
@@ -5170,7 +5173,7 @@ function neighborTab(dir) {
 function initSwipeTabs() {
   if (!("ontouchstart" in window)) return;
   let sx = 0, sy = 0, t0 = 0, armed = false;
-  let scroller = null, onTable = false, muSwipe = false, muMode = "games";
+  let scroller = null;
   const sideScroller = (el) => {
     for (; el && el !== document.body; el = el.parentElement) {
       if (el.scrollWidth > el.clientWidth + 2 && /auto|scroll/.test(getComputedStyle(el).overflowX)) return el;
@@ -5210,7 +5213,7 @@ function initSwipeTabs() {
     v.style.transform = `translateX(${dx}px)`;
     if (p) p.el.style.transform = `translateX(${dx + dir * W()}px)`;
   };
-  const settle = (go, dx, leaving = true) => {
+  const settle = (go, dx, leaving = false) => {
     const v = view(), dir = dx < 0 ? 1 : -1, p = peek;
     const ease = "transform .2s ease-out";
     v.style.transition = ease;
@@ -5262,12 +5265,12 @@ function initSwipeTabs() {
     }, 200);
   };
   document.addEventListener("touchstart", (e) => {
-    armed = false; scroller = null; onTable = false; muSwipe = false; muMode = "games";
+    armed = false; scroller = null;
     if (e.touches.length !== 1 || !state.week || document.body.classList.contains("modal-open")) return;
     if (e.target.closest(".fx-alert, input, textarea, select, .topbar, .subnav, .pl-nav")) return;
     sx = e.touches[0].clientX; sy = e.touches[0].clientY; t0 = Date.now();
     // Matchups (phones): anywhere on the open matchup or the scoreboard.
-    if (state.tab === "matchups" && !MU_SPLIT.matches && e.target.closest("#mu-body")) { muSwipe = true; armed = true; return; }
+    if (state.tab === "matchups" && !MU_SPLIT.matches && e.target.closest("#mu-body")) { armed = true; return; }
     const sc = sideScroller(e.target);
     if (sc) {
       // A sideways-scrolling table: only from an end it was already resting at.
@@ -5277,38 +5280,20 @@ function initSwipeTabs() {
       scroller = sc;
     }
     // League (phones): its sub-tabs, the same way as the games on Matchup.
-    if (groupOf(state.tab) === "league" && !MU_SPLIT.matches) { muSwipe = true; armed = true; return; }
-    onTable = !!e.target.closest("table, .tbl, .table-wrap, .er-table"); // tables that fit still need the long pull
-    armed = true;
+    if (groupOf(state.tab) === "league" && !MU_SPLIT.matches) armed = true;
+    // Anywhere else, a swipe does nothing: the five main tabs don't swipe.
   }, { passive: true });
   let dragging = false;
   document.addEventListener("touchmove", (e) => {
     if (!armed) return;
     const dx = e.touches[0].clientX - sx, dy = e.touches[0].clientY - sy;
-    if (muSwipe) {
-      if (!dragging) {
-        if (scroller && !(dx > 0 ? scroller.startAtLeft : scroller.startAtRight)) { armed = false; return; }
-        if (Math.abs(dx) < (scroller ? 40 : 10) || Math.abs(dx) < Math.abs(dy) * 1.6) { if (Math.abs(dy) > 14) armed = false; return; }
-        dragging = true;
-      }
-      // Up to 45% of the screen it's the next game (or League sub-tab) sliding in; past that, the next tab.
-      const league = groupOf(state.tab) === "league";
-      if (muMode === "games" && Math.abs(dx) > W() * 0.45) {
-        muMode = "tab";
-        if (!league) { muPeekHide(); const b = $("mu-body"); if (b) { b.style.transition = "transform .12s"; b.style.transform = ""; } }
-      }
-      if (muMode === "games") { if (league) place(dx, subNeighbor); else placeMu(dx); }
-      else place(dx);
-      return;
-    }
     if (!dragging) {
-      if (scroller || onTable) {
-        const atEdge = !scroller || (dx > 0 ? scroller.startAtLeft : scroller.startAtRight);
-        if (!atEdge || Math.abs(dx) < 120 || Math.abs(dx) < Math.abs(dy) * 2.5) { if (Math.abs(dy) > 20 || !atEdge) armed = Math.abs(dy) <= 20; return; }
-      } else if (Math.abs(dx) < 14 || Math.abs(dx) < Math.abs(dy) * 1.6) { if (Math.abs(dy) > 14) armed = false; return; }
+      if (scroller && !(dx > 0 ? scroller.startAtLeft : scroller.startAtRight)) { armed = false; return; }
+      if (Math.abs(dx) < (scroller ? 40 : 10) || Math.abs(dx) < Math.abs(dy) * 1.6) { if (Math.abs(dy) > 14) armed = false; return; }
       dragging = true;
     }
-    place(dx);
+    // The next game (or League sub-tab) slides in beside this one.
+    if (groupOf(state.tab) === "league") place(dx, subNeighbor); else placeMu(dx);
   }, { passive: true });
   document.addEventListener("touchend", (e) => {
     if (!armed) return;
@@ -5316,17 +5301,10 @@ function initSwipeTabs() {
     const t = e.changedTouches[0], dx = t.clientX - sx;
     const wasDragging = dragging;
     dragging = false;
-    if (muSwipe) {
-      if (muMode === "tab") { settle(Math.abs(dx) > W() * 0.6, dx); return; }
-      if (!wasDragging) return;
-      const go = Math.abs(dx) > W() * 0.2 || (Math.abs(dx) > 40 && Date.now() - t0 < 300);
-      if (groupOf(state.tab) === "league") settle(go, dx, false);
-      else settleMu(go, dx);
-      return;
-    }
     if (!wasDragging) return;
-    const go = !!neighborTab(dx < 0 ? 1 : -1) && (scroller || onTable ? Math.abs(dx) > W() * 0.6 : Math.abs(dx) > W() * 0.28 || (Math.abs(dx) > 50 && Date.now() - t0 < 300));
-    settle(go, dx);
+    const go = Math.abs(dx) > W() * 0.2 || (Math.abs(dx) > 40 && Date.now() - t0 < 300);
+    if (groupOf(state.tab) === "league") settle(go, dx, false);
+    else settleMu(go, dx);
   }, { passive: true });
   document.addEventListener("touchcancel", () => {
     if (dragging) { dragging = false; if (mp) settleMu(false, 0); else settle(false, 0); }

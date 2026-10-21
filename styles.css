@@ -1631,3 +1631,6 @@ main .mb-chip, main .lg-card { --ink: #0b0b0b; --ink-2: #52514e; --muted: #6f6d6
 :root[data-theme="dark"] .fs-poss { background: rgba(201,138,0,.22); color: #f5cf5c; border-color: rgba(201,138,0,.5); }
 :root[data-theme="dark"] .fs-rz { background: rgba(211,47,47,.24); color: #f4a3a3; border-color: rgba(211,47,47,.5); }
 :root[data-theme="dark"] .pl-mine { color: #e8e8e4; }
+/* Roster: Quick Lineup / Matchup stats as small buttons with tight spacing */
+.er-tools { gap: 6px; margin: 6px 0; }
+.er-btn { padding: 5px 10px; font-size: .82rem; border-radius: 16px; }
