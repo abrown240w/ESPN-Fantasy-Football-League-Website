@@ -604,18 +604,6 @@ function showView(name) {
   ln.hidden = groupOf(name) !== "league";
   if (!ln.hidden) ln.innerHTML = LEAGUE_SUBS.map(([k, l]) => `<button type="button" data-sub="${k}" class="${k === name ? "active" : ""}">${l}</button>`).join("");
   paintLiveDot();
-  if (state.week) paintRosterNews();
-}
-// 📰 on the Roster tab while any of your players has news you haven't read.
-function paintRosterNews() {
-  const b = document.querySelector('#tabs button[data-tab="roster"]');
-  if (!b) return;
-  const me = myTeamId(), side = me && state.week?.sides?.find((x) => String(x.teamId) === String(me));
-  const nd = side ? ensureNews(side.players.map((p) => p.id), paintRosterNews) : null;
-  const n = nd ? side.players.filter((p) => unreadNews(String(p.id), nd.players?.[p.id]).length).length : 0;
-  const i = b.querySelector(".tab-news");
-  if (n && !i) b.insertAdjacentHTML("beforeend", `<i class="tab-news" title="Unread news for ${n} of your players">📰</i>`);
-  else if (!n && i) i.remove();
 }
 // The dot by "Live": red while an NFL game is being played, grey otherwise.
 function paintLiveDot() {

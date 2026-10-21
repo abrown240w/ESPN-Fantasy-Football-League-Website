@@ -1650,8 +1650,6 @@ main .mb-chip, main .lg-card { --ink: #0b0b0b; --ink-2: #52514e; --muted: #6f6d6
 /* Roster: Quick Lineup / view menu stay at the top while you scroll */
 .er-tools { position: sticky; top: var(--top-h, 0px); z-index: 6; background: #3b4f6b; padding: 4px 0; margin: 2px 0; }
 .er-id > strong, .er-pick strong { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-/* 📰 on the Roster tab when your players have unread news */
-.tab-news { font-style: normal; font-size: .7rem; margin-left: 2px; }
 /* Chat: the leagues across the top */
 .ct-leagues { display: flex; width: 100%; margin: 0 0 8px; }
 .ct-leagues button { flex: 1 1 0; min-width: 0; padding: 6px 4px; font-size: .8rem; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
