@@ -2,7 +2,9 @@
 // stops. Each person only hears about their own team, and only the kinds of alerts they left on:
 //   td / big / bonus   while games are live (every minute): touchdowns (with the play's points), 15+ point
 //                      plays, yardage bonuses. One play = one notification.
-//   injury             every 30 minutes: a rostered player's status changes (Active → Questionable, …)
+//   injury             every 10 minutes: a rostered player's status changes (Active → Questionable, …)
+//   news               every 5 minutes: a new player note (the RotoWire updates ESPN shows) for someone
+//                      on your roster
 //   trade              every 10 minutes: a trade involving your team is accepted
 //   waiver             every 10 minutes: once a waiver run finishes, one summary of what you got
 //                      (missed claims only for the site owner: other teams' failed claims are private)
@@ -136,6 +138,53 @@ async function injuryAlerts(lid, season, st, teams, out) {
   }
 }
 
+// ---- Player news for rostered players ----
+// ESPN's news feed takes one player per request; a run shares fetches across leagues.
+const NEWS_FEED = "https://site.api.espn.com/apis/fantasy/v2/games/ffl/news/players";
+const newsRun = new Map();
+const strip = (html) => String(html || "").replace(/<[^>]*>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&#39;|&rsquo;/g, "'").replace(/&quot;|&ldquo;|&rdquo;/g, '"').replace(/\s+/g, " ").trim();
+function playerNews(id) {
+  if (!newsRun.has(id)) {
+    newsRun.set(id, getJson(`${NEWS_FEED}?limit=5&playerId=${id}`)
+      .then((d) => (d.feed || []).filter((a) => a.type === "Rotowire").map((a) => ({ at: Date.parse(a.published) || 0, headline: strip(a.headline), story: strip(a.story) })).sort((a, b) => b.at - a.at))
+      .catch(() => null));
+  }
+  return newsRun.get(id);
+}
+async function newsAlerts(lid, season, st, teams, out) {
+  const data = await espn(lid, season, ["mRoster"]);
+  const roster = [];
+  for (const t of data.teams || []) {
+    if (!teams.has(String(t.id))) continue;
+    for (const e of t.roster?.entries || []) {
+      const pl = e.playerPoolEntry?.player || {};
+      roster.push({ teamId: String(t.id), id: e.playerId, name: pl.fullName || "A player", posId: pl.defaultPositionId, slot: e.lineupSlotId });
+    }
+  }
+  const seen = st.news || {}, next = {};
+  // A few at a time so ESPN isn't hit with dozens of requests at once.
+  for (let i = 0; i < roster.length; i += 8) {
+    await Promise.all(roster.slice(i, i + 8).map(async (r) => {
+      const list = await playerNews(r.id);
+      if (!list) { if (seen[r.id]) next[r.id] = seen[r.id]; return; }
+      const newest = list[0]?.at || 0;
+      next[r.id] = Math.max(newest, seen[r.id] || 0);
+      // Players we haven't seen before (first run, or just picked up) are only recorded.
+      if (seen[r.id] == null) return;
+      const fresh = list.filter((n) => n.at > seen[r.id] && Date.now() - n.at < 6 * 3600e3).slice(0, 2);
+      for (const n of fresh.reverse()) {
+        out.push({
+          teamId: r.teamId, kinds: ["news"], tag: `news-${r.id}-${n.at}`,
+          title: `📰 ${r.name} · ${POS[r.posId] || ""}`.trim(),
+          body: (n.headline || n.story).slice(0, 180),
+          url: `/?league=${lid}&tab=roster&player=${r.id}`,
+        });
+      }
+    }));
+  }
+  st.news = next;
+}
+
 // ---- Accepted trades and finished waiver runs ----
 async function transactionAlerts(lid, season, st, teams, out) {
   const pages = await Promise.all([...new Set([st.sp, Math.max(1, st.sp - 1)])].map((sp) => espn(lid, season, ["mTransactions2"], sp).catch(() => ({}))));
@@ -258,6 +307,7 @@ async function lineupAlerts(lid, season, st, teams, out) {
 }
 
 export default async () => {
+  newsRun.clear();
   const s = store();
   const now = Date.now(), minute = new Date(now).getUTCMinutes();
   // NFL schedule: refreshed every 15 minutes, or every minute while a game is on or about to start.
@@ -269,8 +319,8 @@ export default async () => {
   const live = !!sched?.games?.some((g) => g.state === "in");
   const ct = chicagoNow();
   const lineupTime = ct.day === "Sun" && ct.hour === 10 && ct.minute >= 30 && ct.minute < 45;
-  const doInjuries = minute % 30 === 0, doTx = minute % 10 === 0;
-  if (!live && !doInjuries && !doTx && !lineupTime) return;
+  const doInjuries = minute % 10 === 0, doNews = minute % 5 === 0, doTx = minute % 10 === 0;
+  if (!live && !doInjuries && !doNews && !doTx && !lineupTime) return;
 
   const subs = await allSubs();
   if (!subs.length) return;
@@ -293,6 +343,7 @@ export default async () => {
       }
       if (live) await liveAlerts(lid, season, st, teams, out).catch((e) => console.log(JSON.stringify({ event: "watch_live_error", lid, message: e.message })));
       if (doInjuries || !st.inj) await injuryAlerts(lid, season, st, teams, out).catch((e) => console.log(JSON.stringify({ event: "watch_injury_error", lid, message: e.message })));
+      if (doNews || !st.news) await newsAlerts(lid, season, st, teams, out).catch((e) => console.log(JSON.stringify({ event: "watch_news_error", lid, message: e.message })));
       if (doTx || !st.seenTrades) await transactionAlerts(lid, season, st, teams, out).catch((e) => console.log(JSON.stringify({ event: "watch_tx_error", lid, message: e.message })));
       if (lineupTime && st.lineupWeek !== st.sp) {
         await lineupAlerts(lid, season, st, teams, out).catch((e) => console.log(JSON.stringify({ event: "watch_lineup_error", lid, message: e.message })));

@@ -2863,6 +2863,7 @@ const NOTIFY_KINDS = [
   ["big", "Big plays", "A starter gains 15+ points on one play"],
   ["bonus", "Bonuses", "A starter crosses a yardage bonus (100-yd rushing, 300-yd passing…)"],
   ["injury", "Injury alerts", "A player's status changes: Questionable, Out, back to Active…"],
+  ["news", "Player news", "A new update on one of your players (the RotoWire notes ESPN shows)"],
   ["lineup", "Start/bench", "Sundays at 10:30 AM Central, if your bench is projected to outscore a starter"],
   ["trade", "Trades", "A trade involving your team is accepted"],
   ["waiver", "Waiver report", "One summary after each waiver run: who you got (and missed)"],
@@ -4403,7 +4404,7 @@ function showModal(html) {
   m.querySelector(".modal-card").scrollTop = 0;
 }
 
-async function openPlayer(id, focusSp) {
+async function openPlayer(id, focusSp, tab) {
   const m = $("pl-modal"), body = $("pl-modal-body");
   m.querySelector(".modal-card").classList.add("pm-full"); // same size on every tab, so switching tabs doesn't jump
   state.pmNewsSnap = null;
@@ -4422,7 +4423,7 @@ async function openPlayer(id, focusSp) {
     }
     if (m.hidden) return;
   }
-  state.pmTab = focusSp ? "log" : "overview";
+  state.pmTab = tab || (focusSp ? "log" : "overview");
   renderPlayerModal(cache[id].data, focusSp);
 }
 
@@ -4812,6 +4813,7 @@ function renderLeagueSelect() {
 
 let pendingWeek = parseInt(params.get("week")) || null;
 let pendingWaivers = params.has("waivers") ? Number(params.get("waivers")) || 0 : null;
+let pendingPlayer = /^\d{1,10}$/.test(params.get("player") || "") ? params.get("player") : null; // a news alert opens his news
 // A notification about a play opens that game on Live games.
 if (params.get("game")) { state.liveOpen = { [params.get("game")]: true }; state.liveSel = params.get("game"); }
 
@@ -4834,6 +4836,7 @@ async function loadLeague(week) {
   pendingWeek = null;
   await loadWeek(wk);
   if (pendingWaivers != null) { const at = pendingWaivers; pendingWaivers = null; openWaiverRun(at); }
+  if (pendingPlayer) { const id = pendingPlayer; pendingPlayer = null; openPlayer(id, null, "news"); }
 }
 
 function renderHeader() {
