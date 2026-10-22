@@ -1638,7 +1638,7 @@ main .mb-chip, main .lg-card { --ink: #0b0b0b; --ink-2: #52514e; --muted: #6f6d6
 /* Players row: the Injury Report button sits at the right edge */
 .pl-nav .inj-seg { margin-left: auto; }
 /* Injury Report player column: name, badge and buttons on one line, position and owner on the second */
-.inj-table td.pt-player, .inj-table th.pt-player { min-width: 178px; max-width: 200px; width: 178px; }
+.inj-table td.pt-player, .inj-table th.pt-player { min-width: 128px; max-width: 150px; width: 132px; }
 .inj-table .pt-name.inj-name { display: flex; flex-wrap: nowrap !important; align-items: center; gap: 3px; white-space: nowrap; }
 .inj-name .pl-link { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .inj-name .add-btn, .inj-name .trade-btn { margin-left: 4px; flex: none; }
@@ -1652,8 +1652,6 @@ main .mb-chip, main .lg-card { --ink: #0b0b0b; --ink-2: #52514e; --muted: #6f6d6
 .er-id > strong, .er-pick strong { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* Chat: the leagues across the top */
 .ct-leagues { display: flex; width: 100%; margin: 0 0 8px; }
-.ct-leagues button { flex: 1 1 0; min-width: 0; padding: 6px 4px; font-size: .8rem; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ct-leagues .ct-unread { font-style: normal; }
 /* Season awards table */
 .aw-table th .aw-icon { vertical-align: middle; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .er-tools { background: #18202c; } }
@@ -1682,3 +1680,28 @@ main .mb-chip, main .lg-card { --ink: #0b0b0b; --ink-2: #52514e; --muted: #6f6d6
 .pl-search #pl-nfl { flex: 0 0 auto; width: 118px; max-width: 118px; }
 .pl-filters .pos-seg { display: flex; width: 100%; }
 .pl-filters .pos-seg button { flex: 1 1 0; padding-left: 0; padding-right: 0; }
+.inj-table .inj-sub { display: flex; align-items: center; gap: 4px; flex-wrap: nowrap; white-space: nowrap; }
+.inj-table .inj-sub .badge { margin: 0; }
+.inj-table .inj-sub .add-btn, .inj-table .inj-sub .trade-btn { margin-left: 2px; }
+/* Chat: one button per league, the unread count as a badge on its corner */
+.ct-leagues { display: flex; gap: 8px; width: 100%; margin: 0 0 10px; }
+.ct-lg { position: relative; flex: 1 1 0; min-width: 0; border: 1px solid var(--border); background: var(--surface); color: var(--ink); border-radius: 10px; padding: 7px 6px; font: inherit; font-size: .85rem; font-weight: 700; cursor: pointer; overflow: visible; }
+.ct-lg.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.ct-lg .ct-unread { position: absolute; top: -7px; right: -6px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: #e11d48; color: #fff; font-style: normal; font-size: .7rem; line-height: 18px; text-align: center; box-shadow: 0 0 0 2px var(--surface); }
+.ct-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #e11d48; margin-right: 5px; vertical-align: 1px; }
+/* Game log views */
+.gl-modes { display: flex; width: 100%; margin: 0 0 8px; }
+.gl-modes button { flex: 1 1 0; padding: 6px 2px; font-size: .8rem; font-weight: 700; }
+.gamelog .gl-game .rk { font-size: .62rem; font-weight: 700; }
+.pm-pane .gl-compact:not(.gl-game) th:nth-child(n+3), .pm-pane .gl-compact:not(.gl-game) td.num { width: auto; }
+.pm-pane .gl-compact.gl-pass th:nth-child(2), .pm-pane .gl-compact.gl-rush th:nth-child(2), .pm-pane .gl-compact.gl-rec th:nth-child(2), .pm-pane .gl-compact.gl-use th:nth-child(2) { width: 30%; }
+/* Player card: transaction history */
+.txh { display: flex; flex-direction: column; }
+.txh-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-top: 1px solid var(--border); font-size: .82rem; }
+.txh-row:first-child { border-top: 0; }
+.txh-date { width: 48px; flex: none; color: var(--muted); font-size: .75rem; }
+.txh-row .tx-kind { flex: none; }
+.txh-text { flex: 1; min-width: 0; }
+.tx-kind.drop { background: #fde4e4; color: #a12626; }
+.txh-btn { margin-top: 4px; }
+.ct-leagues { padding: 8px 6px 0 0; }

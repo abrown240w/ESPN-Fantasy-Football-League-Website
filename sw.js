@@ -9,7 +9,7 @@
 
 const VERSION = "v1";
 const SHELL = `shell-${VERSION}`, DATA = "data-v1", IMAGES = "images-v1";
-const SHELL_FILES = ["/", "/app.js", "/demo.js", "/styles.css", "/manifest.webmanifest", "/icon-192.png", "/icon-512.png", "/apple-touch-icon.png"];
+const SHELL_FILES = ["/", "/app.js", "/demo.js", "/styles.css", "/manifest.webmanifest", "/icon-192.png", "/icon-512.png", "/icon-maskable-512.png", "/apple-touch-icon.png"];
 const API_TIMEOUT_MS = 4000;
 const MAX_IMAGES = 400;
 
