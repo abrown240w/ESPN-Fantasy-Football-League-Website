@@ -1846,3 +1846,9 @@ body.cmp-picking main.wrap { padding-bottom: 88px; }
 body.cmp-picking .modal { padding-bottom: 76px !important; }
 body.cmp-picking .modal-card { max-height: calc(100dvh - 100px) !important; }
 body.cmp-picking .modal-card.pm-full { height: calc(100dvh - 100px) !important; }
+
+/* Roster: the Starters total row */
+.er-row.er-total:not(.er-hd) { background: var(--surface-2); border-top: 2px solid var(--grid); min-height: 52px; }
+.er-row.er-total .er-l { padding-left: 14px; font-size: .9rem; }
+.er-row.er-total .erc { font-weight: 800; }
+.er-row.er-total .erc small { font-weight: 600; }

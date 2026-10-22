@@ -2673,6 +2673,23 @@ function erDeskHeadCells() {
     h("Snap", "Season share of snaps (last game underneath)", "erc-g"), h("Tgt", "Season share of team targets"), h("Rush", "Season share of team carries"),
     h("Value", "FantasyCalc trade value", "erc-g erc-x")].join("");
 }
+// The Starters total row: this week's score and projection, and the lineup's PPG, season and last-week points,
+// lined up under whichever stat columns are showing.
+function erTotalCells(list) {
+  const dash = `<span class="muted">–</span>`;
+  const c = (val = "", sub = "", cls = "") => `<div class="erc ${cls}">${val}${sub ? `<small>${sub}</small>` : ""}</div>`;
+  const tot = (k) => (list.some((p) => p[k] != null) ? f1(sum(list, (p) => p[k] || 0)) : dash);
+  const score = c(list.some((p) => p.played) ? f2(sum(list, (p) => p.actual || 0)) : dash, f1(sum(list, (p) => p.proj || 0)));
+  if (DESK.matches) {
+    const cells = Array.from({ length: 12 }, () => null), cls = ["", "erc-g", "", "", "", "", "erc-g", "", "erc-g", "", "", "erc-g erc-x"];
+    cells[0] = score; cells[3] = c(tot("seasonAvg")); cells[4] = c(tot("seasonPts")); cells[5] = c(tot("lastPts"));
+    return cells.map((x, i) => x || c("", "", cls[i])).join("");
+  }
+  const v = erView(), cells = Array.from({ length: erHeads(v).length }, () => c());
+  if (v === "matchup") cells[0] = score;
+  else if (v === "scoring") { cells[1] = c(tot("seasonAvg")); cells[2] = c(tot("seasonPts")); cells[3] = c(tot("lastPts")); cells[4] = c(f1(sum(list, (p) => p.proj || 0))); }
+  return cells.join("");
+}
 const erColsAll = (p) => (DESK.matches ? erDeskCells(p) : erCols(p).join(""));
 const erHeadsAll = () => (DESK.matches ? erDeskHeadCells() : erHeads().join(""));
 // Roster rail (computers): this week's matchup at a glance and the latest news for the team on screen.
@@ -2925,7 +2942,7 @@ function renderRoster() {
   if (side) {
     const bench = side.bench.filter((p) => p.slotId !== IR), ir = side.bench.filter((p) => p.slotId === IR);
     const tick = lc === LINEUP_OK ? ` <span class="lc-tick" title="Lineup is optimal by ESPN's week ${w.week} projections">✓</span>` : "";
-    table = section(`${canEdit ? "Edit starters" : "Starters"}${tick}`, side.starters)
+    table = section(`${canEdit ? "Edit starters" : "Starters"}${tick}`, side.starters, side.starters.length ? `<div class="er-row er-total"><div class="er-l"><strong>Starters total</strong></div><div class="er-r rs">${erTotalCells(side.starters)}</div></div>` : "")
       + section(canEdit ? "Edit bench" : "Bench", bench, toBench ? emptyRow(BENCH, picked.slotId === IR && side.players.filter((p) => p.slotId !== IR).length >= rosterSize() ? "Move to bench (needs a drop)" : "Move to bench") : "")
       + section("IR", ir, toIR ? emptyRow(IR, "Move to IR") : "");
   }
