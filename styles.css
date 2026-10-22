@@ -1714,23 +1714,9 @@ main .mb-chip, main .lg-card { --ink: #0b0b0b; --ink-2: #52514e; --muted: #6f6d6
   #pl-modal.dock .modal-card { pointer-events: auto; width: 100%; height: 100%; max-height: none; border-radius: 14px 0 0 0; box-shadow: -10px 0 30px rgba(0,0,0,.28); }
   body.has-dock main.wrap { max-width: none; margin-right: 480px; margin-left: 0; }
   /* Players: filters in a sticky sidebar, the full table beside it */
-  #view-players { display: grid; grid-template-columns: 270px minmax(0, 1fr); column-gap: 18px; align-items: start; }
-  .pl-side { position: sticky; top: calc(var(--top-h, 0px) + 10px); display: flex; flex-direction: column; gap: 8px; }
-  .pl-side .filters, .pl-side .pl-nav { margin: 0; flex-wrap: wrap; }
-  .pl-side .pl-search { flex-wrap: wrap; }
-  .pl-side .pl-search input, .pl-side #pl-nfl { width: 100%; max-width: none; flex: 1 1 100%; }
-  .pl-side .pl-nav .inj-seg { margin-left: 0; }
-  .pl-side .pos-seg { display: flex; flex-wrap: wrap; }
-  .pl-side .pos-seg button { flex: 1 1 22%; }
-  #view-players { grid-template-columns: 230px minmax(0, 1fr); }
-  #view-players .pt-table th, #view-players .pt-table td { padding-left: 6px; padding-right: 6px; }
-  #view-players .pt-table .pt-player { min-width: 170px; max-width: 210px; }
   /* Roster: table and rail */
-  .er-layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 18px; align-items: start; }
-  .er-rail { position: sticky; top: calc(var(--top-h, 0px) + 10px); display: flex; flex-direction: column; gap: 12px; }
   .er-rail .er-head { margin: 0; }
   #er-views { display: none; }
-  .er-table.ev-desk .erc-g { border-left: 1px solid var(--grid); }
   .rr-card { padding: 12px 14px; }
   .rr-head { font-weight: 800; margin-bottom: 8px; display: flex; align-items: center; gap: 6px; }
   .rr-team { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
@@ -1770,14 +1756,93 @@ main .mb-chip, main .lg-card { --ink: #0b0b0b; --ink-2: #52514e; --muted: #6f6d6
 @media (min-width: 1400px) {
   .st-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 560px); gap: 18px; align-items: start; }
 }
+
 @media (min-width: 1000px) {
-  /* Roster on computers: the name side and every stat column fit without scrolling */
-  .er-table.ev-desk .er-row { grid-template-columns: minmax(300px, 1fr) auto; }
+  /* Players: the filters in one tidy bar across the top */
+  .pl-top { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 12px; }
+  .pl-top > * { margin: 0 !important; }
+  .pl-top .pl-search { flex: 1 1 360px; flex-wrap: nowrap; }
+  .pl-top .pl-search input { flex: 1 1 auto; min-width: 0; }
+  .pl-top .pl-search #pl-nfl { flex: none; width: 150px; max-width: 150px; }
+  .pl-top .pl-nav { flex: none; flex-wrap: nowrap; }
+  .pl-top .pl-nav .inj-seg { margin-left: 0; }
+  .pl-top .pl-filters { flex: none; }
+  .pl-top .pos-seg { display: inline-flex; width: auto; }
+  .pl-top .pos-seg button { flex: none; padding: 7px 13px; }
+  .pl-top .pl-mine { margin-left: auto !important; }
+  /* Roster: the rail stacks above the table on smaller laptops, beside it on wide screens */
+  .er-layout { display: flex; flex-direction: column; gap: 12px; }
+  .er-rail { order: -1; display: flex; flex-direction: row; flex-wrap: wrap; gap: 12px; align-items: stretch; }
+  .er-rail > * { flex: 1 1 300px; margin: 0; }
+  .er-quick-btn { flex: 0 0 100%; }
+  /* Roster rows: a name block of fixed width and stat columns that share the rest */
+  .er-table.ev-desk .er-row { grid-template-columns: minmax(250px, 300px) minmax(0, 1fr); }
   .er-table.ev-desk .er-r { overflow: visible; }
-  .er-table.ev-desk .erc { width: 58px; }
+  .er-table.ev-desk .erc { flex: 1 1 0; width: auto; min-width: 52px; font-size: .92rem; }
+  .er-table.ev-desk .erc-g { border-left: 1px solid var(--grid); }
+  .er-table.ev-desk .erc-x { display: none; }
+  .er-table.ev-desk .er-row.er-hd .erc { font-size: .68rem; line-height: 1.2; }
 }
-/* Wide enough for the whole Players table: it stops scrolling sideways and its header row sticks. */
-@media (min-width: 1400px) {
-  #view-players .table-wrap { overflow: visible; }
-  #view-players .pt-table thead th { position: sticky; top: var(--top-h, 0px); z-index: 3; background: var(--surface); }
+@media (min-width: 1250px) {
+  .er-layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 18px; align-items: start; }
+  .er-rail { order: 0; position: sticky; top: calc(var(--top-h, 0px) + 10px); flex-direction: column; flex-wrap: nowrap; }
+  .er-rail > * { flex: none; }
+  .er-quick-btn { flex: none; }
 }
+@media (min-width: 1500px) { .er-table.ev-desk .erc-x { display: flex; } }
+/* Players: with room for the whole table, the page scrolls instead of the table (the header row sticks). */
+@media (min-width: 1320px) {
+  body:not(.has-dock) #view-players .table-wrap:has(> .pt-table) { max-height: none; overflow: clip; }
+  body:not(.has-dock) #view-players .pt-table thead th { top: var(--top-h, 0px); }
+}
+
+/* Player cards: chips for the open cards, Compare */
+.pm-cards { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 40px 10px 0; }
+.pc-chip { display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--border); background: var(--surface-2); border-radius: 999px; padding: 3px 4px 3px 10px; font-size: .8rem; font-weight: 700; cursor: pointer; }
+.pc-chip.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.pc-x { border: 0; background: transparent; color: inherit; font-size: 1rem; line-height: 1; padding: 0 5px; cursor: pointer; opacity: .8; }
+.cmp-btn { border: 1px solid var(--accent); background: var(--surface); color: var(--accent-ink); border-radius: 8px; padding: 5px 10px; font: inherit; font-size: .85rem; font-weight: 700; cursor: pointer; }
+/* The comparison popup */
+#cmp-modal { z-index: 120; }
+.cmp-card { width: min(900px, 100%); }
+body.has-dock #cmp-modal { right: 480px; }
+.cmp-bottom { font-size: .9rem; margin-top: 4px; color: var(--ink-2); }
+.cmp-vs { display: grid; gap: 10px; grid-template-columns: 1fr; }
+@media (min-width: 700px) { .cmp-vs.cols-2 { grid-template-columns: 1fr 1fr; } .cmp-vs.cols-3 { grid-template-columns: repeat(3, 1fr); } }
+.cmp-v { border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; background: var(--surface); }
+.cmp-vh { font-weight: 800; margin-bottom: 4px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.cmp-v p { margin: 4px 0; }
+.cmp-badge { font-size: .7rem; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; padding: 2px 8px; border-radius: 999px; background: var(--surface-2); }
+.cmp-badge.pos { background: rgba(22,163,74,.18); color: #15803d; }
+.cmp-badge.neg { background: rgba(230,103,103,.2); color: #b3261e; }
+.cmp-drops { margin-top: 6px; border-top: 1px dashed var(--border); padding-top: 6px; }
+.cmp-drop { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 0; }
+.cmp-do { flex: none; border: 1px solid var(--accent); background: var(--surface); color: var(--accent-ink); border-radius: 8px; padding: 4px 9px; font: inherit; font-size: .78rem; font-weight: 700; cursor: pointer; }
+.cmp-table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+.cmp-table th, .cmp-table td { padding: 6px 8px; border-bottom: 1px solid var(--grid); text-align: center; font-variant-numeric: tabular-nums; }
+.cmp-table th:first-child, .cmp-table td:first-child { text-align: left; color: var(--ink-2); font-weight: 600; white-space: nowrap; }
+.cmp-table th.cmp-p { vertical-align: bottom; }
+.cmp-table th.cmp-p > * { display: block; margin: 0 auto 2px; font-size: .8rem; }
+.cmp-table td.best { background: rgba(22,163,74,.16); font-weight: 800; }
+.cmp-sum td { font-weight: 800; border-top: 2px solid var(--grid); }
+.cmp-picks { display: flex; flex-direction: column; }
+.cmp-pick { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; border: 0; border-top: 1px solid var(--border); background: transparent; color: inherit; font: inherit; padding: 8px 4px; cursor: pointer; }
+.cmp-pick:hover { background: var(--surface-2); }
+.cp-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.cp-nums { display: flex; flex-direction: column; align-items: flex-end; font-variant-numeric: tabular-nums; }
+.cp-nums small { color: var(--muted); font-size: .7rem; }
+@media (min-width: 1000px) and (max-width: 1249px) { .rr-news-card { display: none; } }
+
+/* "Compare other": the bar that waits at the bottom while you pick a player from any screen */
+.cmp-other { display: flex; align-items: center; gap: 8px; width: 100%; margin: 6px 0 10px; border: 1px dashed var(--accent); background: var(--surface); color: var(--accent-ink); border-radius: 10px; padding: 9px 12px; font: inherit; font-weight: 700; cursor: pointer; text-align: left; }
+.cmp-other.sm { display: inline-flex; width: auto; margin: 8px 0 0; padding: 5px 10px; font-size: .85rem; }
+#cmp-bar { position: fixed; left: 8px; right: 8px; bottom: calc(env(safe-area-inset-bottom, 0px) + 8px); z-index: 130; max-width: 640px; margin: 0 auto; display: flex; align-items: center; gap: 10px; background: var(--accent); color: #fff; border-radius: 14px; padding: 9px 10px 9px 14px; box-shadow: 0 6px 24px rgba(0,0,0,.4); }
+#cmp-bar .cb-ico { font-size: 1.2rem; }
+#cmp-bar .cb-text { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.25; }
+#cmp-bar .cb-text strong { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#cmp-bar .cb-sub { font-size: .75rem; opacity: .92; }
+#cmp-bar .cb-x { flex: none; width: 32px; height: 32px; border: 0; border-radius: 50%; background: rgba(255,255,255,.22); color: #fff; font-size: 1.3rem; line-height: 1; cursor: pointer; }
+body.cmp-picking main.wrap { padding-bottom: 88px; }
+body.cmp-picking .modal { padding-bottom: 76px !important; }
+body.cmp-picking .modal-card { max-height: calc(100dvh - 100px) !important; }
+body.cmp-picking .modal-card.pm-full { height: calc(100dvh - 100px) !important; }

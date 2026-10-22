@@ -904,13 +904,13 @@ function renderPlayers() {
     : f.mode === "all" ? [...rostered, ...avail]
     : f.mine && me ? [...avail, ...rostered.filter((p) => String(p.teamId) === me)] : avail;
   // Search and NFL team on one line; Available / All / watch list / injuries; then the positions.
-  el.innerHTML = `<aside class="pl-side"><div class="filters pl-search"><input id="pl-q" type="search" placeholder="Search players…" value="${esc(f.q)}">
+  el.innerHTML = `<div class="pl-top"><div class="filters pl-search"><input id="pl-q" type="search" placeholder="Search players…" value="${esc(f.q)}">
       <select id="pl-nfl" aria-label="NFL team"><option value="ALL">All teams</option>${Object.keys(NFL_NAMES).sort((a, b) => NFL_NAMES[a].localeCompare(NFL_NAMES[b])).map((t) => `<option value="${t}" ${f.nfl === t ? "selected" : ""}>${esc(NFL_NAMES[t].split(" ").pop())}</option>`).join("")}</select></div>
     ${playersNav(f.mode)}
     <div class="filters pl-filters">
       ${posSeg("pl-pos", f.pos)}
     </div>
-    ${me ? `<label class="pl-mine ${f.mode === "all" ? "off" : ""}"><input type="checkbox" id="pl-mine" ${f.mine ? "checked" : ""} ${f.mode === "all" ? "disabled" : ""}> Include my team</label>` : ""}</aside>
+    ${me ? `<label class="pl-mine ${f.mode === "all" ? "off" : ""}"><input type="checkbox" id="pl-mine" ${f.mine ? "checked" : ""} ${f.mode === "all" ? "disabled" : ""}> Include my team</label>` : ""}</div>
     <div class="pl-main"><div id="pl-list"></div>${fcCredit()}${nvCredit()}</div>`;
   const draw = () => {
     const q = f.q.toLowerCase();
@@ -2644,9 +2644,37 @@ function upgradesFor(p, fa) {
 }
 
 // Roster columns: one view on phones; on computers the Matchup, Scoring and Usage views side by side.
-const markGroup = (cells) => cells.map((c, i) => (i === 0 ? c.replace('class="erc"', 'class="erc erc-g"') : c)).join("");
-const erColsAll = (p) => (DESK.matches ? ER_DESK.map((v) => markGroup(erCols(p, v))).join("") : erCols(p).join(""));
-const erHeadsAll = () => (DESK.matches ? ER_DESK.map((v) => markGroup(erHeads(v))).join("") : erHeads().join(""));
+// Roster columns on computers: every stat at once, grouped (this week | scoring | ownership | usage | value).
+function erDeskCells(p) {
+  const dash = `<span class="muted">–</span>`;
+  const c = (val, sub = "", cls = "") => `<div class="erc ${cls}">${val}${sub ? `<small>${sub}</small>` : ""}</div>`;
+  const u = usageOf(p.id), r = p.opp?.rank, v = valueOf(p.id);
+  const last = (k) => (u ? `last ${pctTxt(u.last[k])}` : "");
+  return [
+    c(p.played ? ptsLink(p.id, state.week.sp, f2(p.actual)) : dash, f1(p.proj)),
+    c(r ? `<span class="rk ${rkCls(r)}">${ordinal(r)}</span>` : dash, "", "erc-g"),
+    c(p.posRank ? `${esc(p.pos)}${p.posRank}` : dash),
+    c(p.seasonAvg != null ? f1(p.seasonAvg) : dash),
+    c(p.seasonPts != null ? f1(p.seasonPts) : dash),
+    c(p.lastPts != null ? f1(p.lastPts) : dash),
+    c(p.own != null ? `${Math.round(p.own)}%` : dash, "", "erc-g"),
+    c(p.start != null ? `${Math.round(p.start)}%` : dash),
+    c(u ? pctTxt(u.avg?.pct ?? u.last.pct) : dash, last("pct"), "erc-g"),
+    c(u && u.pos !== "QB" ? pctTxt(u.avg?.share ?? u.last.share) : dash, u && u.pos !== "QB" ? last("share") : ""),
+    c(u ? pctTxt(u.avg?.rush ?? u.last.rush) : dash, last("rush")),
+    c(v != null ? fmtVal(v) : dash, "", "erc-g erc-x"),
+  ].join("");
+}
+function erDeskHeadCells() {
+  const h = (l, tip, cls = "") => `<div class="erc ${cls}" title="${tip}">${l}</div>`;
+  return [h("Score", "Points this week over the projection"), h("Opp", "Opponent's rank against the position (1st = toughest)", "erc-g"), h("Pos rk", "Season rank at the position"),
+    h("PPG", "Fantasy points per game this season"), h("Tot", "Total fantasy points this season"), h("Last", "Last week's points"),
+    h("%Rost", "Percent of leagues that roster him", "erc-g"), h("%Start", "Percent of leagues that start him"),
+    h("Snap", "Season share of snaps (last game underneath)", "erc-g"), h("Tgt", "Season share of team targets"), h("Rush", "Season share of team carries"),
+    h("Value", "FantasyCalc trade value", "erc-g erc-x")].join("");
+}
+const erColsAll = (p) => (DESK.matches ? erDeskCells(p) : erCols(p).join(""));
+const erHeadsAll = () => (DESK.matches ? erDeskHeadCells() : erHeads().join(""));
 // Roster rail (computers): this week's matchup at a glance and the latest news for the team on screen.
 function rosterRail(sel, side) {
   const w = state.week, m = w.matchups.find((x) => [x.home?.teamId, x.away?.teamId].map(String).includes(String(sel)));
@@ -2665,7 +2693,7 @@ function rosterRail(sel, side) {
     const d = ensureNews(side.players.map((p) => p.id), () => { if (state.tab === "roster") render(); });
     const items = !d ? null : side.players.flatMap((p) => (d.players[p.id] || []).map((n) => ({ p, n })))
       .filter(({ n }) => Date.now() - Date.parse(n.published) < 7 * 864e5).sort((a, b) => Date.parse(b.n.published) - Date.parse(a.n.published));
-    news = `<div class="card rr-card"><div class="rr-head">📰 News <span class="muted small">last 7 days</span></div>
+    news = `<div class="card rr-card rr-news-card"><div class="rr-head">📰 News <span class="muted small">last 7 days</span></div>
       ${!items ? `<div class="loading small"><span class="spinner"></span> Loading news…</div>` : items.length ? `<div class="rr-news">${items.slice(0, 6).map(({ p, n }) => newsItem(n, `<span class="news-who">${plinkNm(p)}</span>`)).join("")}</div>${items.length > 6 ? `<button type="button" class="link-btn" data-chip="news">All news (${items.length}) ›</button>` : ""}` : `<p class="muted small">No player updates this week.</p>`}</div>`;
   }
   return mu + news;
@@ -2930,8 +2958,8 @@ function renderRoster() {
   const tools = side ? `<div class="er-tools">${canEdit ? `<button type="button" class="er-btn" id="er-quick">Quick Lineup</button>` : ""}<button type="button" class="er-btn" id="er-views">${viewLabel} <span class="caret">▾</span></button></div>` : "";
   const moving = picked ? `<div class="er-moving"><span>Moving <strong>${esc(picked.name)}</strong>: tap a highlighted spot</span><span class="rh-edit-btns"><button type="button" class="mv-cancel" id="mv-drop">Drop</button><button type="button" class="mv-done" id="mv-done">Cancel</button></span></div>` : "";
   el.innerHTML = DESK.matches
-    ? `<div class="er-layout"><div class="er-main">${tools}${moving}<div class="card er-table ev-desk">${table}</div>${side ? playoffSchedule(side) : ""}</div>
-        <aside class="er-rail">${head}${rosterRail(sel, side)}</aside></div>${fcCredit()}${nvCredit()}${wxCredit()}`
+    ? `<div class="er-layout"><div class="er-main">${moving}<div class="card er-table ev-desk">${table}</div>${side ? playoffSchedule(side) : ""}</div>
+        <aside class="er-rail">${head}${canEdit && side ? `<button type="button" class="er-btn er-quick-btn" id="er-quick">Quick Lineup</button>` : ""}${rosterRail(sel, side)}</aside></div>${fcCredit()}${nvCredit()}${wxCredit()}`
     : `${head}${tools}${moving}
     <div class="card er-table ev-${erView()}">${table}</div>
     ${side ? playoffSchedule(side) : ""}
@@ -3529,6 +3557,251 @@ function moveBtns(p, big = false) {
   }
   return `<button type="button" class="trade-btn ${big ? "" : "sm"}" data-trade="${esc(p.id)}" title="Trade for ${nm} (${esc(team(own).abbrev || "")})">${big ? "⇄ Trade" : "⇄"}</button>`;
 }
+// ---------- Compare players (player card) ----------
+// Compare from a card: with other cards already open it compares them; with just one open it asks which of
+// your players to compare against, opens that card too, and shows the comparison: season and weekly
+// numbers, how each would fit your lineup, who to drop to add him, or what to offer in a trade.
+const hideCmp = () => { const c = $("cmp-modal"); if (c) { c.hidden = true; state.cmpIds = null; } };
+function showCmp(html) {
+  const c = $("cmp-modal");
+  $("cmp-body").innerHTML = html;
+  c.hidden = false;
+  c.querySelector(".modal-card").scrollTop = 0;
+}
+function startCompare(baseId) {
+  const open = (state.cards || []).filter((c) => c !== baseId);
+  if (open.length) openCompare([baseId, ...open].slice(0, 3));
+  else openComparePicker(baseId);
+}
+// "Compare other": the popups tuck away into a bar at the bottom ("Compare with Josh Allen · QB · BUF"). It stays
+// through every screen until you tap a player (his name anywhere) or close it, then both cards and the comparison open.
+function startPick(baseId) {
+  baseId = String(baseId);
+  const d = state.playerCache?.[baseId]?.data?.player || {};
+  hideCmp();
+  document.querySelector("#pl-modal .modal-close")?.click(); // closes the cards; the bar keeps who we're comparing
+  state.cmpPick = { id: baseId, name: d.name || "this player", pos: POS[d.posId] || "", team: PRO[d.proId] || "" };
+  paintPickBar();
+}
+function endPick() { state.cmpPick = null; paintPickBar(); }
+function paintPickBar(note) {
+  const c = state.cmpPick;
+  let bar = $("cmp-bar");
+  document.body.classList.toggle("cmp-picking", !!c);
+  if (!c) { bar?.remove(); return; }
+  if (!bar) {
+    bar = document.createElement("div");
+    bar.id = "cmp-bar";
+    bar.addEventListener("click", (e) => { if (e.target.closest("[data-pick-cancel]")) endPick(); });
+    document.body.appendChild(bar);
+  }
+  bar.innerHTML = `<span class="cb-ico">⚖</span><span class="cb-text"><strong>Compare with ${esc(c.name)}</strong><span class="cb-sub">${esc(note || [c.pos, c.team].filter(Boolean).join(" · ") + " · tap any player to compare")}</span></span><button type="button" class="cb-x" data-pick-cancel aria-label="Cancel comparing">×</button>`;
+}
+async function finishPick(pickId) {
+  const c = state.cmpPick;
+  if (!c) return;
+  pickId = String(pickId);
+  if (pickId === c.id) { paintPickBar("That's the same player: pick someone else"); return; }
+  endPick();
+  await openPlayer(c.id);
+  await openPlayer(pickId);
+  openCompare([c.id, pickId]);
+}
+const cmpMe = () => String(myTeamId() || state.rosterTeam || "");
+const cmpWeek = () => ensureCurrentRosters() || state.weekCache?.[state.base.current] || state.week;
+function openComparePicker(baseId) {
+  const wk = cmpWeek(), me = cmpMe(), side = wk?.sides?.find((x) => String(x.teamId) === me);
+  const name = state.playerCache?.[baseId]?.data?.player?.name || "this player";
+  const head = `<div class="pm-head"><div><h2 id="cmp-title">⚖ Compare ${esc(name)}</h2><div class="muted small">Pick a player from your roster, or</div></div></div>
+    <button type="button" class="cmp-other" data-cmp-other="${esc(baseId)}">🔍 Compare other <span class="muted small">pick any player from another screen</span></button>`;
+  if (!side) return showCmp(`${head}<p class="muted">Star your team (☆ on the Roster tab) or sign in as owner so I know which roster is yours.</p>`);
+  const row = (p) => `<button type="button" class="cmp-pick" data-cmp-pick="${esc(p.id)}"><span class="sp ro">${p.slotId === BENCH ? "BE" : esc(SLOT[p.slotId] || p.slot)}</span>${headshot(p, 32)}
+      <span class="cp-main"><strong>${esc(p.name)}</strong><span class="muted small">${esc(p.pos)} · ${esc(PRO[p.proId] || "")}${injBadge(p)}</span></span>
+      <span class="cp-nums"><b>${f1(p.proj)}</b><small>${p.seasonAvg != null ? `${f1(p.seasonAvg)} ppg` : "proj"}</small></span></button>`;
+  const grp = (t, l) => (l.length ? `<div class="ct-group">${t}</div>${l.map(row).join("")}` : "");
+  const others = side.players.filter((p) => String(p.id) !== String(baseId));
+  showCmp(`${head}<div class="cmp-picks">${grp("Starters", others.filter((p) => p.starter))}${grp("Bench", others.filter((p) => !p.starter && p.slotId !== IR))}${grp("IR", others.filter((p) => p.slotId === IR))}</div>`);
+  $("cmp-body").querySelectorAll("[data-cmp-pick]").forEach((b) => b.addEventListener("click", async () => {
+    const id = b.dataset.cmpPick;
+    await openPlayer(id);
+    openCompare([String(baseId), id]);
+  }));
+}
+async function openCompare(ids) {
+  ids = [...new Set(ids.map(String))].slice(0, 3);
+  state.cmpIds = ids;
+  showCmp(`<div class="pm-head"><h2 id="cmp-title">⚖ Compare players</h2></div><div class="loading small"><span class="spinner"></span> Loading their seasons…</div>`);
+  ensureValues(); ensureUsage();
+  const cache = (state.playerCache ||= {});
+  await Promise.all(ids.map(async (id) => {
+    const hit = cache[id];
+    if (hit && Date.now() - hit.at < 60000) return;
+    try { cache[id] = { at: Date.now(), data: await fetchPlayer(id) }; } catch { /* that column shows what it can */ }
+  }));
+  if (state.cmpIds !== ids || $("cmp-modal").hidden) return;
+  renderCompare(ids);
+}
+function cmpRow(id, wk) {
+  for (const sd of wk?.sides || []) { const p = sd.players.find((x) => String(x.id) === String(id)); if (p) return { ...p, ownerId: String(sd.teamId) }; }
+  const f = faData()?.players?.find((x) => String(x.id) === String(id));
+  return f ? { ...faRow(f, state.week), ownerId: null } : null;
+}
+// Everything the comparison needs about one player.
+function cmpModel(id, wk) {
+  const d = state.playerCache?.[id]?.data, pl = d?.player || {}, row = cmpRow(id, wk) || {};
+  const posId = row.posId ?? pl.posId, weeks = d?.weeks || [], pts = weeks.map((w) => w.pts);
+  const total = d?.seasonPts ?? (pts.length ? sum(pts) : row.seasonPts ?? null), gp = pts.length;
+  const u = usageOf(Number(id)), cur = state.base.current, nfl = state.week?.nfl, proId = row.proId ?? pl.proId;
+  const sched = nfl?.sched?.[proId], next = [];
+  for (let w = cur; w < cur + 3 && w <= state.base.weeks; w++) {
+    const g = sched?.[state.base.scoringPeriodFor(w)];
+    next.push(g ? { opp: g[0], home: g[1], rank: nfl.oprk?.[posId]?.[g[0]]?.[0] } : { bye: true });
+  }
+  const byWeek = Object.fromEntries(weeks.map((w) => [w.sp, w.pts]));
+  return {
+    id: String(id), name: row.name || pl.name || "Player", posId, pos: POS[posId] || "", proId, nfl: PRO[proId] || "",
+    ownerId: row.ownerId ?? null, status: row.status || "", waiverDate: row.waiverDate || null, row, byWeek,
+    total, gp, ppg: total != null && gp ? total / gp : row.seasonAvg ?? null, best: pts.length ? Math.max(...pts) : null, floor: pts.length ? Math.min(...pts) : null,
+    last3: pts.length ? sum(pts.slice(-3)) / Math.min(3, pts.length) : null,
+    proj: row.proj ?? null, seasonProj: d?.seasonProj ?? row.seasonProj ?? null,
+    snap: u ? u.avg?.pct ?? u.last.pct : null, tgt: u && u.pos !== "QB" ? u.avg?.share ?? u.last.share : null, rush: u ? u.avg?.rush ?? u.last.rush : null,
+    posRank: row.posRank ?? null, pprRank: row.pprRank ?? null, own: row.own ?? null, start: row.start ?? null, value: valueOf(Number(id)),
+    injury: row.injury || pl.injury || "", bye: pl.bye ?? null, next,
+  };
+}
+const CMP_ELIG = { 1: [0, 7], 2: [2, 3, 23, 7], 3: [4, 3, 5, 23, 7], 4: [6, 5, 23, 7], 5: [17], 16: [16] };
+// How a player would fit your lineup: the points he adds, who he'd replace, who to drop, or what to offer.
+function cmpFit(x, wk) {
+  const side = wk?.sides?.find((sd) => String(sd.teamId) === cmpMe());
+  if (!side) return null;
+  const counts = { ...state.base.slotCounts };
+  const gone = (p) => WONT_PLAY.test(p.injury || "") || !!p.opp?.bye;
+  const val = (p) => (gone(p) ? 0 : p.proj || 0);
+  const locked = (p) => { const g = gameStatusOf(p); return !!g && (g.state === "in" || g.state === "post"); };
+  const active = side.players.filter((p) => p.slotId !== IR);
+  const cand = { id: `cand-${x.id}`, name: x.name, posId: x.posId, pos: x.pos, proj: x.proj ?? 0, injury: x.injury, opp: x.row?.opp || { bye: x.bye === state.week.sp }, eligible: CMP_ELIG[x.posId] || [], slotId: BENCH };
+  const base = optimalLineup(active, counts, val), withX = optimalLineup([...active, cand], counts, val);
+  const gain = withX.points - base.points;
+  const slot = withX.lineup.find((e) => e.p.id === cand.id)?.slot ?? null;
+  const baseIds = new Set(base.lineup.map((e) => e.p.id)), newIds = new Set(withX.lineup.map((e) => e.p.id));
+  const displaced = base.lineup.map((e) => e.p).filter((p) => !newIds.has(p.id)).sort((a, b) => val(a) - val(b))[0] || null;
+  const need = (counts[{ 1: 0, 2: 2, 3: 4, 4: 6, 5: 17, 16: 16 }[x.posId]] || 0);
+  const healthy = active.filter((p) => p.posId === x.posId && !gone(p)).length;
+  const longTerm = (p) => (p.seasonAvg || 0) * 0.35 + (p.proj || 0) * 0.25 + (valueOf(Number(p.id)) || 0) / 2000;
+  // Who to drop: the player whose loss hurts your best lineup (with him added) the least, then the weakest long-term.
+  const size = rosterSize(), open = size - active.length;
+  const drops = active.filter((p) => !locked(p)).map((p) => {
+    const after = optimalLineup([...active.filter((q) => q.id !== p.id), cand], counts, val).points;
+    const loss = Math.max(0, withX.points - after);
+    return { p, loss, score: loss * 3 + longTerm(p) };
+  }).sort((a, b) => a.score - b.score).slice(0, 2);
+  // Trade: your players closest in value to him, with what each does to your lineup.
+  let offers = [];
+  if (x.ownerId && x.value) {
+    offers = active.filter((p) => valueOf(Number(p.id)) != null && !locked(p)).map((p) => {
+      const v = valueOf(Number(p.id)), after = optimalLineup([...active.filter((q) => q.id !== p.id), cand], counts, val).points;
+      return { p, v, net: after - base.points, gap: (v - x.value) / x.value };
+    }).filter((o) => o.v >= 0.6 * x.value && o.v <= 1.5 * x.value).sort((a, b) => (b.net - a.net) || (Math.abs(a.gap) - Math.abs(b.gap))).slice(0, 3);
+  }
+  return { gain, slot, displaced, need, healthy, open, drops, offers, side, cand, startsNow: baseIds.has(x.id) };
+}
+function renderCompare(ids) {
+  const wk = cmpWeek(), M = ids.map((id) => cmpModel(id, wk)), me = cmpMe();
+  const cols = M.length;
+  const pct0 = (v) => `${Math.round(v)}%`;
+  const ownerOf = (m) => (m.ownerId ? (String(m.ownerId) === me ? `<strong>Your team</strong>` : esc(team(m.ownerId).name)) : m.status === "W" ? "Waivers" : "Free agent");
+  // [label, value, better (hi/lo/null), format]
+  const spec = [
+    ["Team", (m) => `${esc(m.nfl)} · ${esc(m.pos)}`, null, null], ["On", ownerOf, null, null],
+    ["Status", (m) => (m.injury ? injuryInfo(m.injury)[1] : "Healthy"), null, null],
+    ["Season pts", (m) => m.total, "hi", f1], ["Games", (m) => m.gp, null, String], ["PPG", (m) => m.ppg, "hi", f1],
+    ["Best week", (m) => m.best, "hi", f1], ["Floor", (m) => m.floor, "hi", f1], ["Last 3 avg", (m) => m.last3, "hi", f1],
+    ["Proj this week", (m) => m.proj, "hi", f1], ["Season proj", (m) => m.seasonProj, "hi", f1],
+    ["Snap %", (m) => m.snap, "hi", pct0], ["Target %", (m) => m.tgt, "hi", pct0], ["Rush %", (m) => m.rush, "hi", pct0],
+    ["Pos rank", (m) => m.posRank, "lo", (v) => `#${Math.round(v)}`], ["PPR rank", (m) => m.pprRank, "lo", (v) => `#${Math.round(v)}`],
+    ["Rostered", (m) => m.own, "hi", pct0], ["Started", (m) => m.start, "hi", pct0], ["Trade value", (m) => m.value, "hi", fmtVal],
+    ["Bye", (m) => m.bye, null, (v) => `Wk ${v}`],
+    ["Next 3", (m) => m.next.map((n) => (n.bye ? "BYE" : `${n.home ? "" : "@"}${esc(PRO[n.opp] || "")}${n.rank ? ` <span class="rk ${rkCls(n.rank)}">${ordinal(n.rank)}</span>` : ""}`)).join(" · "), null, null],
+  ];
+  const cell = (m, [, get, better, fmt], vals) => {
+    const v = get(m);
+    if (v == null || v === "") return `<td class="muted">–</td>`;
+    if (!fmt) return `<td>${v}</td>`;
+    const nums = vals.filter((x) => typeof x === "number");
+    const win = better && nums.length > 1 && new Set(nums).size > 1 && v === (better === "hi" ? Math.max(...nums) : Math.min(...nums));
+    return `<td class="${win ? "best" : ""}">${fmt(v)}</td>`;
+  };
+  const head = `<tr><th></th>${M.map((m) => `<th class="cmp-p">${headshot({ id: m.id, name: m.name, posId: m.posId, proId: m.proId }, 44)}<strong>${esc(m.name)}</strong></th>`).join("")}</tr>`;
+  const season = spec.map((sp) => { const vals = M.map((m) => sp[1](m)); return `<tr><td>${sp[0]}</td>${M.map((m) => cell(m, sp, vals)).join("")}</tr>`; }).join("");
+  // Weekly: points each week, the best of the group highlighted.
+  const weeksN = Math.max(1, state.base.current), wkRows = [];
+  const wins = M.map(() => 0);
+  for (let w = 1; w <= weeksN; w++) {
+    const v = M.map((m) => m.byWeek[w]), nums = v.filter((x) => x != null), top = nums.length > 1 ? Math.max(...nums) : null;
+    if (top != null && new Set(nums).size > 1) v.forEach((x, i) => { if (x === top) wins[i]++; });
+    if (!nums.length) continue;
+    wkRows.push(`<tr><td>Wk ${w}</td>${v.map((x) => (x == null ? `<td class="muted">–</td>` : `<td class="${top != null && x === top && new Set(nums).size > 1 ? "best" : ""}">${f1(x)}</td>`)).join("")}</tr>`);
+  }
+  const weekly = wkRows.length ? `<table class="cmp-table"><thead><tr><th>Week</th>${M.map((m) => `<th>${esc(shortName(m.name))}</th>`).join("")}</tr></thead><tbody>${wkRows.join("")}<tr class="cmp-sum"><td>Weeks won</td>${wins.map((n) => `<td>${n}</td>`).join("")}</tr></tbody></table>` : `<p class="muted small">No weekly stats yet.</p>`;
+
+  // The verdict on each player who isn't already yours.
+  const fits = M.map((m) => (String(m.ownerId) === me ? null : cmpFit(m, wk)));
+  const grade = (g) => (g >= 3 ? ["Strong add", "pos"] : g >= 1 ? ["Good add", "pos"] : g >= 0.25 ? ["Depth only", ""] : ["Pass", "neg"]);
+  const verdicts = M.map((m, i) => {
+    const f = fits[i], mine = String(m.ownerId) === me;
+    if (mine) {
+      const me2 = wk?.sides?.find((sd) => String(sd.teamId) === me)?.players.find((p) => String(p.id) === m.id);
+      return `<div class="cmp-v"><div class="cmp-vh">${esc(m.name)} <span class="muted small">is on your team</span></div><p class="small">${me2 ? (me2.starter ? `Starting at ${esc(SLOT[me2.slotId] || me2.slot)}.` : me2.slotId === IR ? "On your IR." : "On your bench.") : ""}</p></div>`;
+    }
+    if (!f) return `<div class="cmp-v"><div class="cmp-vh">${esc(m.name)}</div><p class="muted small">Star your team (☆ on the Roster tab) or sign in as owner to see how he'd fit your lineup.</p></div>`;
+    const [label, cls] = grade(f.gain), x = m;
+    const lines = [];
+    lines.push(f.slot != null && f.displaced ? `Would start at <strong>${esc(SLOT[f.slot])}</strong> over ${plinkNm(f.displaced, false)} (${f1(f.displaced.proj)} proj): <strong class="${cls}">+${f1(f.gain)} pts a week</strong>.`
+      : f.slot != null ? `Would fill an open <strong>${esc(SLOT[f.slot])}</strong> spot: <strong class="pos">+${f1(f.gain)} pts a week</strong>.`
+      : `Wouldn't crack your lineup right now; he'd be depth behind your ${esc(x.pos)}s.`);
+    if (f.displaced && x.ppg != null && f.displaced.seasonAvg != null) lines.push(`${f1(x.ppg)} PPG this year vs ${f1(f.displaced.seasonAvg)} for ${esc(shortName(f.displaced.name))}.`);
+    lines.push(f.healthy <= f.need ? `You're <strong>thin at ${esc(x.pos)}</strong>: ${f.healthy} healthy for ${f.need} lineup spot${f.need === 1 ? "" : "s"}.` : `You're set at ${esc(x.pos)} (${f.healthy} healthy for ${f.need} spot${f.need === 1 ? "" : "s"}).`);
+    if (x.injury) lines.push(`Injury flag: ${esc(injuryInfo(x.injury)[1])}.`);
+    const nb = x.next.findIndex((n) => n.bye);
+    if (nb >= 0) lines.push(`Bye in ${nb === 0 ? "week " + state.base.current : "the next " + (nb + 1) + " weeks"}.`);
+    let action = "";
+    if (!x.ownerId) {
+      const where = x.status === "W" ? `On waivers${x.waiverDate ? `, clears ${fmtWhen(x.waiverDate)}` : ""}${waiverPlace(me) ? `; you're ${waiverPlace(me)} in the order` : ""}.` : "Free agent: available now.";
+      const drop = f.open > 0 ? `<p class="small">You have an open roster spot, so no drop needed.</p>` : `<div class="cmp-drops"><div class="small"><strong>Drop one of:</strong></div>${f.drops.map((d) => `<div class="cmp-drop"><span>${plinkNm(d.p, false)} <span class="muted small">${d.p.starter ? "starter" : "bench"} · ${f1(d.p.proj)} proj${d.p.seasonAvg != null ? ` · ${f1(d.p.seasonAvg)} ppg` : ""}</span><br><span class="small ${d.loss > 0.05 ? "neg" : "muted"}">${d.loss > 0.05 ? `costs ${f1(d.loss)} pts a week` : "doesn't change your lineup"}</span></span>${actTeam() ? `<button type="button" class="cmp-do" data-cmp-add="${esc(x.id)}" data-cmp-drop="${esc(d.p.id)}">Add & drop</button>` : ""}</div>`).join("")}</div>`;
+      action = `<p class="small">${where}</p>${drop}`;
+    } else {
+      action = `<p class="small">Owned by ${esc(team(x.ownerId).name)}.${x.value ? ` Trade value ${fmtVal(x.value)}.` : ""}</p>${f.offers.length ? `<div class="cmp-drops"><div class="small"><strong>What to offer:</strong></div>${f.offers.map((o) => `<div class="cmp-drop"><span>${plinkNm(o.p, false)} <span class="muted small">${fmtVal(o.v)}</span><br><span class="small ${Math.abs(o.gap) <= 0.15 ? "pos" : "muted"}">${Math.abs(o.gap) <= 0.15 ? "even value" : o.gap > 0 ? `you'd overpay about ${Math.round(o.gap * 100)}%` : `he's worth about ${Math.round(-o.gap * 100)}% more, so expect to add something`} · your lineup ${o.net >= 0 ? "+" : "−"}${f1(Math.abs(o.net))}</span></span>${actTeam() ? `<button type="button" class="cmp-do" data-cmp-trade="${esc(x.id)}" data-cmp-give="${esc(o.p.id)}">Build trade</button>` : ""}</div>`).join("")}</div>` : `<p class="muted small">No players on your roster are close enough in trade value to match him.</p>`}`;
+    }
+    return `<div class="cmp-v"><div class="cmp-vh">${esc(x.name)} <span class="cmp-badge ${cls}">${label}</span></div>${lines.map((l) => `<p class="small">${l}</p>`).join("")}${action}</div>`;
+  }).join("");
+  // The bottom line.
+  const best = M.map((m, i) => ({ m, f: fits[i] })).filter((o) => o.f).sort((a, b) => b.f.gain - a.f.gain);
+  const bottom = !best.length ? "" : best.length > 1 && best[0].f.gain - best[1].f.gain >= 0.25
+    ? `${esc(best[0].m.name)} is the better fit for your lineup (+${f1(best[0].f.gain)} vs +${f1(best[1].f.gain)} pts a week).`
+    : best.length > 1 ? `They'd help your lineup about the same (+${f1(best[0].f.gain)} and +${f1(best[1].f.gain)} pts a week).`
+    : `${esc(best[0].m.name)}: ${grade(best[0].f.gain)[0].toLowerCase()} for your lineup (+${f1(best[0].f.gain)} pts a week).`;
+  showCmp(`<div class="pm-head"><div><h2 id="cmp-title">⚖ Compare players</h2>${bottom ? `<div class="cmp-bottom">${bottom}</div>` : ""}<button type="button" class="cmp-other sm" data-cmp-other="${esc(ids[0])}">Compare other</button></div></div>
+    <h3 class="pm-sub">Fit with your team</h3><div class="cmp-vs cols-${cols}">${verdicts}</div>
+    <h3 class="pm-sub">Season</h3><div class="table-wrap"><table class="cmp-table"><thead>${head}</thead><tbody>${season}</tbody></table></div>
+    <h3 class="pm-sub">Week by week</h3><div class="table-wrap">${weekly}</div>
+    <p class="muted small">Fit uses ESPN's projections for this week and the best lineup your roster can field. It's an estimate, not a promise.</p>`);
+  const body = $("cmp-body");
+  body.querySelectorAll("[data-cmp-add]").forEach((b) => b.addEventListener("click", () => {
+    const m = M.find((q) => q.id === b.dataset.cmpAdd);
+    hideCmp();
+    openAdd(b.dataset.cmpAdd, b.dataset.cmpDrop, { name: m?.name, posId: m?.posId, proId: m?.proId });
+  }));
+  body.querySelectorAll("[data-cmp-trade]").forEach((b) => b.addEventListener("click", () => {
+    const x = M.find((q) => q.id === b.dataset.cmpTrade), mine = actTeam();
+    if (!x?.ownerId || !mine) return;
+    const ta = (state.ta ||= { my: mine, a: mine, b: x.ownerId, give: [], get: [] });
+    ta.a = mine; ta.b = String(x.ownerId); ta.give = [b.dataset.cmpGive]; ta.get = [x.id];
+    hideCmp();
+    document.querySelector("#pl-modal .modal-close").click();
+    switchTab("trade");
+  }));
+}
+
 // ---------- Waiver claim odds (player card) ----------
 // For a player on waivers: how likely each team is to put in a claim, in waiver order. It weighs how
 // often each team has claimed or picked up players this season, whether they can field the position
@@ -4756,6 +5029,8 @@ function initPlayerModal() {
   document.body.appendChild(m);
   const close = () => {
     m.hidden = true;
+    state.cards = [];
+    hideCmp();
     setDock(false);
     document.body.classList.remove("modal-open");
     m.querySelector(".modal-card").classList.remove("pm-full", "chat-card");
@@ -4770,9 +5045,25 @@ function initPlayerModal() {
     if (!b) return;
     e.preventDefault();
     e.stopPropagation();
+    if (state.cmpPick && b.classList.contains("pl-link")) { finishPick(b.dataset.pid); return; }
     state.modalReturn = b;
     openPlayer(b.dataset.pid, b.dataset.sp ? Number(b.dataset.sp) : null);
   }, true);
+  // The comparison popup sits on top of the card(s).
+  const cmp = document.createElement("div");
+  cmp.id = "cmp-modal";
+  cmp.className = "modal cmp";
+  cmp.hidden = true;
+  cmp.innerHTML = `<div class="modal-card cmp-card" role="dialog" aria-modal="true" aria-labelledby="cmp-title"><button type="button" class="modal-close" aria-label="Close">×</button><div id="cmp-body"></div></div>`;
+  document.body.appendChild(cmp);
+  cmp.addEventListener("click", (e) => {
+    const o = e.target.closest("[data-cmp-other]");
+    if (o) { startPick(o.dataset.cmpOther); return; }
+    if (e.target === cmp || e.target.closest(".modal-close")) hideCmp();
+  });
+  // Esc with nothing open cancels "Compare other".
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && state.cmpPick && $("pl-modal").hidden && cmp.hidden) endPick(); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !cmp.hidden) { hideCmp(); e.stopImmediatePropagation(); } }, true);
 }
 
 // On computers the player card and chat open as a panel docked on the right (the page stays usable);
@@ -4792,7 +5083,7 @@ document.addEventListener("keydown", (e) => {
   if (i < 0 || !next) return;
   e.preventDefault();
   $(`view-${state.tab}`).querySelector(`.pl-link[data-pid="${CSS.escape(next)}"]`)?.scrollIntoView({ block: "nearest" });
-  openPlayer(next);
+  openPlayer(next, null, null, { replace: true });
 });
 // Open the shared popup with arbitrary content (e.g. the Roster tab's upgrade list).
 function showModal(html) {
@@ -4806,7 +5097,27 @@ function showModal(html) {
   m.querySelector(".modal-card").scrollTop = 0;
 }
 
-async function openPlayer(id, focusSp, tab) {
+// Up to three player cards stay open at once (chips across the top of the card switch between them).
+const MAX_CARDS = 3;
+function pushCard(id, replace) {
+  const cards = (state.cards ||= []);
+  const at = cards.indexOf(id);
+  if (at >= 0) cards.splice(at, 1);
+  else if (replace) { const cur = cards.indexOf(String(state.pmFor)); if (cur >= 0) cards.splice(cur, 1); }
+  cards.push(id); // the one on screen is always last, so the oldest is the one that drops off
+  while (cards.length > MAX_CARDS) cards.shift();
+}
+function closeCard(id) {
+  const cards = state.cards || [], i = cards.indexOf(String(id));
+  if (i < 0) return;
+  cards.splice(i, 1);
+  hideCmp();
+  if (!cards.length) { document.querySelector("#pl-modal .modal-close").click(); return; }
+  openPlayer(String(state.pmFor) === String(id) ? cards.at(-1) : state.pmFor);
+}
+async function openPlayer(id, focusSp, tab, opts = {}) {
+  id = String(id);
+  pushCard(id, opts.replace);
   const m = $("pl-modal"), body = $("pl-modal-body");
   m.querySelector(".modal-card").classList.add("pm-full"); // same size on every tab, so switching tabs doesn't jump
   state.pmNewsSnap = null;
@@ -5038,11 +5349,12 @@ function renderPlayerModal(d, focusSp) {
       : `<p class="muted small">No player updates from ESPN yet.</p>`;
   }
 
-  body.innerHTML = `<div class="pm-head">
+  const cardStrip = (state.cards || []).length > 1 ? `<div class="pm-cards">${state.cards.map((cid) => { const nm = state.playerCache?.[cid]?.data?.player?.name || "Player"; return `<span class="pc-chip ${cid === String(p.id) ? "active" : ""}" data-card="${esc(cid)}" role="button" tabindex="0">${esc(shortName(nm))}<button type="button" class="pc-x" data-cardx="${esc(cid)}" aria-label="Close ${esc(nm)}">×</button></span>`; }).join("")}</div>` : "";
+  body.innerHTML = `${cardStrip}<div class="pm-head">
       ${headshot({ id: p.id, name: p.name, posId: p.posId, proId: p.proId }, 64)}
       <div><h2 id="pl-modal-title">${esc(p.name)}${injBadge({ injury: p.injury })}</h2>
         <div class="muted small">${pos}${p.proId ? ` · ${esc(PRO[p.proId] || "")}` : ""}${p.bye ? ` · Bye wk ${p.bye}` : ""}</div>
-        <div class="pm-owner">${owner}</div>${(() => { const acts = moveBtns({ id: p.id, name: p.name, posId: p.posId, proId: p.proId }, true) + claimOddsBtn(p) + watchBox(p.id, " 👁"); return acts ? `<div class="pm-acts">${acts}</div>` : ""; })()}</div>
+        <div class="pm-owner">${owner}</div><div class="pm-acts">${moveBtns({ id: p.id, name: p.name, posId: p.posId, proId: p.proId }, true) + claimOddsBtn(p) + watchBox(p.id, " 👁")}<button type="button" class="cmp-btn" data-compare>⚖ Compare</button></div></div>
     </div>
     <div class="pm-tabs-wrap"><div class="pm-tabs" role="tablist">${tabs.map(([k, label]) => `<button type="button" role="tab" data-pmtab="${k}" aria-selected="${k === tab}" class="${k === tab ? "active" : ""}">${label}</button>`).join("")}</div>
       <button type="button" class="pm-more" aria-label="More tabs" hidden>»</button></div>
@@ -5091,6 +5403,9 @@ function renderPlayerModal(d, focusSp) {
     const draw = () => { if (body.querySelector(".pm-usage") === ue) renderUsage(ue, draw); };
     draw();
   }
+  body.querySelectorAll("[data-card]").forEach((b) => b.addEventListener("click", (e) => { if (!e.target.closest("[data-cardx]")) openPlayer(b.dataset.card); }));
+  body.querySelectorAll("[data-cardx]").forEach((b) => b.addEventListener("click", (e) => { e.stopPropagation(); closeCard(b.dataset.cardx); }));
+  body.querySelector("[data-compare]")?.addEventListener("click", () => startCompare(String(p.id)));
   body.querySelectorAll("[data-glm]").forEach((b) => b.addEventListener("click", () => { state.glMode = b.dataset.glm; renderPlayerModal(d, focusSp); }));
   body.querySelectorAll("[data-txmore]").forEach((b) => b.addEventListener("click", () => { const box = body.querySelector(".tx-more"); box.hidden = !box.hidden; b.textContent = box.hidden ? b.dataset.txmore : "Show less ▴"; }));
   body.querySelectorAll(".gl-pts").forEach((b) => b.addEventListener("click", () => {
