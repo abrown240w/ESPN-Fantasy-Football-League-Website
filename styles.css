@@ -1705,3 +1705,79 @@ main .mb-chip, main .lg-card { --ink: #0b0b0b; --ink-2: #52514e; --muted: #6f6d6
 .tx-kind.drop { background: #fde4e4; color: #a12626; }
 .txh-btn { margin-top: 4px; }
 .ct-leagues { padding: 8px 6px 0 0; }
+
+/* ================= Computers (1000px and wider) ================= */
+@media (min-width: 1000px) {
+  html { font-size: 106%; }
+  /* Player card and chat: a panel docked on the right; the page stays usable beside it. */
+  #pl-modal.dock { inset: var(--top-h, 0px) 0 0 auto; width: 480px; background: transparent; padding: 0; display: block; pointer-events: none; z-index: 60; }
+  #pl-modal.dock .modal-card { pointer-events: auto; width: 100%; height: 100%; max-height: none; border-radius: 14px 0 0 0; box-shadow: -10px 0 30px rgba(0,0,0,.28); }
+  body.has-dock main.wrap { max-width: none; margin-right: 480px; margin-left: 0; }
+  /* Players: filters in a sticky sidebar, the full table beside it */
+  #view-players { display: grid; grid-template-columns: 270px minmax(0, 1fr); column-gap: 18px; align-items: start; }
+  .pl-side { position: sticky; top: calc(var(--top-h, 0px) + 10px); display: flex; flex-direction: column; gap: 8px; }
+  .pl-side .filters, .pl-side .pl-nav { margin: 0; flex-wrap: wrap; }
+  .pl-side .pl-search { flex-wrap: wrap; }
+  .pl-side .pl-search input, .pl-side #pl-nfl { width: 100%; max-width: none; flex: 1 1 100%; }
+  .pl-side .pl-nav .inj-seg { margin-left: 0; }
+  .pl-side .pos-seg { display: flex; flex-wrap: wrap; }
+  .pl-side .pos-seg button { flex: 1 1 22%; }
+  #view-players { grid-template-columns: 230px minmax(0, 1fr); }
+  #view-players .pt-table th, #view-players .pt-table td { padding-left: 6px; padding-right: 6px; }
+  #view-players .pt-table .pt-player { min-width: 170px; max-width: 210px; }
+  /* Roster: table and rail */
+  .er-layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 18px; align-items: start; }
+  .er-rail { position: sticky; top: calc(var(--top-h, 0px) + 10px); display: flex; flex-direction: column; gap: 12px; }
+  .er-rail .er-head { margin: 0; }
+  #er-views { display: none; }
+  .er-table.ev-desk .erc-g { border-left: 1px solid var(--grid); }
+  .rr-card { padding: 12px 14px; }
+  .rr-head { font-weight: 800; margin-bottom: 8px; display: flex; align-items: center; gap: 6px; }
+  .rr-team { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
+  .rr-team.me .rr-name { font-weight: 800; }
+  .rr-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .rr-team strong { font-size: 1.15rem; font-variant-numeric: tabular-nums; }
+  .rr-wp { display: flex; align-items: center; gap: 8px; font-size: .78rem; font-weight: 700; margin: 6px 0 2px; }
+  .rr-wp .mt-wp { flex: 1; height: 6px; }
+  .rr-news .news-item { padding: 6px 0; }
+  /* Matchup: the cards as the list, the game capped and its header pinned */
+  .mu-split:not(.lv-split) { grid-template-columns: minmax(300px, 360px) minmax(0, 900px); justify-content: center; }
+  .mu-cards { gap: 8px; }
+  .mu-cards .lg-card { padding: 2px 12px; }
+  .mu-cards .lg-row { padding: 7px 0; }
+  .mu-cards .lg-card.selected { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+  .mu-pane .mx-top { position: sticky; top: 0; z-index: 4; background: var(--surface); }
+  /* Live: games | the game | your players */
+  .lv-split.lv-three { grid-template-columns: minmax(250px, 300px) minmax(0, 1fr) minmax(230px, 280px); }
+  .lv-rail { position: sticky; top: calc(var(--top-h, 0px) + 10px); padding: 12px 14px; max-height: calc(100vh - var(--top-h, 0px) - 20px); overflow-y: auto; }
+  .lr-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-top: 1px solid var(--border); }
+  .lr-row:first-of-type { border-top: 0; }
+  .lr-row.on { background: rgba(22,163,74,.08); border-radius: 6px; padding-left: 6px; padding-right: 6px; }
+  .lr-name { flex: 1; min-width: 0; }
+  .lr-row strong { font-variant-numeric: tabular-nums; }
+  /* League: sub-tabs as a sidebar */
+  body.in-league main.wrap { display: grid; grid-template-columns: 170px minmax(0, 1fr); column-gap: 20px; align-items: start; }
+  body.in-league main.wrap > :not(#league-nav):not(.view) { grid-column: 1 / -1; }
+  body.in-league #league-nav { grid-column: 1; position: sticky; top: calc(var(--top-h, 0px) + 10px); flex-direction: column; width: auto; margin: 0; }
+  body.in-league #league-nav button { text-align: left; padding: 9px 12px; font-size: .9rem; }
+  body.in-league main.wrap > .view { grid-column: 2; }
+  #luck-chart svg, #heatmap svg { width: 100%; height: auto; }
+  /* Hover */
+  .pt-table tbody tr:hover td, .er-row:not(.er-hd):hover, .lr-row:hover { background-color: rgba(42,120,214,.06); }
+  .lg-card:hover, .mini-tile:hover, .er-chip:hover { border-color: var(--accent); }
+  button:not(:disabled):hover { filter: brightness(1.04); }
+}
+@media (min-width: 1400px) {
+  .st-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 560px); gap: 18px; align-items: start; }
+}
+@media (min-width: 1000px) {
+  /* Roster on computers: the name side and every stat column fit without scrolling */
+  .er-table.ev-desk .er-row { grid-template-columns: minmax(300px, 1fr) auto; }
+  .er-table.ev-desk .er-r { overflow: visible; }
+  .er-table.ev-desk .erc { width: 58px; }
+}
+/* Wide enough for the whole Players table: it stops scrolling sideways and its header row sticks. */
+@media (min-width: 1400px) {
+  #view-players .table-wrap { overflow: visible; }
+  #view-players .pt-table thead th { position: sticky; top: var(--top-h, 0px); z-index: 3; background: var(--surface); }
+}

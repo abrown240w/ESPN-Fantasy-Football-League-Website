@@ -602,6 +602,7 @@ function showView(name) {
   document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === groupOf(name)));
   const ln = $("league-nav");
   ln.hidden = groupOf(name) !== "league";
+  document.body.classList.toggle("in-league", groupOf(name) === "league");
   if (!ln.hidden) ln.innerHTML = LEAGUE_SUBS.map(([k, l]) => `<button type="button" data-sub="${k}" class="${k === name ? "active" : ""}">${l}</button>`).join("");
   paintLiveDot();
 }
@@ -629,16 +630,16 @@ function renderMatchups() {
   const sel = w.matchups.find((m) => m.id === state.openMatchup);
   el.innerHTML = `<div class="section-head"><h2>Week ${w.week} matchups ${statusBadge(w.status)}</h2><span class="muted small hide-phone">${label}</span></div>
     <div class="${split ? "mu-split" : "mu-stack"}">
-      <div class="${split ? "mu-list" : "mt-grid"}">${w.matchups.map(matchupTile).join("")}</div>
+      <div class="${split ? "mu-list mu-cards" : "mt-grid"}">${split ? leagueCards() : w.matchups.map(matchupTile).join("")}</div>
       <div class="${split ? "mu-pane" : "mu-detail"}" id="mu-pane">${sel ? matchupDetail(sel, true) : `<p class="muted">Pick a matchup.</p>`}</div>
     </div>
     <p class="muted small show-phone mu-note">${label}</p>`;
   fitNames(el);
-  el.querySelectorAll(".mini-tile[data-mu]").forEach((c) => c.addEventListener("click", () => {
-    const m = w.matchups.find((x) => x.id === +c.dataset.mu);
+  el.querySelectorAll(".mini-tile[data-mu], .lg-card[data-mb]").forEach((c) => c.addEventListener("click", () => {
+    const m = w.matchups.find((x) => x.id === +(c.dataset.mu || c.dataset.mb));
     if (!m?.away || state.openMatchup === m.id) return;
     state.openMatchup = m.id;
-    el.querySelectorAll(".mini-tile[data-mu]").forEach((b) => b.classList.toggle("selected", b === c));
+    el.querySelectorAll(".mini-tile[data-mu], .lg-card[data-mb]").forEach((b) => b.classList.toggle("selected", b === c));
     const pane = $("mu-pane");
     pane.innerHTML = matchupDetail(m, true);
     pane.scrollTop = 0;
@@ -700,6 +701,11 @@ function fitNames(root) {
   }));
 }
 addEventListener("resize", () => { if (state.tab === "matchups") fitNames($("view-matchups")); });
+// The stacked cards on their own (the Matchup list on computers), the open game highlighted.
+function leagueCards() {
+  const html = leagueSummary().replace(/^[\s\S]*?<div class="lg-list">/, "").replace(/<\/div>\s*$/, "");
+  return html.replace(new RegExp(`class="lg-card ([^"]*)" data-mb="${state.openMatchup}"`), `class="lg-card $1 selected" data-mb="${state.openMatchup}"`);
+}
 // All matchups as stacked cards; tap one to open it.
 function leagueSummary() {
   const w = state.week, st = w.status, me = String(myTeamId());
@@ -780,6 +786,10 @@ function updateStickies() {
 addEventListener("scroll", updateStickies, { passive: true });
 addEventListener("resize", updateStickies);
 
+// Computers (1000px and wider): player cards and chat dock on the right, sidebars on Players and League,
+// a side rail on Roster and Live. Phones keep their own layout. Redraw when crossing the line.
+const DESK = matchMedia("(min-width: 1000px)");
+DESK.addEventListener?.("change", () => { if (state.week) render(); });
 // Wide screens get the side-by-side Matchups layout; redraw when crossing the breakpoint.
 const MU_SPLIT = matchMedia("(min-width: 900px)");
 MU_SPLIT.addEventListener?.("change", () => { if ((state.tab === "matchups" || state.tab === "live") && state.week) render(); });
@@ -894,13 +904,14 @@ function renderPlayers() {
     : f.mode === "all" ? [...rostered, ...avail]
     : f.mine && me ? [...avail, ...rostered.filter((p) => String(p.teamId) === me)] : avail;
   // Search and NFL team on one line; Available / All / watch list / injuries; then the positions.
-  el.innerHTML = `<div class="filters pl-search"><input id="pl-q" type="search" placeholder="Search players…" value="${esc(f.q)}">
+  el.innerHTML = `<aside class="pl-side"><div class="filters pl-search"><input id="pl-q" type="search" placeholder="Search players…" value="${esc(f.q)}">
       <select id="pl-nfl" aria-label="NFL team"><option value="ALL">All teams</option>${Object.keys(NFL_NAMES).sort((a, b) => NFL_NAMES[a].localeCompare(NFL_NAMES[b])).map((t) => `<option value="${t}" ${f.nfl === t ? "selected" : ""}>${esc(NFL_NAMES[t].split(" ").pop())}</option>`).join("")}</select></div>
     ${playersNav(f.mode)}
     <div class="filters pl-filters">
       ${posSeg("pl-pos", f.pos)}
     </div>
-    ${me ? `<label class="pl-mine ${f.mode === "all" ? "off" : ""}"><input type="checkbox" id="pl-mine" ${f.mine ? "checked" : ""} ${f.mode === "all" ? "disabled" : ""}> Include my team</label>` : ""}<div id="pl-list"></div>${fcCredit()}${nvCredit()}`;
+    ${me ? `<label class="pl-mine ${f.mode === "all" ? "off" : ""}"><input type="checkbox" id="pl-mine" ${f.mine ? "checked" : ""} ${f.mode === "all" ? "disabled" : ""}> Include my team</label>` : ""}</aside>
+    <div class="pl-main"><div id="pl-list"></div>${fcCredit()}${nvCredit()}</div>`;
   const draw = () => {
     const q = f.q.toLowerCase();
     const rows = pool.filter((p) => (f.pos === "ALL" || p.pos === f.pos) && (!f.nfl || f.nfl === "ALL" || PRO[p.proId] === f.nfl) && (!q || p.name.toLowerCase().includes(q)));
@@ -1611,6 +1622,9 @@ function renderSeason() {
     const drawPr = () => $("pr-table").replaceChildren(sortableTable(prCols, PR.rows, prSort, drawPr, { rowClass: (r) => myRow(r.id), tableClass: "pr-rank-table" }));
     drawPr();
   }
+  // Wide screens: Standings and Position rankings next to each other.
+  { const g = document.createElement("div"); g.className = "st-grid"; const prHead = $("pr-table").previousElementSibling, a = document.createElement("div"), b = document.createElement("div");
+    $("st-table").before(g); a.append($("st-table")); b.append(prHead, $("pr-table")); g.append(a, b); }
   $("pr-table").insertAdjacentHTML("afterend", (odds && odds.weeksLeft ? `<p class="small muted st-odds-note">Playoff odds simulate the remaining ${odds.weeksLeft} week${odds.weeksLeft > 1 ? "s" : ""} 5,000 times using each team's scoring so far. Ties are broken by points for, which may differ from your league's tiebreaker.</p>` : "") + fcCredit());
   $("luck-chart").innerHTML = luckChart(season.rows);
   $("heatmap").innerHTML = heatmap(season);
@@ -2095,6 +2109,16 @@ function nextAlert() {
   timer = setTimeout(dismiss, 7000);
 }
 
+// Live rail (computers): your players this week, live ones first, with their points so far.
+function liveRail(L, games, my) {
+  const gOf = (p) => games.find((g) => g.home.proId === p.proId || g.away.proId === p.proId);
+  const rank = { in: 0, post: 1, pre: 2 };
+  const mine = L.players.filter((p) => String(p.teamId) === my).map((p) => ({ p, g: gOf(p) }))
+    .sort((a, b) => (rank[a.g?.state] ?? 3) - (rank[b.g?.state] ?? 3) || (b.p.pts ?? 0) - (a.p.pts ?? 0));
+  const status = (g) => (!g ? "BYE" : g.state === "in" ? `<span class="badge live">LIVE</span> ${esc(g.detail || "")}` : g.state === "post" ? "Final" : new Date(g.date).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" }));
+  return `<aside class="lv-rail card"><div class="rr-head">Your players</div>${mine.map(({ p, g }) => `<div class="lr-row ${g?.state === "in" ? "on" : ""}">
+      <div class="lr-name">${plinkNm(p)}<div class="muted small">${status(g)}</div></div><strong class="${state.liveBumps?.[p.id] ? "bump" : ""}">${p.pts != null ? f1(p.pts) : "–"}</strong></div>`).join("") || `<p class="muted small">None of your players this week.</p>`}</aside>`;
+}
 function renderLive() {
   const el = $("view-live");
   if (state.live?.sp != null && state.live.sp !== liveSp()) state.live = null; // a different week was picked
@@ -2240,7 +2264,7 @@ function renderLive() {
     </div>
     ${L.byes?.length ? `<p class="muted small">On bye: ${L.byes.map(esc).join(", ")}</p>` : ""}
     ${!games.length ? `<p class="muted">No NFL games found for this week.</p>`
-      : split ? `<div class="mu-split lv-split"><div class="mu-list">${games.map(gameTile).join("")}</div><div class="mu-pane" id="lv-pane">${selGame ? gameCard(selGame, true) : ""}</div></div>`
+      : split ? `<div class="mu-split lv-split ${DESK.matches && my ? "lv-three" : ""}"><div class="mu-list">${games.map(gameTile).join("")}</div><div class="mu-pane" id="lv-pane">${selGame ? gameCard(selGame, true) : ""}</div>${DESK.matches && my ? liveRail(L, games, my) : ""}</div>`
       : `<div class="games">${games.map((g) => gameCard(g)).join("")}</div>`}${games.some((g) => g.state !== "post") ? wxCredit() : ""}`;
   $("lv-show").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => { f.show = b.dataset.s; renderLive(); }));
   $("lv-team").addEventListener("change", (e) => { f.team = e.target.value; renderLive(); });
@@ -2619,6 +2643,34 @@ function upgradesFor(p, fa) {
   return fa.players.filter((u) => u.posId === p.posId && (u.proj || 0) >= (p.proj || 0) + UPGRADE_MIN_GAIN).sort((a, b) => b.proj - a.proj);
 }
 
+// Roster columns: one view on phones; on computers the Matchup, Scoring and Usage views side by side.
+const markGroup = (cells) => cells.map((c, i) => (i === 0 ? c.replace('class="erc"', 'class="erc erc-g"') : c)).join("");
+const erColsAll = (p) => (DESK.matches ? ER_DESK.map((v) => markGroup(erCols(p, v))).join("") : erCols(p).join(""));
+const erHeadsAll = () => (DESK.matches ? ER_DESK.map((v) => markGroup(erHeads(v))).join("") : erHeads().join(""));
+// Roster rail (computers): this week's matchup at a glance and the latest news for the team on screen.
+function rosterRail(sel, side) {
+  const w = state.week, m = w.matchups.find((x) => [x.home?.teamId, x.away?.teamId].map(String).includes(String(sel)));
+  let mu = "";
+  if (m?.away) {
+    const st = w.status, val = (sd) => (st === "upcoming" ? f1(sd.proj) : f2(sd.score));
+    const tds = (sd) => sum(sd.starters, (p) => p.tds || 0);
+    const line = (sd) => `<div class="rr-team ${String(sd.teamId) === String(sel) ? "me" : ""}">${logoImg(team(sd.teamId), 28)}<span class="rr-name">${esc(team(sd.teamId).name)}</span><strong>${val(sd)}</strong></div>`;
+    mu = `<div class="card rr-card"><div class="rr-head">Week ${w.week} matchup ${statusBadge(st)}</div>${line(m.home)}${line(m.away)}
+      <div class="rr-wp"><span>${pct(m.wp)}</span><span class="mt-wp"><i style="width:${m.wp * 100}%"></i></span><span>${pct(1 - m.wp)}</span></div>
+      <div class="rr-sub muted small">${tds(m.home)} TD – ${tds(m.away)} TD</div>
+      <button type="button" class="pg-go" data-rr-mu="${m.id}">Open the matchup ›</button></div>`;
+  }
+  let news = "";
+  if (side) {
+    const d = ensureNews(side.players.map((p) => p.id), () => { if (state.tab === "roster") render(); });
+    const items = !d ? null : side.players.flatMap((p) => (d.players[p.id] || []).map((n) => ({ p, n })))
+      .filter(({ n }) => Date.now() - Date.parse(n.published) < 7 * 864e5).sort((a, b) => Date.parse(b.n.published) - Date.parse(a.n.published));
+    news = `<div class="card rr-card"><div class="rr-head">📰 News <span class="muted small">last 7 days</span></div>
+      ${!items ? `<div class="loading small"><span class="spinner"></span> Loading news…</div>` : items.length ? `<div class="rr-news">${items.slice(0, 6).map(({ p, n }) => newsItem(n, `<span class="news-who">${plinkNm(p)}</span>`)).join("")}</div>${items.length > 6 ? `<button type="button" class="link-btn" data-chip="news">All news (${items.length}) ›</button>` : ""}` : `<p class="muted small">No player updates this week.</p>`}</div>`;
+  }
+  return mu + news;
+}
+
 // ---------- A team's roster as a popup (from the League tab) ----------
 // The same rows as the Roster tab, read only (plus + / ⇄ buttons when you're signed in as owner).
 function openTeamRoster(teamId) {
@@ -2668,8 +2720,10 @@ function canMove(a, b) {
 const rosterSize = () => sum(Object.entries(state.base.slotCounts).filter(([k]) => Number(k) !== IR), ([, n]) => n);
 // Difficulty colors for an opponent rank (1st = toughest).
 const rkCls = (r) => (!r ? "" : r <= 10 ? "tough" : r >= 23 ? "easy" : "");
-function erCols(p) {
-  const v = erView(), dash = `<span class="muted">–</span>`;
+// Computers show these views side by side instead of one at a time.
+const ER_DESK = ["matchup", "scoring", "usage"];
+function erCols(p, v = erView()) {
+  const dash = `<span class="muted">–</span>`;
   const c = (val, sub = "") => `<div class="erc">${val}${sub ? `<small>${sub}</small>` : ""}</div>`;
   if (v === "scoring") return [c(p.posRank ? `${esc(p.pos)}${p.posRank}` : dash), c(p.seasonAvg != null ? f1(p.seasonAvg) : dash), c(p.seasonPts != null ? f1(p.seasonPts) : dash), c(p.lastPts != null ? f1(p.lastPts) : dash), c(f1(p.proj))];
   if (v === "research") {
@@ -2700,8 +2754,7 @@ function erCols(p) {
   // Matchup stats: points (or a dash) over the projection.
   return [c(p.played ? ptsLink(p.id, state.week.sp, f2(p.actual)) : dash, f1(p.proj))];
 }
-function erHeads() {
-  const v = erView();
+function erHeads(v = erView()) {
   const h = (l, tip = "") => `<div class="erc" ${tip ? `title="${tip}"` : ""}>${l}</div>`;
   if (v === "scoring") return [h("Pos rk", "Season rank at the position"), h("Avg", "Points per game this season"), h("Pts", "Season points"), h("Last", "Last week"), h("Proj", "This week's projection")];
   if (v === "research") return [h("Opp rk", "Opponent's rank vs. the position (1st = toughest)"), h("%Rost"), h("%Start"), h("+/-", "Change in % rostered")];
@@ -2829,7 +2882,7 @@ function renderRoster() {
         <div class="er-game">${erGameLine(p)}</div>
         ${p.short ? `<div class="er-stats" title="${esc(p.line)}">${esc(p.short)}</div>` : ""}
       </div></div>
-      <div class="er-r rs">${erCols(rosteredRow(p)).join("")}</div></div>`;
+      <div class="er-r rs">${erColsAll(rosteredRow(p))}</div></div>`;
   };
   // Empty spots you can move a picked player into: the bench, or an open IR slot.
   const irCount = side ? side.players.filter((p) => p.slotId === IR).length : 0, irSlots = state.base.slotCounts[IR] || 0;
@@ -2837,7 +2890,7 @@ function renderRoster() {
   const toIR = picked && picked.slotId !== IR && irOK(picked) && irCount < irSlots;
   const emptyRow = (slot, label) => `<div class="er-row empty"><div class="er-l"><button type="button" class="sp tgt" data-empty="${slot}">${slot === IR ? "IR" : "BE"}</button><div class="er-info"><div class="er-name muted">${label}</div></div></div><div class="er-r rs"></div></div>`;
   const section = (title, list, extra = "") => (list.length || extra) ? `<div class="er-sec">
-      <div class="er-row er-hd"><div class="er-l">${title}</div><div class="er-r rs">${erHeads().join("")}</div></div>
+      <div class="er-row er-hd"><div class="er-l">${title}</div><div class="er-r rs">${erHeadsAll()}</div></div>
       ${list.map(row).join("")}${extra}</div>` : "";
 
   let table = `<p class="muted">${esc(t.name)} has no lineup for week ${w.week}.</p>`;
@@ -2876,10 +2929,14 @@ function renderRoster() {
   const viewLabel = ER_VIEWS.find(([k]) => k === erView())[1];
   const tools = side ? `<div class="er-tools">${canEdit ? `<button type="button" class="er-btn" id="er-quick">Quick Lineup</button>` : ""}<button type="button" class="er-btn" id="er-views">${viewLabel} <span class="caret">▾</span></button></div>` : "";
   const moving = picked ? `<div class="er-moving"><span>Moving <strong>${esc(picked.name)}</strong>: tap a highlighted spot</span><span class="rh-edit-btns"><button type="button" class="mv-cancel" id="mv-drop">Drop</button><button type="button" class="mv-done" id="mv-done">Cancel</button></span></div>` : "";
-  el.innerHTML = `${head}${tools}${moving}
+  el.innerHTML = DESK.matches
+    ? `<div class="er-layout"><div class="er-main">${tools}${moving}<div class="card er-table ev-desk">${table}</div>${side ? playoffSchedule(side) : ""}</div>
+        <aside class="er-rail">${head}${rosterRail(sel, side)}</aside></div>${fcCredit()}${nvCredit()}${wxCredit()}`
+    : `${head}${tools}${moving}
     <div class="card er-table ev-${erView()}">${table}</div>
     ${side ? playoffSchedule(side) : ""}
     ${fcCredit()}${nvCredit()}${wxCredit()}`;
+  el.querySelector("[data-rr-mu]")?.addEventListener("click", (e) => { const id = +e.currentTarget.dataset.rrMu; switchTab("matchups"); state.openMatchup = id; renderMatchups(); });
 
   fitNames(el);
   $("roster-team")?.addEventListener("change", (e) => { state.rosterTeam = e.target.value; store.set(key, e.target.value); renderRoster(); });
@@ -2969,6 +3026,7 @@ const chatTime = (ms) => {
 function chatShell(inner) {
   showModal(inner);
   $("pl-modal").querySelector(".modal-card").classList.add("pm-full", "chat-card");
+  setDock(true);
 }
 // Unread numbers on the league buttons at the top of the chat popup.
 function paintLgCounts() {
@@ -4698,6 +4756,7 @@ function initPlayerModal() {
   document.body.appendChild(m);
   const close = () => {
     m.hidden = true;
+    setDock(false);
     document.body.classList.remove("modal-open");
     m.querySelector(".modal-card").classList.remove("pm-full", "chat-card");
     clearInterval(state.chatTimer); state.chatView = null;
@@ -4716,9 +4775,29 @@ function initPlayerModal() {
   }, true);
 }
 
+// On computers the player card and chat open as a panel docked on the right (the page stays usable);
+// other popups stay centered.
+function setDock(on) {
+  const d = !!on && DESK.matches;
+  $("pl-modal").classList.toggle("dock", d);
+  document.body.classList.toggle("has-dock", d);
+  if (d) document.body.classList.remove("modal-open");
+}
+// Docked player card: ↑ / ↓ step through the players on the page, in order.
+document.addEventListener("keydown", (e) => {
+  if (!$("pl-modal")?.classList.contains("dock") || $("pl-modal").hidden || !state.pmFor || !["ArrowUp", "ArrowDown"].includes(e.key)) return;
+  if (e.target.closest?.("input, textarea, select")) return;
+  const ids = [...new Set([...$(`view-${state.tab}`).querySelectorAll(".pl-link[data-pid]")].map((b) => b.dataset.pid))];
+  const i = ids.indexOf(String(state.pmFor)), next = ids[i + (e.key === "ArrowDown" ? 1 : -1)];
+  if (i < 0 || !next) return;
+  e.preventDefault();
+  $(`view-${state.tab}`).querySelector(`.pl-link[data-pid="${CSS.escape(next)}"]`)?.scrollIntoView({ block: "nearest" });
+  openPlayer(next);
+});
 // Open the shared popup with arbitrary content (e.g. the Roster tab's upgrade list).
 function showModal(html) {
   const m = $("pl-modal");
+  setDock(false);
   m.querySelector(".modal-card").classList.remove("pm-full", "chat-card");
   $("pl-modal-body").innerHTML = html;
   m.hidden = false;
@@ -4733,6 +4812,7 @@ async function openPlayer(id, focusSp, tab) {
   state.pmNewsSnap = null;
   m.hidden = false;
   document.body.classList.add("modal-open");
+  setDock(true);
   m.querySelector(".modal-close").focus();
   const cache = (state.playerCache ||= {});
   const hit = cache[id];
@@ -5558,6 +5638,13 @@ function initSwipeTabs() {
   });
 }
 
+// Keyboard (computers): 1–5 switch tabs, / jumps to the player search.
+document.addEventListener("keydown", (e) => {
+  if (e.metaKey || e.ctrlKey || e.altKey || e.target.closest?.("input, textarea, select, [contenteditable]") || !state.week) return;
+  const tabs = ["roster", "matchups", "live", "players", "league"];
+  if (/^[1-5]$/.test(e.key)) { switchTab(tabs[+e.key - 1], null, true); e.preventDefault(); }
+  else if (e.key === "/") { e.preventDefault(); if (state.tab !== "players") switchTab("players", null, true); setTimeout(() => $("pl-q")?.focus(), 50); }
+});
 function bindUi() {
   $("tabs").addEventListener("click", (e) => {
     const b = e.target.closest("button[data-tab]");
