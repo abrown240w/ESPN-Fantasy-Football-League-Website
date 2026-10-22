@@ -19,6 +19,8 @@
 //         POST /api/roster/chatsend {leagueId, season, topic, text}
 //         POST /api/roster/chatnew  {leagueId, season, members: [memberIds], text}
 //         POST /api/roster/chatread {leagueId, season, topic}   marks a conversation read
+//         GET  /api/roster/watchlist?leagueId=&season=       your team's ESPN watch list (player ids)
+//         POST /api/roster/watch {leagueId, season, teamId, playerId, on}   add to / remove from it
 //         POST /api/roster/reorder {leagueId, season, teamId, order: [claim ids]}  your claim processing order
 //         GET  /api/roster/waivers?leagueId=&season=&at=   one waiver run's claims in processing order
 //                                    (failed claims only for the signed-in owner)
@@ -331,6 +333,47 @@ export default async (req, context) => {
       claims: shown.map((t) => ({ id: t.id, teamId: t.teamId, status: t.status, bid: usesBudget ? t.bidAmount || 0 : null, at: t.processDate,
         items: (t.items || []).map((i) => ({ playerId: i.playerId, type: i.type, info: names[i.playerId] || null })) })),
     });
+  }
+
+  // Your ESPN watch list. ESPN keeps it on your team (team.watchList, only shown to you) and saves the whole
+  // list with POST teams/{teamId} {watchList: [...]}, the same request its own site sends (team.watchPlayer).
+  if (action === "watchlist" && req.method === "GET") {
+    if (!signedIn(req)) return json(401, { error: "signed_out", message: "Sign in as the owner first." });
+    const p = new URL(req.url).searchParams;
+    const leagueId = p.get("leagueId"), season = p.get("season") || String(defaultSeason());
+    if (!validLeague(leagueId, season)) return json(400, { error: "bad_request" });
+    try {
+      const data = await espnRead(leagueId, season, ["mTeam"]);
+      const teamId = ownedTeams(data)[0];
+      const t = (data.teams || []).find((x) => x.id === teamId);
+      return json(200, { teamId: teamId ?? null, watchList: t?.watchList || [] });
+    } catch { return json(502, { error: "upstream", message: "Couldn't load your watch list from ESPN." }); }
+  }
+  if (action === "watch" && req.method === "POST") {
+    if (!signedIn(req)) return json(401, { error: "signed_out", message: "Sign in as the owner first." });
+    if (!sameOrigin(req)) return json(403, { error: "origin", message: "Changes have to come from the site itself." });
+    const b = await req.json().catch(() => ({}));
+    const season = String(b.season || defaultSeason()), leagueId = String(b.leagueId || ""), teamId = Number(b.teamId), playerId = Number(b.playerId);
+    if (!validLeague(leagueId, season) || !Number.isInteger(teamId) || !Number.isInteger(playerId)) return json(400, { error: "bad_request", message: "That watch list change doesn't look right." });
+    let data;
+    try { data = await espnRead(leagueId, season, ["mTeam"]); } catch { return json(502, { error: "upstream", message: "Couldn't load your watch list from ESPN." }); }
+    if (!ownedTeams(data).includes(teamId)) return json(403, { error: "not_yours", message: "That isn't your team." });
+    const cur = (data.teams || []).find((x) => x.id === teamId)?.watchList || [];
+    const list = b.on ? [...new Set([...cur, playerId])] : cur.filter((x) => x !== playerId);
+    if (list.length > 50) return json(400, { error: "full", message: "Your watch list is full (50 players). Take someone off first." });
+    let res, out;
+    try {
+      res = await fetch(`${WRITES}/seasons/${season}/segments/0/leagues/${leagueId}/teams/${teamId}`, {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json", "user-agent": "Mozilla/5.0 (fantasy-dashboard)", "x-fantasy-source": "kona", "x-fantasy-platform": "kona-PROD", origin: "https://fantasy.espn.com", referer: "https://fantasy.espn.com/", cookie: `espn_s2=${process.env.ESPN_S2}; SWID=${process.env.SWID}` },
+        body: JSON.stringify({ watchList: list }),
+      });
+      out = await res.json().catch(() => null);
+    } catch { return json(502, { error: "upstream", message: "Couldn't reach ESPN." }); }
+    const espnMsg = out?.messages?.[0] || out?.details?.[0]?.message || "";
+    console.log(JSON.stringify({ event: "watch", ip, leagueId, teamId, playerId, on: !!b.on, result: res.status, espnMsg, at: new Date().toISOString() }));
+    if (!res.ok) return json(502, { error: "espn_refused", message: `ESPN didn't save it${espnMsg ? `: ${espnMsg}` : ` (${res.status})`}.` });
+    return json(200, { ok: true, watchList: list });
   }
 
   // Propose a trade: players you send and players you'd get from one other team.

@@ -1658,3 +1658,27 @@ main .mb-chip, main .lg-card { --ink: #0b0b0b; --ink-2: #52514e; --muted: #6f6d6
 .aw-table th .aw-icon { vertical-align: middle; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .er-tools { background: #18202c; } }
 :root[data-theme="dark"] .er-tools { background: #18202c; }
+/* Season awards: icon key */
+.aw-key { margin-left: auto; border: 1px solid var(--accent); background: var(--surface); color: var(--accent-ink); border-radius: 8px; padding: 4px 10px; font: inherit; font-size: .8rem; font-weight: 700; cursor: pointer; }
+.aw-keylist { list-style: none; margin: 0 0 8px; padding: 0; }
+.aw-keylist li { display: flex; align-items: center; gap: 10px; padding: 7px 2px; border-top: 1px solid var(--border); }
+.aw-keylist li:first-child { border-top: 0; }
+/* Position rankings */
+.pr-rank-table td.num { text-align: center; }
+.pr-rank-table .rk { font-weight: 700; }
+#pl-nfl { max-width: 170px; }
+/* Watch list */
+.watch-box { display: inline-flex; align-items: center; gap: 5px; font-size: .85rem; font-weight: 700; cursor: pointer; }
+.watch-box input { width: 18px; height: 18px; accent-color: var(--accent); cursor: pointer; }
+.pt-watch { width: 30px; text-align: center; }
+.pm-acts .watch-box { border: 1px solid var(--border); border-radius: 8px; padding: 4px 9px; background: var(--surface); }
+[data-watchf] b { font-variant-numeric: tabular-nums; margin-left: 2px; }
+@media (max-width: 640px) { .pl-nav { gap: 5px; } .pl-nav .seg button { padding: 7px 8px; font-size: .8rem; } }
+@media (max-width: 640px) { .pl-nav .nm-full { display: none; } .pl-nav .nm-short { display: inline; } }
+.pl-search input { flex: 1 1 100%; }
+/* Players: search + NFL team on one line, the position buttons stretched across */
+.pl-search { flex-wrap: nowrap; }
+.pl-search input { flex: 1 1 auto; min-width: 0; }
+.pl-search #pl-nfl { flex: 0 0 auto; width: 118px; max-width: 118px; }
+.pl-filters .pos-seg { display: flex; width: 100%; }
+.pl-filters .pos-seg button { flex: 1 1 0; padding-left: 0; padding-right: 0; }

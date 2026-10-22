@@ -889,31 +889,89 @@ function renderPlayers() {
   const onRoster = new Set(rostered.map((p) => String(p.id)));
   const avail = d.players.filter((p) => !onRoster.has(String(p.id))).map((p) => faRow(p, w));
   const me = String(myTeamId() || "");
-  const pool = f.mode === "all" ? [...rostered, ...avail]
+  const W = ensureWatch();
+  const pool = f.watch && W ? [...rostered, ...avail].filter((p) => W.has(String(p.id)))
+    : f.mode === "all" ? [...rostered, ...avail]
     : f.mine && me ? [...avail, ...rostered.filter((p) => String(p.teamId) === me)] : avail;
-  el.innerHTML = `${playersNav(f.mode)}
+  // Search and NFL team on one line; Available / All / watch list / injuries; then the positions.
+  el.innerHTML = `<div class="filters pl-search"><input id="pl-q" type="search" placeholder="Search players…" value="${esc(f.q)}">
+      <select id="pl-nfl" aria-label="NFL team"><option value="ALL">All teams</option>${Object.keys(NFL_NAMES).sort((a, b) => NFL_NAMES[a].localeCompare(NFL_NAMES[b])).map((t) => `<option value="${t}" ${f.nfl === t ? "selected" : ""}>${esc(NFL_NAMES[t].split(" ").pop())}</option>`).join("")}</select></div>
+    ${playersNav(f.mode)}
     <div class="filters pl-filters">
-      <input id="pl-q" type="search" placeholder="Search players…" value="${esc(f.q)}">
       ${posSeg("pl-pos", f.pos)}
     </div>
     ${me ? `<label class="pl-mine ${f.mode === "all" ? "off" : ""}"><input type="checkbox" id="pl-mine" ${f.mine ? "checked" : ""} ${f.mode === "all" ? "disabled" : ""}> Include my team</label>` : ""}<div id="pl-list"></div>${fcCredit()}${nvCredit()}`;
   const draw = () => {
     const q = f.q.toLowerCase();
-    const rows = pool.filter((p) => (f.pos === "ALL" || p.pos === f.pos) && (!q || p.name.toLowerCase().includes(q)));
-    drawPlayerTable($("pl-list"), ["player", ...(actTeam() ? ["act"] : []), "pos", "owner", "opp", "proj", "pts", "own", "snap", "tgt", "rush", "seasonPts", "pprRank", "posRank", "value"], rows, f.sort, w.sp, "No players match those filters.");
+    const rows = pool.filter((p) => (f.pos === "ALL" || p.pos === f.pos) && (!f.nfl || f.nfl === "ALL" || PRO[p.proId] === f.nfl) && (!q || p.name.toLowerCase().includes(q)));
+    drawPlayerTable($("pl-list"), ["player", ...(W ? ["watch"] : []), ...(actTeam() ? ["act"] : []), "pos", "opp", "proj", "pts", "own", "snap", "tgt", "rush", "seasonPts", "pprRank", "posRank", "value"], rows, f.sort, w.sp, "No players match those filters.");
   };
   $("pl-q").addEventListener("input", (e) => { f.q = e.target.value; draw(); });
+  $("pl-nfl").addEventListener("change", (e) => { f.nfl = e.target.value; draw(); });
   bindPosSeg("pl-pos", (v) => (f.pos = v), draw);
   $("pl-mine")?.addEventListener("change", (e) => { f.mine = e.target.checked; renderPlayers(); });
   draw();
 }
 
+// ---------- Watch list (your ESPN watch list, owner only) ----------
+const watchTeam = () => (state.demo ? ensureOwner()?.teams?.[0] : ownerTeam());
+function ensureWatch() {
+  if (!watchTeam()) return null;
+  const k = ownerKey(), c = state.watch;
+  if (c?.key === k) return c.ids;
+  if (state.demo) { state.watch = { key: k, ids: new Set() }; return state.watch.ids; }
+  if (c?.loading !== k) {
+    state.watch = { loading: k };
+    fetch(`/api/roster/watchlist?${new URLSearchParams({ leagueId: String(state.base.raw?.id || state.leagueId || ""), season: state.base.season })}`)
+      .then((r) => r.json()).then((d) => { state.watch = { key: k, ids: new Set((d.watchList || []).map(String)) }; })
+      .catch(() => { state.watch = { key: k, ids: new Set() }; })
+      .finally(() => { if (state.tab === "players") renderPlayers(); });
+  }
+  return null;
+}
+// How many on the list are available (not on anyone's roster), and how many there are in all.
+function watchCounts() {
+  const ids = ensureWatch();
+  if (!ids) return null;
+  const owned = new Set((state.week?.sides || []).flatMap((s) => s.players.map((p) => String(p.id))));
+  return { avail: [...ids].filter((id) => !owned.has(id)).length, total: ids.size };
+}
+async function toggleWatch(id, on) {
+  const ids = ensureWatch();
+  if (!ids) return;
+  id = String(id);
+  on ? ids.add(id) : ids.delete(id);
+  for (const b of document.querySelectorAll(`input[data-watch="${CSS.escape(id)}"]`)) b.checked = on;
+  paintWatchCount();
+  if (state.players.watch && state.tab === "players") renderPlayers();
+  if (state.demo) return;
+  try { await sendMove("watch", { teamId: Number(watchTeam()), playerId: Number(id), on }); }
+  catch (err) {
+    on ? ids.delete(id) : ids.add(id);
+    for (const b of document.querySelectorAll(`input[data-watch="${CSS.escape(id)}"]`)) b.checked = !on;
+    paintWatchCount();
+    alert(err.message);
+  }
+}
+document.addEventListener("change", (e) => { const b = e.target.closest("input[data-watch]"); if (b) toggleWatch(b.dataset.watch, b.checked); });
+const watchBox = (id, label = "") => {
+  const ids = ensureWatch();
+  return ids ? `<label class="watch-box" title="Watch list"><input type="checkbox" data-watch="${esc(id)}" ${ids.has(String(id)) ? "checked" : ""}>${label}</label>` : "";
+};
+function paintWatchCount() {
+  const c = watchCounts(), el = document.querySelector("[data-watchf] b");
+  if (el && c) el.textContent = `${c.avail}/${c.total}`;
+}
+
 // The row at the top of Players and the Injury Report: Available | All players, and the Injury Report.
-const playersNav = (cur) => `<div class="pl-nav"><div class="seg">${[["avail", "Available"], ["all", "All players"]].map(([k, l]) => `<button type="button" data-plm="${k}" class="${cur === k ? "active" : ""}">${l}</button>`).join("")}</div>
-  <div class="seg inj-seg"><button type="button" data-injr>🩺 Injury Report</button></div></div>`;
+const playersNav = (cur) => `<div class="pl-nav"><div class="seg">${[["avail", "Available"], ["all", "All players"]].map(([k, l]) => `<button type="button" data-plm="${k}" class="${cur === k && !state.players.watch ? "active" : ""}">${l}</button>`).join("")}</div>
+  ${(() => { const c = watchCounts(); return c ? `<div class="seg"><button type="button" data-watchf class="${state.players.watch ? "active" : ""}" title="Your watch list: available / total">👁 <b>${c.avail}/${c.total}</b></button></div>` : ""; })()}
+  <div class="seg inj-seg"><button type="button" data-injr>🩺 <span class="nm-full">Injury Report</span><span class="nm-short">Injuries</span></button></div></div>`;
 document.addEventListener("click", (e) => {
   const m = e.target.closest(".pl-nav [data-plm]"), inj = e.target.closest(".pl-nav [data-injr]");
-  if (m) { state.players.mode = m.dataset.plm; if (state.tab === "players") renderPlayers(); else switchTab("players"); }
+  const wf = e.target.closest(".pl-nav [data-watchf]");
+  if (wf) { state.players.watch = !state.players.watch; renderPlayers(); return; }
+  if (m) { state.players.mode = m.dataset.plm; state.players.watch = false; if (state.tab === "players") renderPlayers(); else switchTab("players"); }
   else if (inj) openInjuryReport();
 });
 
@@ -1309,6 +1367,7 @@ const PCOLS = {
   rush: { key: "rush", label: "Rush %", title: "Season share of the team's carries (last game underneath)", num: true, render: rushCell, sort: (p) => { const u = usageOf(p.id); return u ? u.avg?.rush ?? u.last.rush : null; } },
   value: { key: "value", label: "Value", title: "FantasyCalc trade value", num: true, render: (p) => valueCell(p.id), sort: (p) => valueOf(p.id) },
   act: { key: "", label: "", cls: "pt-act", render: (p) => moveBtns(p) },
+  watch: { key: "", label: "👁", cls: "pt-watch", title: "Your ESPN watch list", render: (p) => watchBox(p.id) },
 };
 // Draws a player table into `el`; header clicks re-sort it in place.
 function drawPlayerTable(el, keys, rows, sortState, sp, empty) {
@@ -1536,11 +1595,29 @@ function renderSeason() {
   }
   const draw = () => $("st-table").replaceChildren(sortableTable(cols, season.rows, state.standings.sort, draw, { rowClass: (r) => myRow(r.id) }));
   draw();
-  $("st-table").insertAdjacentHTML("afterend", (odds && odds.weeksLeft ? `<p class="small muted st-odds-note">Playoff odds simulate the remaining ${odds.weeksLeft} week${odds.weeksLeft > 1 ? "s" : ""} 5,000 times using each team's scoring so far. Ties are broken by points for, which may differ from your league's tiebreaker.</p>` : "") + fcCredit());
+  // Position rankings: each team's current roster, group by group, and overall.
+  $("st-table").insertAdjacentHTML("afterend", `<div class="section-head"><h2>Position rankings</h2></div><div id="pr-table"></div>`);
+  const PR = positionRanks();
+  if (!PR) $("pr-table").innerHTML = `<div class="loading small"><span class="spinner"></span> Loading rosters…</div>`;
+  else {
+    const rk = (r, n) => `<span class="rk ${r <= Math.ceil(n / 3) ? "easy" : r > n - Math.ceil(n / 3) ? "tough" : ""}">${ordinal(r)}</span>`;
+    const prCols = [
+      { key: "name", label: "Team", sort: (r) => team(r.id).name, render: (r) => `<div class="team-cell" data-tpop="${r.id}">${logoImg(team(r.id), 28)}<div><strong>${esc(team(r.id).name)}</strong></div></div>` },
+      ...PR.groups.map((g) => ({ key: g, label: g, num: true, dir: 1, title: `Rank by points per game of the team's top ${g === "FLEX" ? "flex options" : g + "s"} this season`, sort: (r) => r.rank[g], render: (r) => `${rk(r.rank[g], PR.rows.length)}<div class="pt-sub">${f1(r.val[g])}</div>` })),
+      { key: "overall", label: "Overall", num: true, dir: 1, title: "Rank by the whole starting lineup's points per game", sort: (r) => r.rank.overall, render: (r) => `<strong>${rk(r.rank.overall, PR.rows.length)}</strong><div class="pt-sub">${f1(r.val.overall)}</div>` },
+    ];
+    const prSort = (state.posRankSort ||= { key: "overall", dir: 1 });
+    const drawPr = () => $("pr-table").replaceChildren(sortableTable(prCols, PR.rows, prSort, drawPr, { rowClass: (r) => myRow(r.id), tableClass: "pr-rank-table" }));
+    drawPr();
+  }
+  $("pr-table").insertAdjacentHTML("afterend", (odds && odds.weeksLeft ? `<p class="small muted st-odds-note">Playoff odds simulate the remaining ${odds.weeksLeft} week${odds.weeksLeft > 1 ? "s" : ""} 5,000 times using each team's scoring so far. Ties are broken by points for, which may differ from your league's tiebreaker.</p>` : "") + fcCredit());
   $("luck-chart").innerHTML = luckChart(season.rows);
   $("heatmap").innerHTML = heatmap(season);
   // Season awards: how many of each weekly award every team has won (regular season).
-  el.insertAdjacentHTML("beforeend", `<div class="section-head"><h2>Season awards</h2><span class="muted small">Weekly awards won, regular season</span></div><div id="aw-table"></div>`);
+  el.insertAdjacentHTML("beforeend", `<div class="section-head"><h2>Season awards</h2><button type="button" class="aw-key" id="aw-key">Icon key</button></div><div id="aw-table"></div>`);
+  $("aw-key").addEventListener("click", () => showModal(`<div class="pm-head"><h2 id="pl-modal-title">🏆 Award icons</h2></div>
+    <ul class="aw-keylist">${AWARD_ORDER.map((k) => `<li>${awardIcon(k, 22)}<span>${esc(AWARD_NAMES[k])}</span></li>`).join("")}</ul>
+    <p class="muted small">Weekly awards, counted over the regular season.</p>`));
   const tally = ensureAwardTally(() => { if (state.tab === "season" && state.week) renderSeason(); });
   if (!tally || tally === "loading") { $("aw-table").innerHTML = `<div class="loading small"><span class="spinner"></span> Counting weekly awards…</div>`; return; }
   const awRows = season.rows.map((r) => { const aw = Object.fromEntries(AWARD_ORDER.map((k) => [k, (tally[r.id]?.[k] || []).length])); return { ...r, aw, total: sum(Object.values(aw)) }; });
@@ -1552,6 +1629,33 @@ function renderSeason() {
   const awSort = (state.awardSort ||= { key: "total", dir: -1 });
   const drawAw = () => $("aw-table").replaceChildren(sortableTable(awCols, awRows, awSort, drawAw, { rowClass: (r) => myRow(r.id), tableClass: "aw-table" }));
   drawAw();
+}
+
+// How strong each team's current roster is at each spot: points per game this season of the players
+// who'd start there (as many as the lineup holds), the flex spots filled from what's left, and overall.
+// Ranked 1st (best) down. Null while this week's rosters load.
+function positionRanks() {
+  const wk = ensureCurrentRosters();
+  if (!wk) return null;
+  const sc = state.base.slotCounts || {};
+  const groups = [["QB", 0, 1], ["RB", 2, 2], ["WR", 4, 3], ["TE", 6, 4], ["K", 17, 5], ["D/ST", 16, 16]].filter(([, slot]) => sc[slot]);
+  const flexN = (sc[23] || 0) + (sc[3] || 0) + (sc[5] || 0);
+  const ppg = (p) => p.seasonAvg ?? p.proj ?? 0;
+  const rows = wk.sides.map((side) => {
+    const val = {}, left = [];
+    for (const [g, slot, posId] of groups) {
+      const best = side.players.filter((p) => p.posId === posId && p.slotId !== IR).sort((a, b) => ppg(b) - ppg(a));
+      val[g] = sum(best.slice(0, sc[slot]), ppg);
+      if ([2, 3, 4].includes(posId)) left.push(...best.slice(sc[slot]));
+    }
+    if (flexN) val.FLEX = sum(left.sort((a, b) => ppg(b) - ppg(a)).slice(0, flexN), ppg);
+    val.overall = sum(Object.values(val));
+    return { id: String(side.teamId), val, rank: {} };
+  });
+  const names = [...groups.map(([g]) => g), ...(flexN ? ["FLEX"] : [])];
+  for (const g of [...names, "overall"]) [...rows].sort((a, b) => b.val[g] - a.val[g]).forEach((r, i) => { r.rank[g] = i + 1; });
+  const order = ["QB", "RB", "WR", "TE", "FLEX", "K", "D/ST"].filter((g) => names.includes(g));
+  return { groups: order, rows };
 }
 
 function luckChart(rows) {
@@ -2008,7 +2112,7 @@ function renderLive() {
   const myWeight = {};
   for (const p of L.players) if (my && String(p.teamId) === my) myWeight[p.proId] = (myWeight[p.proId] || 0) + (p.slotId === BENCH || p.slotId === IR ? 1 : 10);
   const mineIn = (g) => (myWeight[g.home.proId] || 0) + (myWeight[g.away.proId] || 0);
-  const games = [...L.games].sort((a, b) => order[a.state] - order[b.state] || mineIn(b) - mineIn(a) || new Date(a.date) - new Date(b.date));
+  const games = [...L.games].sort((a, b) => order[a.state] - order[b.state] || (a.state === "pre" ? new Date(a.date) - new Date(b.date) : 0) || mineIn(b) - mineIn(a) || new Date(a.date) - new Date(b.date));
   const counts = { in: 0, pre: 0, post: 0 };
   for (const g of games) counts[g.state]++;
   const byPro = {};
@@ -2863,6 +2967,15 @@ function chatShell(inner) {
   showModal(inner);
   $("pl-modal").querySelector(".modal-card").classList.add("pm-full", "chat-card");
 }
+// Unread numbers on the league buttons at the top of the chat popup.
+function paintLgCounts() {
+  for (const b of $("pl-modal-body")?.querySelectorAll("[data-chatlg]") || []) {
+    const n = state.chatCounts?.[b.dataset.chatlg] || 0;
+    let i = b.querySelector(".ct-unread");
+    if (n && !i) { b.insertAdjacentHTML("beforeend", ` <i class="ct-unread"></i>`); i = b.querySelector(".ct-unread"); }
+    if (i) { if (n) i.textContent = n > 9 ? "9+" : String(n); else i.remove(); }
+  }
+}
 // The list: league chat, your matchup opponent, then everyone else. Buttons on top switch between your
 // leagues, each with its unread count. Opened from the 💬 button it starts on the league you're viewing.
 async function openChat(lid) {
@@ -2875,6 +2988,11 @@ async function openChat(lid) {
   const bindLg = () => $("pl-modal-body").querySelectorAll("[data-chatlg]").forEach((b) => b.addEventListener("click", () => { if (b.dataset.chatlg !== state.chatLeague) openChat(b.dataset.chatlg); }));
   chatShell(`${head()}<div class="loading small"><span class="spinner"></span> Loading chats…</div>`);
   bindLg();
+  // The other leagues' unread counts, so you can see which one has new messages without opening each.
+  for (const l of LEAGUES) {
+    if (l.id === lid) continue;
+    chatGet("chat", { leagueId: l.id }).then((x) => { (state.chatCounts ||= {})[l.id] = unreadOf(x); paintChatBadge(); paintLgCounts(); }).catch(() => {});
+  }
   let d;
   try { d = await chatGet("chat", { leagueId: lid }); state.chatList = { key: lid, data: d }; (state.chatCounts ||= {})[lid] = unreadOf(d); paintChatBadge(); }
   catch (e) { chatShell(`${head()}<div class="banner">${esc(e.message)}</div>`); bindLg(); return; }
@@ -4786,7 +4904,7 @@ function renderPlayerModal(d, focusSp) {
       ${headshot({ id: p.id, name: p.name, posId: p.posId, proId: p.proId }, 64)}
       <div><h2 id="pl-modal-title">${esc(p.name)}${injBadge({ injury: p.injury })}</h2>
         <div class="muted small">${pos}${p.proId ? ` · ${esc(PRO[p.proId] || "")}` : ""}${p.bye ? ` · Bye wk ${p.bye}` : ""}</div>
-        <div class="pm-owner">${owner}</div>${(() => { const acts = moveBtns({ id: p.id, name: p.name, posId: p.posId, proId: p.proId }, true) + claimOddsBtn(p); return acts ? `<div class="pm-acts">${acts}</div>` : ""; })()}</div>
+        <div class="pm-owner">${owner}</div>${(() => { const acts = moveBtns({ id: p.id, name: p.name, posId: p.posId, proId: p.proId }, true) + claimOddsBtn(p) + watchBox(p.id, " 👁"); return acts ? `<div class="pm-acts">${acts}</div>` : ""; })()}</div>
     </div>
     <div class="pm-tabs-wrap"><div class="pm-tabs" role="tablist">${tabs.map(([k, label]) => `<button type="button" role="tab" data-pmtab="${k}" aria-selected="${k === tab}" class="${k === tab ? "active" : ""}">${label}</button>`).join("")}</div>
       <button type="button" class="pm-more" aria-label="More tabs" hidden>»</button></div>
@@ -5172,7 +5290,7 @@ function resetTab(tab) {
     if (ownerTeam() || store.get(`ffb.myteam.${state.leagueId || "default"}`)) { state.rosterTeam = null; store.set(`ffb.rosterteam.${state.leagueId || "default"}`, ""); }
     if (state.lineupEdit) state.lineupEdit.pick = null;
   } else if (tab === "players") {
-    Object.assign(state.players, { mode: "avail", mine: false, q: "", pos: "ALL", team: "ALL", sort: { key: "proj", dir: -1 } });
+    Object.assign(state.players, { mode: "avail", mine: false, watch: false, q: "", pos: "ALL", nfl: "ALL", team: "ALL", sort: { key: "proj", dir: -1 } });
   } else if (tab === "usage") {
     Object.assign(state.players, { utTeam: "", utMode: "snap" });
   } else if (tab === "matchups") {
