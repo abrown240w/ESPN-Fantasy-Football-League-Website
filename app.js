@@ -790,6 +790,9 @@ addEventListener("resize", updateStickies);
 // a side rail on Roster and Live. Phones keep their own layout. Redraw when crossing the line.
 const DESK = matchMedia("(min-width: 1000px)");
 DESK.addEventListener?.("change", () => { if (state.week) render(); });
+// Three columns on Live (games | the game | your players) need 1300px; below that it's two.
+const WIDE = matchMedia("(min-width: 1300px)");
+WIDE.addEventListener?.("change", () => { if (state.week && state.tab === "live") render(); });
 // Wide screens get the side-by-side Matchups layout; redraw when crossing the breakpoint.
 const MU_SPLIT = matchMedia("(min-width: 900px)");
 MU_SPLIT.addEventListener?.("change", () => { if ((state.tab === "matchups" || state.tab === "live") && state.week) render(); });
@@ -2265,7 +2268,7 @@ function renderLive() {
     </div>
     ${L.byes?.length ? `<p class="muted small">On bye: ${L.byes.map(esc).join(", ")}</p>` : ""}
     ${!games.length ? `<p class="muted">No NFL games found for this week.</p>`
-      : split ? `<div class="mu-split lv-split ${DESK.matches ? "lv-three" : ""}"><div class="mu-list">${games.map(gameTile).join("")}</div><div class="mu-pane" id="lv-pane">${selGame ? gameCard(selGame, true) : ""}</div>${DESK.matches ? liveRail(L, games, my) : ""}</div>`
+      : split ? `<div class="mu-split lv-split ${WIDE.matches ? "lv-three" : ""}"><div class="mu-list">${games.map(gameTile).join("")}</div><div class="mu-pane" id="lv-pane">${selGame ? gameCard(selGame, true) : ""}</div>${WIDE.matches ? liveRail(L, games, my) : ""}</div>`
       : `<div class="games">${games.map((g) => gameCard(g)).join("")}</div>`}${games.some((g) => g.state !== "post") ? wxCredit() : ""}`;
   $("lv-show").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => { f.show = b.dataset.s; renderLive(); }));
   $("lv-team").addEventListener("change", (e) => { f.team = e.target.value; renderLive(); });
@@ -5139,10 +5142,23 @@ function initPlayerModal() {
     e.preventDefault();
     e.stopPropagation();
     if (state.cmpPick && b.classList.contains("pl-link")) { finishPick(b.dataset.pid); return; }
+    if (b.classList.contains("pts-link")) { openPtsPop(b.dataset.pid, Number(b.dataset.sp), b); return; } // a score: a small scoring breakdown
     if (stageOpen()) closeStage();
     state.modalReturn = b;
     openPlayer(b.dataset.pid, b.dataset.sp ? Number(b.dataset.sp) : null);
   }, true);
+  // The scoring breakdown: a popup anchored to the score you tapped, growing upward from it.
+  const pts = document.createElement("div");
+  pts.id = "pts-modal";
+  pts.hidden = true;
+  pts.innerHTML = `<div class="pts-card" role="dialog" aria-labelledby="pts-title"><button type="button" class="modal-close pts-x" aria-label="Close">×</button><div id="pts-body"></div><i class="pts-arrow"></i></div>`;
+  document.body.appendChild(pts);
+  pts.addEventListener("click", (e) => {
+    const full = e.target.closest("[data-pts-card]");
+    if (full) { closePts(); openPlayer(full.dataset.ptsCard, Number(full.dataset.sp)); return; }
+    if (!e.target.closest(".pts-card") || e.target.closest(".pts-x")) closePts();
+  });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !pts.hidden) { closePts(); e.stopImmediatePropagation(); } }, true);
   // The comparison popup sits on top of the card(s).
   const cmp = document.createElement("div");
   cmp.id = "cmp-modal";
@@ -5183,6 +5199,63 @@ document.addEventListener("keydown", (e) => {
   $(`view-${state.tab}`).querySelector(`.pl-link[data-pid="${CSS.escape(next)}"]`)?.scrollIntoView({ block: "nearest" });
   openPlayer(next, null, null, { replace: true });
 });
+// How a score was made: the week's scoring lines, in a popup that grows upward from the score you tapped
+// (below it only when there's no room above).
+let ptsAnchor = null;
+const ptsScrollClose = (e) => { if (!(e.target?.nodeType === 1 && e.target.closest(".pts-card"))) closePts(); };
+function closePts() {
+  const pop = $("pts-modal");
+  if (!pop || pop.hidden) return;
+  pop.hidden = true;
+  ptsAnchor?.classList.remove("pts-active");
+  ptsAnchor = null;
+  window.removeEventListener("scroll", ptsScrollClose, true);
+  window.removeEventListener("resize", closePts);
+}
+function placePts() {
+  const card = $("pts-modal").querySelector(".pts-card"), a = ptsAnchor;
+  if (!a || !a.isConnected) return closePts();
+  const r = a.getBoundingClientRect(), vw = innerWidth, vh = innerHeight, m = 8, gap = 10;
+  const w = Math.min(340, vw - 2 * m), cx = r.left + r.width / 2, left = Math.max(m, Math.min(cx - w / 2, vw - w - m));
+  const above = r.top - gap - m, below = vh - r.bottom - gap - m, up = above >= 160 || above >= below;
+  card.style.width = `${w}px`;
+  card.style.left = `${left}px`;
+  card.style.setProperty("--ax", `${Math.max(20, Math.min(cx - left, w - 20))}px`);
+  card.classList.toggle("below", !up);
+  const room = Math.max(120, up ? above : below);
+  card.style.top = up ? "auto" : `${r.bottom + gap}px`;
+  card.style.bottom = up ? `${vh - r.top + gap}px` : "auto";
+  $("pts-body").style.maxHeight = `${room - 4}px`;
+}
+async function openPtsPop(id, sp, anchor) {
+  const pop = $("pts-modal"), body = $("pts-body");
+  id = String(id);
+  closePts();
+  ptsAnchor = anchor || null;
+  anchor?.classList.add("pts-active");
+  body.innerHTML = `<div class="loading small"><span class="spinner"></span> Loading…</div>`;
+  pop.hidden = false;
+  window.addEventListener("scroll", ptsScrollClose, true);
+  window.addEventListener("resize", closePts);
+  const card = pop.querySelector(".pts-card");
+  card.classList.remove("grow"); void card.offsetWidth; card.classList.add("grow"); // the pop-up animation
+  placePts();
+  const cache = (state.playerCache ||= {});
+  if (!cache[id] || Date.now() - cache[id].at > 60000) {
+    try { cache[id] = { at: Date.now(), data: await fetchPlayer(id) }; }
+    catch (e) { if (!pop.hidden) { body.innerHTML = `<div class="banner">${esc(e.message)}</div>`; placePts(); } return; }
+  }
+  if (pop.hidden || ptsAnchor !== (anchor || null)) return;
+  const d = cache[id].data, p = d.player, w = d.weeks.find((x) => x.sp === sp);
+  body.innerHTML = `<div class="pm-head">${headshot({ id: p.id, name: p.name, posId: p.posId, proId: p.proId }, 44)}<div><h2 id="pts-title">${esc(p.name)}</h2>
+      <div class="muted small">${esc(POS[p.posId] || "")} · ${esc(PRO[p.proId] || "")} · Week ${sp}${w?.opp ? ` · ${w.home ? "vs" : "@"} ${esc(PRO[w.opp] || "")}` : ""}</div></div></div>
+    ${w ? `<div class="pts-line">${esc(compactLine(p.posId, w.stats) || gameLine(p.posId, w.stats))}</div>${breakdownHtml(w, p.posId)}` : (() => {
+        const row = cmpRow(id, cmpWeek()), live = row && sp === state.week?.sp && row.played;
+        return `${live && row.short ? `<div class="pts-line">${esc(row.short)}</div>` : ""}<p class="muted small">${live ? `${f2(row.actual)} points so far. ESPN hasn't posted the scoring detail yet; it fills in as the game goes.` : `No scoring for week ${sp}.`}</p>`;
+      })()}
+    <button type="button" class="pg-go" data-pts-card="${esc(id)}" data-sp="${sp}">Open player card ›</button>`;
+  placePts(); // taller now: it grows upward from the score
+}
 // Open the shared popup with arbitrary content (e.g. the Roster tab's upgrade list).
 function showModal(html) {
   const m = $("pl-modal");
