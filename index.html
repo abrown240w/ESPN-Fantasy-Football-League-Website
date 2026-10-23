@@ -40,6 +40,9 @@
         <select id="week-select" aria-label="Week"></select>
         <button class="icon-btn" id="next-week" aria-label="Next week">&#8250;</button>
         <button class="icon-btn refresh-btn" id="refresh" aria-label="Refresh data" title="Refresh">&#8635;</button>
+        <!-- Computers: notifications and owner sign-in sit here (phones have them as Roster tiles). -->
+        <button type="button" class="hdr-btn" id="notify-btn" title="Notifications">🔔 Alerts</button>
+        <button type="button" class="hdr-btn" id="owner-btn" title="Owner sign-in">🔑 Sign in</button>
         <button type="button" class="espn-open chat-open" id="chat-open" hidden title="League chat">💬 Chat<span class="chat-dot" id="chat-dot" hidden></span></button>
         <a class="espn-open" id="espn-open" href="https://fantasy.espn.com/football/" target="_blank" rel="noopener" title="Open in ESPN">ESPN<span class="espn-arrow" aria-hidden="true">↗</span></a>
       </div>
@@ -87,8 +90,6 @@
 
   <footer class="wrap footer muted small">
     Data from ESPN Fantasy (unofficial API). Power rankings are estimates.
-    · <button type="button" id="notify-btn" class="linkish">🔔 Notifications</button>
-    · <button type="button" id="owner-btn" class="linkish">Owner sign-in</button>
   </footer>
 
   <!-- Home-screen app on a phone turned sideways: iPhones ignore the manifest's portrait lock, so ask to turn it back. -->

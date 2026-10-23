@@ -1576,7 +1576,7 @@ function renderManagers() {
   const awards = weekAwards(w);
 
   el.innerHTML = `<div class="section-head"><h2>Week ${w.week} awards${so} ${statusBadge(w.status)}</h2></div>
-    <div class="grid grid-awards">${awards.map((a) => `<div class="card award"><div class="label">${AWARD_ICONS[a.key] ? awardIcon(a.key) + " " : ""}${a.label}</div><div class="value">${a.value}</div><div class="who">${teamName(a.side.teamId, 20)}</div><div class="why">${esc(team(a.side.teamId).owner)}${a.why ? " · " + a.why : ""}</div></div>`).join("")}</div>
+    <div class="grid grid-awards wk-awards" style="--n:${awards.length}">${awards.map((a) => `<div class="card award"><div class="label">${AWARD_ICONS[a.key] ? awardIcon(a.key) + " " : ""}${a.label}</div><div class="value">${a.value}</div><div class="who">${teamName(a.side.teamId, 20)}</div><div class="why">${esc(team(a.side.teamId).owner)}${a.why ? " · " + a.why : ""}</div></div>`).join("")}</div>
     <div class="section-head"><h2>Manager report card</h2><span class="muted small">Optimal = the highest-scoring lineup possible from that roster this week</span></div>
     <div id="mg-table"></div>`;
   const cols = [
@@ -1590,7 +1590,7 @@ function renderManagers() {
     { key: "mvp", label: "MVP", cls: "hide-sm", sort: (s) => s.mvp?.actual, render: (s) => (s.mvp ? `${plink(s.mvp.id, s.mvp.name)} <span class="muted">${f1(s.mvp.actual)}</span>` : "–") },
     { key: "bust", label: "Biggest bust", cls: "hide-sm", sort: (s) => s.bust?.diff, render: (s) => (s.bust ? `${plink(s.bust.id, s.bust.name)} <span class="neg">${signed(s.bust.diff)}</span>` : "–") },
   ];
-  const draw = () => $("mg-table").replaceChildren(sortableTable(cols, sides, state.managers.sort, draw, { rowClass: (r) => myRow(r.teamId) }));
+  const draw = () => $("mg-table").replaceChildren(sortableTable(cols, sides, state.managers.sort, draw, { rowClass: (r) => myRow(r.teamId), tableClass: "mg-table" }));
   draw();
 }
 
@@ -1602,12 +1602,20 @@ function renderSeason() {
     el.innerHTML = `<div class="section-head"><h2>Season overview</h2></div><p class="muted">Season stats appear after the first week is final.</p>`;
     return;
   }
-  el.innerHTML = `<div class="section-head"><h2>Standings & power rankings</h2><span class="muted small">Through week ${season.weeks[season.weeks.length - 1]}</span></div>
-    <div id="st-table"></div>
-    <div class="section-head"><h2>Luck meter</h2><span class="muted small">Actual wins minus expected wins (based on weekly scores vs. the whole league)</span></div>
-    <div class="card chart-card" id="luck-chart"></div>
-    <div class="section-head"><h2>Weekly scores</h2><span class="muted small">Darker = higher score relative to the league</span></div>
-    <div class="card chart-card" id="heatmap"></div>`;
+  // Computers split the page into three sub-tabs; phones scroll through all of it.
+  const desk = DESK.matches, sub = desk ? (state.standings.sub ||= "standings") : null;
+  const show = (k) => (!desk || sub === (k === "awards" ? "standings" : k) ? "" : "hidden");
+  const SUBS = [["standings", "Standings & Awards"], ["pos", "Position Rankings"], ["luck", "Luck & Weekly Scoring"]];
+  el.innerHTML = `${desk ? `<div class="seg st-subs" role="tablist">${SUBS.map(([k, l]) => `<button type="button" role="tab" data-stsub="${k}" class="${sub === k ? "active" : ""}">${l}</button>`).join("")}</div>` : ""}
+    <section class="st-sec" ${show("standings")}><div class="section-head"><h2>Standings & power rankings</h2><span class="muted small">Through week ${season.weeks[season.weeks.length - 1]}</span></div>
+    ${desk ? `<div class="st-top"><div id="st-table"></div><aside class="st-rail" id="st-rail"></aside></div>` : `<div id="st-table"></div>`}</section>
+    <section class="st-sec" ${show("pos")}><div class="section-head"><h2>Position rankings</h2><span class="muted small">Each team's current roster, by points per game this season</span></div><div id="pr-table"></div></section>
+    <section class="st-sec st-luck" ${show("luck")}><div><div class="section-head"><h2>Luck meter</h2><span class="muted small">Actual wins minus expected wins (based on weekly scores vs. the whole league)</span></div>
+    <div class="card chart-card" id="luck-chart"></div></div>
+    <div><div class="section-head"><h2>Weekly scores</h2><span class="muted small">Darker = higher score relative to the league</span></div>
+    <div class="card chart-card" id="heatmap"></div></div></section>
+    <section class="st-sec" id="aw-sec" ${show("awards")}></section>`;
+  el.querySelectorAll("[data-stsub]").forEach((b) => b.addEventListener("click", () => { state.standings.sub = b.dataset.stsub; renderSeason(); }));
   const odds = playoffOdds();
   const cols = [
     { key: "rank", label: "#", num: true },
@@ -1636,12 +1644,18 @@ function renderSeason() {
   }
   const draw = () => $("st-table").replaceChildren(sortableTable(cols, season.rows, state.standings.sort, draw, { rowClass: (r) => myRow(r.id) }));
   draw();
+  // Computers: a column beside the standings with the playoff race (and the award leaders, below).
+  if ($("st-rail")) {
+    const race = odds ? [...season.rows].sort((a, b) => (odds.teams[b.id]?.playoffs ?? 0) - (odds.teams[a.id]?.playoffs ?? 0)) : [];
+    $("st-rail").innerHTML = race.length ? `<div class="card st-race"><h3>Playoff race</h3><p class="muted small">Chance to make the top ${odds.spots}</p>
+      ${race.map((r, i) => { const x = odds.teams[r.id]?.playoffs ?? 0; return `<div class="race-row ${myRow(r.id)} ${i === odds.spots - 1 ? "cutline" : ""}" data-tpop="${r.id}">${logoImg(r, 22)}<span class="race-nm">${esc(r.name)}</span><span class="race-bar"><i style="width:${Math.round(x * 100)}%" class="${x >= 0.75 ? "hi" : x <= 0.25 ? "lo" : ""}"></i></span>${oddsCell(x)}</div>`; }).join("")}</div>` : "";
+  }
   // Position rankings: each team's current roster, group by group, and overall.
-  $("st-table").insertAdjacentHTML("afterend", `<div class="section-head"><h2>Position rankings</h2></div><div id="pr-table"></div>`);
   const PR = positionRanks();
   if (!PR) $("pr-table").innerHTML = `<div class="loading small"><span class="spinner"></span> Loading rosters…</div>`;
   else {
-    const rk = (r, n) => `<span class="rk ${r <= Math.ceil(n / 3) ? "easy" : r > n - Math.ceil(n / 3) ? "tough" : ""}">${ordinal(r)}</span>`;
+    // tier 0 (best) … 4 (worst) shades the cell on computers.
+    const rk = (r, n) => `<span class="rk ${r <= Math.ceil(n / 3) ? "easy" : r > n - Math.ceil(n / 3) ? "tough" : ""} rkh t${Math.min(4, Math.floor(((r - 1) / Math.max(1, n - 1)) * 5))}">${ordinal(r)}</span>`;
     const prCols = [
       { key: "name", label: "Team", sort: (r) => team(r.id).name, render: (r) => `<div class="team-cell" data-tpop="${r.id}">${logoImg(team(r.id), 28)}<div><strong>${esc(team(r.id).name)}</strong></div></div>` },
       ...PR.groups.map((g) => ({ key: g, label: g, num: true, dir: 1, title: `Rank by points per game of the team's top ${g === "FLEX" ? "flex options" : g + "s"} this season`, sort: (r) => r.rank[g], render: (r) => `${rk(r.rank[g], PR.rows.length)}<div class="pt-sub">${f1(r.val[g])}</div>` })),
@@ -1651,14 +1665,14 @@ function renderSeason() {
     const drawPr = () => $("pr-table").replaceChildren(sortableTable(prCols, PR.rows, prSort, drawPr, { rowClass: (r) => myRow(r.id), tableClass: "pr-rank-table" }));
     drawPr();
   }
-  // Wide screens: Standings and Position rankings next to each other.
-  { const g = document.createElement("div"); g.className = "st-grid"; const prHead = $("pr-table").previousElementSibling, a = document.createElement("div"), b = document.createElement("div");
+  // Wide screens without the sub-tabs: Standings and Position rankings next to each other.
+  if (!desk) { const g = document.createElement("div"); g.className = "st-grid"; const prHead = $("pr-table").previousElementSibling, a = document.createElement("div"), b = document.createElement("div");
     $("st-table").before(g); a.append($("st-table")); b.append(prHead, $("pr-table")); g.append(a, b); }
-  $("pr-table").insertAdjacentHTML("afterend", (odds && odds.weeksLeft ? `<p class="small muted st-odds-note">Playoff odds simulate the remaining ${odds.weeksLeft} week${odds.weeksLeft > 1 ? "s" : ""} 5,000 times using each team's scoring so far. Ties are broken by points for, which may differ from your league's tiebreaker.</p>` : "") + fcCredit());
+  ($("st-table").closest(".st-top") || $("st-table")).insertAdjacentHTML("afterend", (odds && odds.weeksLeft ? `<p class="small muted st-odds-note">Playoff odds simulate the remaining ${odds.weeksLeft} week${odds.weeksLeft > 1 ? "s" : ""} 5,000 times using each team's scoring so far. Ties are broken by points for, which may differ from your league's tiebreaker.</p>` : "") + fcCredit());
   $("luck-chart").innerHTML = luckChart(season.rows);
   $("heatmap").innerHTML = heatmap(season);
   // Season awards: how many of each weekly award every team has won (regular season).
-  el.insertAdjacentHTML("beforeend", `<div class="section-head"><h2>Season awards</h2><button type="button" class="aw-key" id="aw-key">Icon key</button></div><div id="aw-table"></div>`);
+  $("aw-sec").insertAdjacentHTML("beforeend", `<div class="section-head"><h2>Season awards</h2><button type="button" class="aw-key" id="aw-key">Icon key</button></div><div id="aw-table"></div>`);
   $("aw-key").addEventListener("click", () => showModal(`<div class="pm-head"><h2 id="pl-modal-title">🏆 Award icons</h2></div>
     <ul class="aw-keylist">${AWARD_ORDER.map((k) => `<li>${awardIcon(k, 22)}<span>${esc(AWARD_NAMES[k])}</span></li>`).join("")}</ul>
     <p class="muted small">Weekly awards, counted over the regular season.</p>`));
@@ -1673,6 +1687,11 @@ function renderSeason() {
   const awSort = (state.awardSort ||= { key: "total", dir: -1 });
   const drawAw = () => $("aw-table").replaceChildren(sortableTable(awCols, awRows, awSort, drawAw, { rowClass: (r) => myRow(r.id), tableClass: "aw-table" }));
   drawAw();
+  if ($("st-rail")) {
+    const lead = AWARD_ORDER.map((k) => { const best = Math.max(0, ...awRows.map((r) => r.aw[k])); return [k, best, awRows.filter((r) => best && r.aw[k] === best)]; });
+    $("st-rail").insertAdjacentHTML("beforeend", `<div class="card st-leaders"><h3>Award leaders</h3>
+      ${lead.map(([k, n, who]) => `<div class="lead-row">${awardIcon(k, 20)}<span class="lead-what">${esc(AWARD_NAMES[k])}</span><span class="lead-who">${n ? `${who.slice(0, 2).map((r) => `<span data-tpop="${r.id}">${esc(r.name)}</span>`).join(", ")}${who.length > 2 ? ` +${who.length - 2}` : ""} <b>${n}</b>` : `<span class="muted">–</span>`}</span></div>`).join("")}</div>`);
+  }
 }
 
 // How strong each team's current roster is at each spot: points per game this season of the players
@@ -2606,9 +2625,10 @@ function renderHistory() {
       const fin = s.final && s.final.winner === c ? `Beat ${esc(s.final.loser.name)} ${f2(s.final.wScore)}–${f2(s.final.lScore)} in the final` : "";
       return `<div class="card champ"><div class="champ-year">${trophy} ${s.year} champion</div><div class="champ-team">${who(c, 40)}</div><div class="why">${esc(c.owner)} · ${rec(c)} · ${f1(c.pf)} PF</div>${fin ? `<div class="why">${fin}</div>` : ""}</div>`;
     }).join("");
-    body = `<div class="section-head"><h2>Champions</h2></div><div class="grid grid-2">${champs}</div>
-      <div class="section-head"><h2>League records</h2><span class="muted small">Regular season, ${span}</span></div>
-      <div class="grid grid-awards">${extremes(seasons).join("")}</div>
+    // Computers: champions and league records side by side in one band.
+    body = `<div class="hist-band"><div class="hist-champs"><div class="section-head"><h2>Champions</h2></div><div class="grid grid-2">${champs}</div></div>
+      <div class="hist-recs"><div class="section-head"><h2>League records</h2><span class="muted small">Regular season, ${span}</span></div>
+      <div class="grid grid-awards">${extremes(seasons).join("")}</div></div></div>
       <div class="section-head"><h2>All-time managers</h2><span class="muted small">Completed seasons only · click a column to sort</span></div>
       <div id="hist-table"></div>
       <div class="section-head"><h2>Rivalries</h2><span class="muted small">Head-to-head, every season including this one</span></div>
@@ -2627,7 +2647,7 @@ function renderHistory() {
 
   el.innerHTML = `<div class="section-head"><h2>League history</h2><span class="muted small">${seasons.length} completed season${seasons.length > 1 ? "s" : ""}</span></div>
     ${refused}
-    <div class="seg hist-seg" id="hist-seg"><button data-y="all" class="${sel === "all" ? "active" : ""}">All-time</button>${seasons.map((s) => `<button data-y="${s.year}" class="${String(sel) === String(s.year) ? "active" : ""}">${s.year}</button>`).join("")}</div>
+    <div class="seg hist-seg ${DESK.matches ? "st-subs" : ""}" id="hist-seg"><button data-y="all" class="${sel === "all" ? "active" : ""}">All-time</button>${seasons.map((s) => `<button data-y="${s.year}" class="${String(sel) === String(s.year) ? "active" : ""}">${s.year}</button>`).join("")}</div>
     ${body}`;
   $("hist-seg").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => { state.historySel = b.dataset.y; renderHistory(); }));
   if (sel === "all") renderRivalry(seasons);
@@ -3022,6 +3042,9 @@ function renderRoster() {
     deadline ? chip("deadline", "📅", "Trade deadline", new Date(deadline).toLocaleString(undefined, { month: "numeric", day: "numeric", hour: "numeric", minute: "2-digit" })) : "",
     chip("myteam", "👤", "My team", myTeamId() ? esc(team(myTeamId()).abbrev || team(myTeamId()).name) : "Select"),
     chip("awards", "🏆", "Awards", nAwards == null ? "View" : `${nAwards} award${nAwards === 1 ? "" : "s"}`),
+    // Phones: notifications and the owner sign-in live here (computers have them in the header).
+    DESK.matches ? "" : chip("alerts", "🔔", "Alerts", "Settings"),
+    DESK.matches ? "" : chip("owner", "🔑", "Owner", store.get("ffb.owner") === "1" ? "Sign out" : "Sign in"),
   ].join("");
   const opts = ids.map((id) => `<option value="${id}" ${id === String(sel) ? "selected" : ""}>${esc(team(id).name)}</option>`).join("");
   const head = `<div class="card er-head">
@@ -3044,7 +3067,12 @@ function renderRoster() {
   fitNames(el);
   $("roster-team")?.addEventListener("change", (e) => { state.rosterTeam = e.target.value; store.set(key, e.target.value); renderRoster(); });
   $("my-star").addEventListener("click", () => { if (ownerTeam()) return; setMyTeam(sel); state.winWin = null; updateEspnLink(); renderRoster(); });
-  el.querySelectorAll("[data-chip]").forEach((b) => b.addEventListener("click", () => { state.modalReturn = b; chipPopup(b.dataset.chip, sel, side); }));
+  el.querySelectorAll("[data-chip]").forEach((b) => b.addEventListener("click", () => {
+    state.modalReturn = b;
+    if (b.dataset.chip === "alerts") return openNotifications();
+    if (b.dataset.chip === "owner") return openOwnerSignIn();
+    chipPopup(b.dataset.chip, sel, side);
+  }));
   $("er-views")?.addEventListener("click", () => {
     showModal(`<div class="pm-head"><h2 id="pl-modal-title">Views</h2></div><div class="er-menu">${ER_VIEWS.map(([k, label]) => `<button type="button" data-ev="${k}" class="${erView() === k ? "on" : ""}">${label}${erView() === k ? " <span>✓</span>" : ""}</button>`).join("")}</div>`);
     $("pl-modal-body").querySelectorAll("[data-ev]").forEach((b) => b.addEventListener("click", () => {
@@ -3315,7 +3343,7 @@ async function openNotifications() {
   const head = `<div class="pm-head"><h2 id="pl-modal-title">🔔 Notifications</h2></div>`;
   if (state.demo) return showModal(`${head}<p class="muted">Notifications work on the real leagues, not the demo.</p>`);
   if (ios && !standalone) return showModal(`${head}<p>On iPhone, notifications only work in the home-screen app.</p>
-    <ol class="nt-steps"><li>In Safari, tap <strong>Share</strong> → <strong>Add to Home Screen</strong>.</li><li>Open the site from the new icon.</li><li>Tap <strong>🔔 Notifications</strong> at the bottom again.</li></ol><p class="muted small">Needs iOS 16.4 or later.</p>`);
+    <ol class="nt-steps"><li>In Safari, tap <strong>Share</strong> → <strong>Add to Home Screen</strong>.</li><li>Open the site from the new icon.</li><li>Tap the <strong>🔔 Alerts</strong> tile on the Roster tab again.</li></ol><p class="muted small">Needs iOS 16.4 or later.</p>`);
   if (!supported) return showModal(`${head}<p class="muted">This browser doesn't support notifications.</p>`);
   showModal(`${head}<div class="loading small"><span class="spinner"></span> Checking…</div>`);
   const reg = await navigator.serviceWorker.ready;
@@ -3386,8 +3414,8 @@ function ensureOwner() {
   return null;
 }
 function updateOwnerLink() {
-  const b = $("owner-btn");
-  if (b) b.textContent = store.get("ffb.owner") === "1" ? "Owner: signed in · Sign out" : "Owner sign-in";
+  const b = $("owner-btn"), on = store.get("ffb.owner") === "1";
+  if (b) { b.textContent = on ? "🔑 Sign out" : "🔑 Sign in"; b.title = on ? "Owner: signed in. Click to sign out" : "Owner sign-in"; }
 }
 function openOwnerSignIn() {
   if (store.get("ffb.owner") === "1") {
@@ -4173,7 +4201,8 @@ function updateEspnLink() {
   const a = $("espn-open");
   if (!a || !state.base) return;
   const chat = $("chat-open"), owner = !state.demo && !!ownerTeam();
-  if (chat) { chat.hidden = !owner; a.hidden = owner && !DESK.matches; if (owner) ensureChatBadge(); }
+  if (chat) { chat.hidden = !owner; a.hidden = owner; if (owner) ensureChatBadge(); }
+  document.body.classList.toggle("has-chatbar", !!chat && !chat.hidden && DESK.matches);
   const my = myTeamId(), season = state.base.season;
   a.href = my && state.base.teams[my]
     ? `${ESPN_FF}/team?leagueId=${espnLeague()}&teamId=${my}&seasonId=${season}`
@@ -4922,15 +4951,17 @@ function renderTradeAnalyzer() {
   }
 
   const teamOpts = (sel, exclude) => teamIds.filter((id) => id !== exclude).map((id) => `<option value="${id}" ${id === String(sel) ? "selected" : ""}>${esc(team(id).name)}</option>`).join("");
-  el.innerHTML = `<div class="section-head"><h2>Trade Analyzer</h2>
-      <label class="small muted ta-me">My team <select id="ta-my">${teamOpts(ta.my)}</select></label></div>
-    <div class="section-head" id="mock-trade"><h2>Mock trade</h2><span class="muted small">Any two teams · up to 3 players per side</span></div>
+  // Computers: the mock trade and trade ideas on the left; your team and free agents in a column on the right.
+  const desk = DESK.matches;
+  const meSel = `<label class="small muted ta-me">My team <select id="ta-my">${teamOpts(ta.my)}</select></label>`;
+  const mockSec = `<div class="section-head" id="mock-trade"><h2>Mock trade</h2><span class="muted small">Any two teams · up to 3 players per side</span></div>
     <div class="mock">
       <div class="card"><div class="mock-head">${logoImg(team(A), 22)}<select id="ta-a" aria-label="First team">${teamOpts(A)}</select></div><div class="mock-sends">sends</div>${pick(playersA, ta.give, "give")}</div>
+      ${desk ? `<div class="mock-x" aria-hidden="true">⇄</div>` : ""}
       <div class="card"><div class="mock-head">${logoImg(team(B), 22)}<select id="ta-b" aria-label="Second team">${teamOpts(B, A)}</select></div><div class="mock-sends">sends</div>${pick(playersB, ta.get, "get")}</div>
     </div>
-    <div class="card">${result}</div>
-    <div class="section-head"><h2>Your team</h2></div>
+    <div class="card ta-result">${result}</div>`;
+  const teamSec = `<div class="section-head"><h2>Your team</h2>${desk ? meSel : ""}</div>
     <div class="grid grid-awards">
       <div class="card award"><div class="label">Roster value</div><div class="value">${fmtVal(me.total)}</div><div class="why"><span class="${rkCls(L.ranks.total[ta.my])}">${rk(L.ranks.total[ta.my])}</span> in the league</div></div>
       <div class="card award"><div class="label">Starting lineup value</div><div class="value">${fmtVal(me.lineupValue)}</div><div class="why"><span class="${rkCls(L.ranks.lineup[ta.my])}">${rk(L.ranks.lineup[ta.my])}</span> in the league</div></div>
@@ -4940,16 +4971,24 @@ function renderTradeAnalyzer() {
     <div class="section-head"><h2>Team analysis</h2><span class="muted small">Your top players at each position vs. every other team</span></div>
     <div class="table-wrap"><table class="data ta-pos"><thead><tr><th>Pos</th><th>Your core players</th><th class="num">Value</th><th class="num">League rank</th><th class="num">vs. avg</th></tr></thead><tbody>${posRows}</tbody></table></div>
     <h3 class="ta-sub">What your team is lacking</h3>
-    <ul class="insights">${lacking.map((s) => `<li>${s}</li>`).join("")}</ul>
-    <div class="section-head"><h2>Potential adds</h2></div>
-    <h3 class="ta-sub">Best available free agents</h3>
+    <ul class="insights">${lacking.map((s) => `<li>${s}</li>`).join("")}</ul>`;
+  const faSec = `${desk ? `<div class="section-head"><h2>Best available free agents</h2></div>` : `<div class="section-head"><h2>Potential adds</h2></div>
+    <h3 class="ta-sub">Best available free agents</h3>`}
     <div class="grid grid-2 fa-grid">${faRows}</div>
-    <p class="small muted">Free agents or players on waivers. FantasyCalc only values QB, RB, WR and TE.</p>
+    <p class="small muted">Free agents or players on waivers. FantasyCalc only values QB, RB, WR and TE.</p>`;
+  const ideasSec = `${desk ? `<div class="section-head"><h2>Trade ideas</h2></div>` : ""}
     <h3 class="ta-sub">Win-win trades</h3>
     <p class="small muted">Fair trades (within 15% in value) where both teams' starting lineups get better.</p>
     <div class="grid targets">${winWinRows}</div>
     <h3 class="ta-sub">Trade targets</h3>
-    <div class="grid targets">${targetRows}</div>
+    <div class="grid targets">${targetRows}</div>`;
+  el.innerHTML = desk
+    ? `<div class="section-head"><h2>Trade Analyzer</h2></div>
+      <div class="ta-layout"><div class="ta-main">${mockSec}${ideasSec}</div><aside class="ta-side">${teamSec}${faSec}</aside></div>
+      ${fcCredit()}${nvCredit()}`
+    : `<div class="section-head"><h2>Trade Analyzer</h2>
+      ${meSel}</div>
+    ${mockSec}${teamSec}${faSec}${ideasSec}
     ${fcCredit()}${nvCredit()}`;
 
   $("ta-my").addEventListener("change", (e) => { ta.my = e.target.value; store.set(myKey, ta.my); updateEspnLink(); renderTradeAnalyzer(); });
@@ -5067,6 +5106,7 @@ function renderTransactions() {
   const involves = (m, teamId) => m.teamId === teamId || (m.sides || []).some((s) => s.teamId === teamId);
   const moves = a.moves.filter((m) => (f.kind === "all" || m.kind === f.kind) && (f.team === "ALL" || involves(m, +f.team)));
   const kindLabel = { waiver: "Waiver", freeagent: "Free agent", trade: "Trade" };
+  const desk = DESK.matches;
   const row = (m) => {
     const when = `<div class="tx-when">${fmtDate(m.date)}</div>`;
     if (m.kind === "trade") {
@@ -5074,6 +5114,10 @@ function renderTransactions() {
     }
     const lines = [...m.adds.map((id) => `<div class="tx-line add">+ ${player(id)}</div>`), ...m.drops.map((id) => `<div class="tx-line drop">− ${player(id)}</div>`)].join("");
     const bid = m.bid != null && m.kind === "waiver" ? `<div class="tx-bid">$${m.bid}</div>` : "";
+    // Computers: one line per move (when · team · added · dropped · bid).
+    if (desk) return `<div class="tx tx-row">${when}<div class="tx-who">${teamName(m.teamId, 22)}<span class="tx-kind ${m.kind}">${kindLabel[m.kind]}</span></div>
+      <div class="tx-adds">${m.adds.map((id) => `<div class="tx-line add">+ ${player(id)}</div>`).join("")}</div>
+      <div class="tx-drops">${m.drops.map((id) => `<div class="tx-line drop">− ${player(id)}</div>`).join("")}</div>${bid || `<div class="tx-bid"></div>`}</div>`;
     return `<div class="card tx">${when}<div class="tx-main"><div class="tx-head">${teamName(m.teamId, 26)}<span class="tx-kind ${m.kind}">${kindLabel[m.kind]}</span></div>${lines}</div>${bid}</div>`;
   };
   const groups = [];
@@ -5084,15 +5128,18 @@ function renderTransactions() {
   const teamOpts = Object.values(state.base.teams).sort((x, y) => x.name.localeCompare(y.name))
     .map((t) => `<option value="${t.id}" ${String(f.team) === String(t.id) ? "selected" : ""}>${esc(t.name)}</option>`).join("");
 
-  el.innerHTML = `${waiverSection()}<div class="section-head"><h2>Pending trades</h2><span class="muted small">Trades both teams accepted that haven't gone through yet</span></div>
-    ${pending}
-    <div class="section-head"><h2>Transactions</h2><span class="muted small">Waiver claims, free-agent moves and completed trades, newest first</span></div>
+  const sideHtml = `${waiverSection()}<div class="section-head"><h2>Pending trades</h2><span class="muted small">Trades both teams accepted that haven't gone through yet</span></div>
+    ${pending}`;
+  const mainHtml = `<div class="section-head"><h2>Transactions</h2><span class="muted small">Waiver claims, free-agent moves and completed trades, newest first</span></div>
     <div class="filters">
       <select id="tx-team" aria-label="Team"><option value="ALL">All teams</option>${teamOpts}</select>
       <div class="seg" id="tx-kind">${[["all", "All"], ["waiver", "Waivers"], ["freeagent", "Free agents"], ["trade", "Trades"]].map(([k, l]) => `<button data-k="${k}" class="${f.kind === k ? "active" : ""}">${l}</button>`).join("")}</div>
     </div>
-    ${groups.length ? groups.map((g) => `<h3 class="tx-week">${weekLabel(g.week)}</h3><div class="tx-list">${g.items.map(row).join("")}</div>`).join("") : `<p class="muted">No transactions match.</p>`}
-    ${hasValues ? fcCredit() : ""}`;
+    ${groups.length ? groups.map((g) => `<h3 class="tx-week">${weekLabel(g.week)}</h3><div class="tx-list${desk ? " card" : ""}">${g.items.map(row).join("")}</div>`).join("") : `<p class="muted">No transactions match.</p>`}`;
+  // Computers: the transaction feed on the left, waivers and pending trades in a column on the right.
+  el.innerHTML = desk
+    ? `<div class="mv-layout"><div class="mv-main">${mainHtml}</div><aside class="mv-side">${sideHtml}</aside></div>${hasValues ? fcCredit() : ""}`
+    : `${sideHtml}${mainHtml}${hasValues ? fcCredit() : ""}`;
   $("tx-team").addEventListener("change", (e) => { f.team = e.target.value; renderTransactions(); });
   $("tx-kind").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => { f.kind = b.dataset.k; renderTransactions(); }));
 }
