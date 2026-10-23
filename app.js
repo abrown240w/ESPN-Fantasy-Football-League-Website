@@ -2881,7 +2881,7 @@ function erGameLine(p) {
 // Signed-in owners get theirs automatically.
 function openPickTeam() {
   const mine = myTeamId(), owner = ownerTeam();
-  const head = `<div class="pm-head"><div><h2 id="pl-modal-title">👤 My team</h2><div class="muted small">${owner ? "You're signed in as the owner, so your team is set automatically." : "Pick your team and Live, Matchup and the Roster open on it. Saved on this device."}</div></div></div>`;
+  const head = `<div class="pm-head"><div><h2 id="pl-modal-title">👤 My team</h2><div class="muted small">${owner ? "You're signed in, so your team is set automatically." : "Pick your team and Live, Matchup and the Roster open on it. Saved on this device."}</div></div></div>`;
   if (owner) return showModal(`${head}<div class="mt-list"><div class="mt-pick on">${logoImg(team(owner), 30)}<span class="mt-main"><strong>${esc(team(owner).name)}</strong><span class="muted small">${esc(team(owner).owner)} · ${recordStr(team(owner))}</span></span><span class="pos">✓</span></div></div>`);
   const ids = Object.keys(state.base.teams).sort((a, b) => team(a).name.localeCompare(team(b).name));
   showModal(`${head}<div class="mt-list">${ids.map((id) => `<button type="button" class="mt-pick ${String(id) === String(mine) ? "on" : ""}" data-mypick="${esc(id)}">${logoImg(team(id), 30)}<span class="mt-main"><strong>${esc(team(id).name)}</strong><span class="muted small">${esc(team(id).owner)} · ${recordStr(team(id))}</span></span>${String(id) === String(mine) ? `<span class="pos">✓</span>` : ""}</button>`).join("")}</div>`);
@@ -3044,12 +3044,12 @@ function renderRoster() {
     chip("awards", "🏆", "Awards", nAwards == null ? "View" : `${nAwards} award${nAwards === 1 ? "" : "s"}`),
     // Phones: notifications and the owner sign-in live here (computers have them in the header).
     DESK.matches ? "" : chip("alerts", "🔔", "Alerts", "Settings"),
-    DESK.matches ? "" : chip("owner", "🔑", "Owner", store.get("ffb.owner") === "1" ? "Sign out" : "Sign in"),
+    DESK.matches ? "" : chip("owner", store.get("ffb.owner") === "1" ? "👤" : "🔑", "Account", store.get("ffb.owner") === "1" ? "Signed in" : "Sign in"),
   ].join("");
   const opts = ids.map((id) => `<option value="${id}" ${id === String(sel) ? "selected" : ""}>${esc(team(id).name)}</option>`).join("");
   const head = `<div class="card er-head">
       <div class="er-top">${logoImg(t, 48)}<div class="er-id">${ids.length > 1 ? `<label class="er-pick"><strong>${esc(t.name)} <span class="caret" aria-hidden="true">▾</span></strong><select id="roster-team" aria-label="Show team">${opts}</select></label>` : `<strong>${esc(t.name)}</strong>`}
-          <span class="muted small">${esc(t.owner)} · ${recordStr(t)} · ${ordinal(standing)} <button type="button" class="my-star ${isMine ? "on" : ""}" id="my-star" title="${ownerTeam() ? "Your team is set by the owner sign-in" : isMine ? "This is your team" : "Make this my team"}">${isMine ? "★" : "☆"}</button></span></div>
+          <span class="muted small">${esc(t.owner)} · ${recordStr(t)} · ${ordinal(standing)} <button type="button" class="my-star ${isMine ? "on" : ""}" id="my-star" title="${ownerTeam() ? "Your team is set by your ESPN sign-in" : isMine ? "This is your team" : "Make this my team"}">${isMine ? "★" : "☆"}</button></span></div>
         ${side ? `<div class="er-score"><strong>${st === "upcoming" ? "0.0" : f1(side.score)}</strong><small>${f1(st === "live" ? side.liveProj : side.proj)}</small></div>` : ""}</div>
       <div class="er-chips">${chips}</div></div>`;
   const viewLabel = ER_VIEWS.find(([k]) => k === erView())[1];
@@ -3388,8 +3388,8 @@ async function openNotifications() {
 }
 
 // ---------- Owner lineup editing ----------
-// Only the site owner can change lineups: a passphrase (stored only in Netlify) unlocks a device, and
-// the server checks every change. See netlify/functions/roster.mjs.
+// Changing your team needs a sign-in: your own connected ESPN account (or the site owner's passphrase),
+// and the server checks every change. See netlify/functions/roster.mjs.
 const slotOk = (p, slot) => slot === BENCH || (slot !== IR && p.eligible.includes(slot));
 const canSwap = (a, b) => a.id !== b.id && !b.locked && !a.locked && b.slotId !== IR && a.slotId !== b.slotId && slotOk(b, a.slotId) && slotOk(a, b.slotId);
 const slotName = (id) => (id === BENCH ? "Bench" : SLOT[id] || String(id));
@@ -3413,17 +3413,167 @@ function ensureOwner() {
     .finally(() => { updateOwnerLink(); updateEspnLink(); if (state.week && state.base) render(); });
   return null;
 }
+// ---------- Your ESPN account ----------
+// Anyone in the leagues connects their own ESPN sign-in (two cookies copied from a computer browser) so
+// their lineup, pickups, claims, trades and chat go to ESPN as them. Other devices sign in with a
+// one-time code. The site owner can still use the passphrase. See netlify/functions/roster.mjs.
+const signedInHere = () => store.get("ffb.owner") === "1";
 function updateOwnerLink() {
-  const b = $("owner-btn"), on = store.get("ffb.owner") === "1";
-  if (b) { b.textContent = on ? "🔑 Sign out" : "🔑 Sign in"; b.title = on ? "Owner: signed in. Click to sign out" : "Owner sign-in"; }
+  const b = $("owner-btn"), on = signedInHere();
+  if (b) { b.textContent = on ? "👤 Account" : "🔑 Sign in"; b.title = on ? "Your account: other devices, sign out" : "Connect your ESPN account"; }
 }
 function openOwnerSignIn() {
-  if (store.get("ffb.owner") === "1") {
-    fetch("/api/roster/logout", { method: "POST" }).finally(() => { store.set("ffb.owner", null); state.owner = null; state.lineupEdit = null; updateOwnerLink(); render(); });
-    return;
-  }
-  showModal(`<div class="pm-head"><h2 id="pl-modal-title">Owner sign-in</h2></div>
-    <p class="small muted">Unlocks lineup changes on this device for 90 days. Only the passphrase saved in Netlify works.</p>
+  if (signedInHere()) return openAccount();
+  openConnect();
+}
+// Signed in on this device (after connecting, a code, or the passphrase): reload who you are.
+function afterSignIn() {
+  store.set("ffb.owner", "1"); state.owner = null; state.pending = null; state.watch = null;
+  document.querySelector("#pl-modal .modal-close")?.click();
+  updateOwnerLink(); render();
+}
+function signOutHere(disconnect) {
+  fetch(`/api/roster/${disconnect ? "disconnect" : "logout"}`, { method: "POST" }).finally(() => {
+    store.set("ffb.owner", null); state.owner = null; state.lineupEdit = null; state.pending = null; state.watch = null;
+    document.querySelector("#pl-modal .modal-close")?.click();
+    updateOwnerLink(); render();
+  });
+}
+const CONNECT_STEPS = {
+  chrome: ["Press <kbd>F12</kbd> to open the developer tools. On a Mac, press <kbd>Cmd</kbd> + <kbd>Option</kbd> + <kbd>I</kbd>.",
+    "Open the <strong>Application</strong> tab (it may be hidden under <kbd>»</kbd>), then go to <span class=\"cx-path\">Storage › Cookies › https://fantasy.espn.com</span>"],
+  firefox: ["Press <kbd>F12</kbd> to open the developer tools. On a Mac, press <kbd>Cmd</kbd> + <kbd>Option</kbd> + <kbd>I</kbd>.",
+    "Open the <strong>Storage</strong> tab, then go to <span class=\"cx-path\">Cookies › https://fantasy.espn.com</span>"],
+  safari: ["First turn on Safari › Settings › Advanced › <strong>Show features for web developers</strong>. Then press <kbd>Cmd</kbd> + <kbd>Option</kbd> + <kbd>I</kbd>.",
+    "Open the <strong>Storage</strong> tab, then go to <span class=\"cx-path\">Cookies › fantasy.espn.com</span>"],
+};
+function openConnect() {
+  const ff = /Firefox\//.test(navigator.userAgent), sf = /Safari\//.test(navigator.userAgent) && !/Chrome|Chromium|Edg\//.test(navigator.userAgent);
+  let br = ff ? "firefox" : sf ? "safari" : "chrome";
+  const touch = matchMedia("(pointer: coarse)").matches && !DESK.matches;
+  showModal(`<div class="pm-head"><h2 id="pl-modal-title">🔑 Connect your ESPN account</h2></div>
+    <div class="cx">
+      ${touch ? `<div class="cx-code-first"><strong>On your phone?</strong> Connect on a computer first, then sign this phone in with a code.
+        <form class="cx-code" id="cx-redeem"><input id="cx-code-in" autocomplete="one-time-code" autocapitalize="characters" placeholder="Code from your computer" maxlength="12"><button type="submit">Sign in</button></form><p class="cx-err" id="cx-code-err"></p></div>` : ""}
+      <p class="cx-intro">Set your lineup, add and drop players, make waiver claims, send trades and chat for your own team from this site. ESPN doesn't offer a "sign in with ESPN" button, so you copy your sign-in from ESPN once. It takes about two minutes on a computer.</p>
+      <div class="seg cx-br" role="group" aria-label="Browser">${[["chrome", "Chrome or Edge"], ["firefox", "Firefox"], ["safari", "Safari"]].map(([k, l]) => `<button type="button" data-br="${k}" class="${br === k ? "active" : ""}">${l}</button>`).join("")}</div>
+      <ol class="cx-steps">
+        <li>On a computer, open <kbd>fantasy.espn.com</kbd> and make sure you're signed in to ESPN.</li>
+        <li id="cx-s2">${CONNECT_STEPS[br][0]}</li>
+        <li id="cx-s3">${CONNECT_STEPS[br][1]}</li>
+        <li>Type <kbd>espn_s2</kbd> in the filter box. Double-click its <strong>Value</strong>, copy it, and paste it below.<small>It's a long string of letters and symbols, about 300 characters.</small></li>
+        <li>Do the same for <kbd>SWID</kbd>.<small>Include the curly braces, like {1A2B3C4D-…}.</small></li>
+        <li>Press <strong>Connect</strong>. The site checks with ESPN and finds your team in each league.</li>
+      </ol>
+      <form id="cx-form" class="cx-form">
+        <label>espn_s2<textarea id="cx-s2v" rows="2" spellcheck="false" autocomplete="off" placeholder="AEBx7f3k…%2B9Qz"></textarea></label><p class="cx-err" id="cx-e1"></p>
+        <label>SWID<input id="cx-swv" spellcheck="false" autocomplete="off" placeholder="{1A2B3C4D-5E6F-7A8B-9C0D-1E2F3A4B5C6D}"></label><p class="cx-err" id="cx-e2"></p>
+        <div class="cx-go"><button type="submit" class="mv-go" id="cx-btn">Connect</button><span id="cx-msg" class="small"></span></div>
+      </form>
+      ${touch ? "" : `<details class="cx-more"><summary>Have a code from another device?</summary><form class="cx-code" id="cx-redeem"><input id="cx-code-in" autocomplete="one-time-code" autocapitalize="characters" placeholder="8-letter code" maxlength="12"><button type="submit">Sign in</button></form><p class="cx-err" id="cx-code-err"></p></details>`}
+      <p class="cx-safe">🔒 Your ESPN sign-in is stored encrypted and only used to make changes for your own team. Other managers can't see it. Disconnect any time from Account. Signing out of ESPN on all devices also cuts the site off. It stops working when ESPN signs you out (usually after several months); then you connect again.</p>
+      <button type="button" class="linkish cx-owner" id="cx-owner">Site owner? Sign in with the passphrase</button>
+    </div>`);
+  const body = $("pl-modal-body");
+  body.querySelectorAll("[data-br]").forEach((b) => b.addEventListener("click", () => {
+    br = b.dataset.br;
+    body.querySelectorAll("[data-br]").forEach((x) => x.classList.toggle("active", x === b));
+    $("cx-s2").innerHTML = CONNECT_STEPS[br][0]; $("cx-s3").innerHTML = CONNECT_STEPS[br][1];
+  }));
+  $("cx-owner").addEventListener("click", openPassphrase);
+  $("cx-s2v").addEventListener("input", () => { $("cx-e1").textContent = ""; });
+  $("cx-swv").addEventListener("input", () => { $("cx-e2").textContent = ""; });
+  $("cx-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const s2 = $("cx-s2v").value.trim(), swid = $("cx-swv").value.trim(), msg = $("cx-msg");
+    let bad = false;
+    if (s2.length < 60) { $("cx-e1").textContent = s2 ? "That looks too short. Copy the whole espn_s2 value." : "Paste your espn_s2 value first."; bad = true; }
+    if (!/^\{?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\}?$/i.test(swid)) { $("cx-e2").textContent = swid ? "That doesn't look like a SWID. It looks like {1A2B3C4D-…}." : "Paste your SWID value first."; bad = true; }
+    if (bad) return;
+    if (state.demo) { msg.textContent = "Connecting works on the real leagues, not the demo."; return; }
+    const btn = $("cx-btn");
+    btn.disabled = true; msg.className = "small muted"; msg.textContent = "Checking with ESPN…";
+    try {
+      const r = await fetch("/api/roster/connect", { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ s2, swid, leagues: LEAGUES.map((l) => ({ id: l.id, season: state.base.season })) }) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.message || "Couldn't connect. Try again.");
+      if (d.history) state.history = null; // seasons that couldn't be read before are saved now
+      const n = Object.keys(d.teams || {}).length;
+      msg.className = "small pos";
+      msg.textContent = `Connected${d.name ? ` as ${d.name}` : ""}: your team in ${n} league${n === 1 ? "" : "s"}.`;
+      setTimeout(afterSignIn, 900);
+    } catch (err) { msg.className = "small neg"; msg.textContent = err.message; btn.disabled = false; }
+  });
+  bindRedeem();
+}
+function bindRedeem() {
+  const f = $("cx-redeem");
+  f?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const err = $("cx-code-err"), btn = f.querySelector("button");
+    btn.disabled = true; err.textContent = "";
+    try { await redeemCode($("cx-code-in").value); afterSignIn(); }
+    catch (x) { err.textContent = x.message; btn.disabled = false; }
+  });
+}
+async function redeemCode(code) {
+  const r = await fetch("/api/roster/redeem", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ code }) });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.message || "That code didn't work.");
+}
+// Account: who you're signed in as, sign another device in, sign out, disconnect.
+function openAccount() {
+  const o = ensureOwner(), mgr = o?.kind === "manager", t = ownerTeam();
+  showModal(`<div class="pm-head"><h2 id="pl-modal-title">👤 Your account</h2></div>
+    <div class="cx">
+      ${o?.expired ? `<div class="banner">Your ESPN connection has run out (ESPN signed you out). Connect again to keep making changes.</div><button type="button" class="mv-go" id="ac-reconnect">Connect again</button>` : ""}
+      <p>${mgr ? `Signed in as <strong>${esc(o.name || "a league manager")}</strong>` : o?.kind === "owner" ? "Signed in as the <strong>site owner</strong> (passphrase)" : "Signed in"}${t ? ` · ${teamName(t, 20)}` : ""}</p>
+      ${mgr ? `<div class="ac-block"><strong>Sign in on another device</strong><p class="small muted">Get a one-time code, then on your phone open the site, tap 🔑 Sign in, and type it (or scan the QR code with the phone's camera).</p>
+        <button type="button" id="ac-code">Get a code</button><div id="ac-code-out"></div></div>` : ""}
+      <div class="ac-actions"><button type="button" id="ac-out">Sign out on this device</button>
+        ${mgr ? `<button type="button" class="ac-danger" id="ac-disc">Disconnect ESPN</button>` : ""}</div>
+      ${mgr ? `<p class="small muted">Disconnect deletes your saved ESPN sign-in from the site and signs out every device.</p>` : ""}
+    </div>`);
+  $("ac-reconnect")?.addEventListener("click", openConnect);
+  $("ac-out").addEventListener("click", () => signOutHere(false));
+  $("ac-disc")?.addEventListener("click", () => { if (confirm("Disconnect your ESPN account from this site? Every device you signed in will be signed out.")) signOutHere(true); });
+  $("ac-code")?.addEventListener("click", async (e) => {
+    const out = $("ac-code-out");
+    e.target.disabled = true;
+    try {
+      const r = await fetch("/api/roster/handoff", { method: "POST" });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.message || "Couldn't make a code.");
+      const nice = `${d.code.slice(0, 4)}-${d.code.slice(4)}`, link = `${location.origin}/?connect=${d.code}`;
+      out.innerHTML = `<div class="ac-code"><span>${nice}</span><small>Works once, for 10 minutes</small></div><div id="ac-qr" class="ac-qr"></div>`;
+      loadQr().then((QR) => { if ($("ac-qr")) new QR($("ac-qr"), { text: link, width: 168, height: 168, correctLevel: QR.CorrectLevel.M }); }).catch(() => {});
+    } catch (x) { out.innerHTML = `<p class="small neg">${esc(x.message)}</p>`; }
+    e.target.disabled = false;
+  });
+}
+// QR codes: a small library, loaded only when a code is shown.
+function loadQr() {
+  if (window.QRCode) return Promise.resolve(window.QRCode);
+  return new Promise((ok, no) => {
+    const s = document.createElement("script");
+    s.src = "https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js";
+    s.onload = () => ok(window.QRCode); s.onerror = no;
+    document.head.appendChild(s);
+  });
+}
+// A sign-in link from a QR code (?connect=CODE): use it, then tidy the address.
+if (params.get("connect")) {
+  const code = params.get("connect");
+  params.delete("connect");
+  history.replaceState(null, "", `${location.pathname}${params.toString() ? `?${params}` : ""}${location.hash}`);
+  redeemCode(code).then(() => { store.set("ffb.owner", "1"); state.owner = null; updateOwnerLink(); if (state.week) render(); })
+    .catch((e) => alert(e.message));
+}
+// The site owner's passphrase sign-in (acts with the ESPN sign-in saved in Netlify).
+function openPassphrase() {
+  showModal(`<div class="pm-head"><h2 id="pl-modal-title">Site owner sign-in</h2></div>
+    <p class="small muted">Unlocks changes on this device for 90 days. Only the passphrase saved in Netlify works.</p>
     <form id="owner-form" class="owner-form"><input id="owner-pass" type="password" autocomplete="current-password" placeholder="Passphrase" required>
       <button type="submit">Sign in</button></form><p id="owner-msg" class="small"></p>`);
   $("owner-pass").focus();
@@ -3435,9 +3585,7 @@ function openOwnerSignIn() {
       const r = await fetch("/api/roster/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ passphrase: $("owner-pass").value }) });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(d.message || "Couldn't sign in.");
-      store.set("ffb.owner", "1"); state.owner = null;
-      document.querySelector("#pl-modal .modal-close").click();
-      updateOwnerLink(); render();
+      afterSignIn();
     } catch (err) { msg.textContent = err.message; btn.disabled = false; }
   });
 }
@@ -3605,7 +3753,7 @@ async function openWaiverRun(at) {
   const won = d.claims.filter((c) => c.status === "EXECUTED").length;
   showModal(`<div class="pm-head"><div><h2 id="pl-modal-title">📋 Waiver results</h2><div class="muted small">${d.at ? fmtWhen(d.at) : ""}${d.claims.length ? ` · ${won} won${d.owner ? ` · ${d.claims.length - won} missed` : ""}` : ""}</div></div></div>
     ${d.claims.length ? `<p class="muted small">In the order ESPN processed them.</p><div class="wr-list">${rows}</div>` : `<p class="muted">No processed claims found for that run.</p>`}
-    ${d.hidden ? `<p class="muted small">${d.hidden} claim${d.hidden === 1 ? "" : "s"} that didn't go through ${d.hidden === 1 ? "is" : "are"} hidden. Sign in as the owner to see them.</p>` : ""}`);
+    ${d.hidden ? `<p class="muted small">${d.hidden} claim${d.hidden === 1 ? "" : "s"} that didn't go through ${d.hidden === 1 ? "is" : "are"} hidden. Sign in to see yours.</p>` : ""}`);
 }
 // Demo: a made-up run from this week's waiver players.
 function demoWaiverRun() {
@@ -4919,7 +5067,15 @@ function renderTradeAnalyzer() {
         <button type="button" class="mock-rm" data-rm="${name}" data-id="${p.id}" aria-label="Remove ${esc(p.name)}">×</button></div>`).join("");
     const add = ids.length >= 3 ? "" : `<select data-side="${name}" aria-label="Add player"><option value="">${ids.length ? "+ Add player" : "Choose a player"}</option>
       ${list.filter((p) => !ids.includes(String(p.id))).map((p) => `<option value="${p.id}">${esc(p.name)} (${p.pos}) · ${fmtVal(p.value)}</option>`).join("")}</select>`;
-    return chips + add;
+    if (!DESK.matches) return chips + add;
+    // Computers: the team's whole roster (starters, bench, IR) with a tap to add or remove each player.
+    const order = (x) => (x.slotId === IR ? 3 : x.slotId === BENCH ? 2 : 1) * 100 + (POS_ORDER.indexOf(x.pos) + 1) * 10 - Math.min(9, x.value / 1000);
+    const full = ids.length >= 3;
+    const row = (x) => { const on = ids.includes(String(x.id)); return `<button type="button" class="mock-pl ${on ? "on" : ""}" data-tg="${name}" data-id="${x.id}" ${!on && full ? "disabled" : ""}>
+        <span class="mock-ck">${on ? "✓" : "+"}</span><span class="mock-pl-slot">${esc(x.slotId === IR ? "IR" : x.slotId === BENCH ? "BE" : SLOT[x.slotId] || x.pos)}</span>
+        <span class="mock-pl-nm">${esc(x.name)}<small>${esc(x.pos)}${x.nfl ? ` · ${esc(x.nfl)}` : ""}${injBadge(x)}</small></span><span class="mock-pl-val">${x.value ? fmtVal(x.value) : "–"}</span></button>`; };
+    const sorted = [...list].sort((a, b) => order(a) - order(b));
+    return `${chips}<div class="mock-roster">${sorted.map(row).join("")}</div>${full ? `<p class="small muted">Up to 3 players per side.</p>` : ""}`;
   };
   const sendA = ta.give.map((id) => playersA.find((p) => String(p.id) === String(id))).filter(Boolean);
   const sendB = ta.get.map((id) => playersB.find((p) => String(p.id) === String(id))).filter(Boolean);
@@ -4954,13 +5110,15 @@ function renderTradeAnalyzer() {
   // Computers: the mock trade and trade ideas on the left; your team and free agents in a column on the right.
   const desk = DESK.matches;
   const meSel = `<label class="small muted ta-me">My team <select id="ta-my">${teamOpts(ta.my)}</select></label>`;
+  // Computers: the grade sits above the two full rosters, so it updates in view as players are picked.
   const mockSec = `<div class="section-head" id="mock-trade"><h2>Mock trade</h2><span class="muted small">Any two teams · up to 3 players per side</span></div>
+    ${desk ? `<div class="card ta-result">${result}</div>` : ""}
     <div class="mock">
       <div class="card"><div class="mock-head">${logoImg(team(A), 22)}<select id="ta-a" aria-label="First team">${teamOpts(A)}</select></div><div class="mock-sends">sends</div>${pick(playersA, ta.give, "give")}</div>
       ${desk ? `<div class="mock-x" aria-hidden="true">⇄</div>` : ""}
       <div class="card"><div class="mock-head">${logoImg(team(B), 22)}<select id="ta-b" aria-label="Second team">${teamOpts(B, A)}</select></div><div class="mock-sends">sends</div>${pick(playersB, ta.get, "get")}</div>
     </div>
-    <div class="card ta-result">${result}</div>`;
+    ${desk ? "" : `<div class="card ta-result">${result}</div>`}`;
   const teamSec = `<div class="section-head"><h2>Your team</h2>${desk ? meSel : ""}</div>
     <div class="grid grid-awards">
       <div class="card award"><div class="label">Roster value</div><div class="value">${fmtVal(me.total)}</div><div class="why"><span class="${rkCls(L.ranks.total[ta.my])}">${rk(L.ranks.total[ta.my])}</span> in the league</div></div>
@@ -5016,6 +5174,13 @@ function renderTradeAnalyzer() {
     if (!s.value) return;
     ta[s.dataset.side] = [...ta[s.dataset.side], s.value].filter((v, i, a) => v && a.indexOf(v) === i).slice(0, 3);
     renderTradeAnalyzer();
+  }));
+  el.querySelectorAll("[data-tg]").forEach((b) => b.addEventListener("click", () => {
+    const k = b.dataset.tg, id = b.dataset.id;
+    ta[k] = ta[k].map(String).includes(id) ? ta[k].filter((x) => String(x) !== id) : [...ta[k], id].slice(0, 3);
+    const y = scrollY;
+    renderTradeAnalyzer();
+    scrollTo(scrollX, y);
   }));
   el.querySelectorAll("[data-rm]").forEach((b) => b.addEventListener("click", () => {
     ta[b.dataset.rm] = ta[b.dataset.rm].filter((id) => String(id) !== b.dataset.id);

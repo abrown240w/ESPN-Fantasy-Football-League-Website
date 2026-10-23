@@ -3,7 +3,10 @@
 // function forwards the request. Configure LEAGUE_ID (and optionally SEASON,
 // ESPN_S2 + SWID for private leagues) in Netlify > Site configuration > Environment variables.
 
+import { getStore } from "@netlify/blobs";
+
 const ESPN_BASE = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl";
+const HIST_VIEWS = ["mTeam", "mSettings", "mStandings", "mMatchupScore"];
 const ALLOWED_VIEWS = new Set([
   "mTeam", "mSettings", "mStatus", "mMatchup", "mMatchupScore",
   "mBoxscore", "mRoster", "mStandings", "mScoreboard",
@@ -54,6 +57,12 @@ export default async (req) => {
   }
 
   if (res.status === 401 || res.status === 403) {
+    // A past season the site's own sign-in can't read may have been saved when a manager who was in the
+    // league that year connected (roster.mjs backfillHistory). Past seasons never change.
+    if (views.length && views.every((v) => HIST_VIEWS.includes(v))) {
+      const saved = await getStore({ name: "history", consistency: "strong" }).get(`${leagueId}:${season}`, { type: "json" }).catch(() => null);
+      if (saved?.data) return json(200, saved.data, { "cache-control": "public, max-age=3600", "netlify-cdn-cache-control": "public, max-age=86400" });
+    }
     return json(401, { error: "private", message: process.env.ESPN_S2 && process.env.SWID ? "ESPN didn't allow access to this league. The ESPN sign-in saved in Netlify (ESPN_S2 / SWID) may have expired, or that account isn't in this league." : "ESPN says this league is private. Make it public in League Settings, or add ESPN_S2 and SWID env vars." });
   }
   if (res.status === 404) {

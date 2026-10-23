@@ -1,6 +1,17 @@
-// Owner-only lineup changes, sent to ESPN with the ESPN sign-in saved in Netlify (ESPN_S2 / SWID).
+// Lineup changes, pickups, claims, trades and chat, sent to ESPN as the manager making them.
 //
-// Locked down so only the site owner can use it:
+// Two ways to be signed in:
+//   • Connected manager: anyone in the leagues pastes their own ESPN sign-in (espn_s2 + SWID cookies) once
+//     (POST /connect). It's checked with ESPN, encrypted (AES-256-GCM, key derived from ROSTER_PASSPHRASE,
+//     so changing the passphrase disconnects everyone) and kept in Netlify Blobs ("managers"); the device
+//     gets an HttpOnly cookie (ffb_mgr) pointing at it. Every request then acts with that manager's own
+//     ESPN sign-in, so ESPN only lets them touch their own team. Other devices (phones) sign in with a
+//     one-time 10-minute code (POST /handoff, /redeem).
+//     When a manager connects, past seasons the site's own sign-in can't read (ESPN only shows a season
+//     to people who were in the league that year) are read once with theirs and saved for the History tab.
+//   • Site owner: the passphrase sign-in below, acting with the ESPN sign-in saved in Netlify.
+//
+// The owner sign-in is locked down so only the site owner can use it:
 //   • You unlock a device with a passphrase stored only in Netlify (ROSTER_PASSPHRASE, 12+ characters).
 //     That sets an HttpOnly, SameSite=Strict cookie, signed with a key derived from the passphrase and
 //     SWID, good for 90 days. Changing the passphrase signs every device out.
@@ -27,8 +38,12 @@
 //         POST /api/roster/cancel {leagueId, season, teamId, txId, kind: claim | trade-out | trade-in}
 //         POST /api/roster/pushowner {endpoint, leagueId}  (marks this device's alerts as the owner's, so
 //                                    waiver reports can include missed claims)
+//         POST /api/roster/connect {s2, swid, leagues: [{id, season}]}   connect your own ESPN sign-in
+//         POST /api/roster/disconnect   delete your saved ESPN sign-in (signs out every device)
+//         POST /api/roster/handoff      a one-time code to sign another device in · POST /api/roster/redeem {code}
 
-import { createHmac, createHash, timingSafeEqual } from "node:crypto";
+import { createHmac, createHash, timingSafeEqual, createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
+import { getStore } from "@netlify/blobs";
 import { store as pushStore, subKey, waiverOrder } from "../lib/push-common.mjs";
 
 const READS = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl";
@@ -40,7 +55,7 @@ let chatMedia = { at: 0, season: null, gifs: {}, stickers: {} };
 async function loadChatMedia(season) {
   if (chatMedia.season === season && Date.now() - chatMedia.at < 6 * 3600e3) return chatMedia;
   try {
-    const r = await fetch(`${READS}/seasons/${season}/?view=chat_settings&platform=chat`, { headers: { accept: "application/json", "user-agent": "Mozilla/5.0 (fantasy-dashboard)", cookie: `espn_s2=${process.env.ESPN_S2}; SWID=${process.env.SWID}` } });
+    const r = await fetch(`${READS}/seasons/${season}/?view=chat_settings&platform=chat`, { headers: { accept: "application/json", "user-agent": "Mozilla/5.0 (fantasy-dashboard)", cookie: `espn_s2=${C.s2}; SWID=${C.swid}` } });
     const cs = (await r.json())?.settings?.communicationSettings || {};
     const map = (list) => Object.fromEntries((list || []).filter((x) => x.url).map((x) => [x.id, x.url]));
     chatMedia = { at: Date.now(), season, gifs: map(cs.gifSources), stickers: map(cs.stickerSources) };
@@ -54,14 +69,21 @@ function defaultSeason() {
 }
 const json = (status, body, headers = {}) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", "cache-control": "no-store", ...headers } });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const swidRaw = () => (process.env.SWID || "").replace(/[{}]/g, "").toUpperCase();
-const secret = () => createHash("sha256").update(`ffb-owner:${process.env.ROSTER_PASSPHRASE}:${swidRaw()}`).digest();
+// The ESPN sign-in this request acts with: the connected manager's own, or the one saved in Netlify.
+// (Each function instance handles one request at a time, so a module-level value is safe.)
+const envCred = () => ({ s2: process.env.ESPN_S2 || "", swid: process.env.SWID || "" });
+let C = envCred();
+let WHO = null; // { kind: "owner" } or { kind: "manager", id, name }
+const normSwid = (s) => String(s || "").replace(/[{}]/g, "").toUpperCase();
+const swidRaw = () => normSwid(C.swid);
+const secret = () => createHash("sha256").update(`ffb-owner:${process.env.ROSTER_PASSPHRASE}:${normSwid(process.env.SWID)}`).digest();
 const sign = (exp) => createHmac("sha256", secret()).update(`owner|${exp}`).digest("base64url");
 const same = (a, b) => {
   const x = createHash("sha256").update(String(a)).digest(), y = createHash("sha256").update(String(b)).digest();
   return timingSafeEqual(x, y);
 };
-function signedIn(req) {
+const signedIn = () => !!WHO;
+function ownerCookie(req) {
   if (!process.env.ROSTER_PASSPHRASE) return false;
   const m = new RegExp(`(?:^|;\\s*)${COOKIE}=([^;]+)`).exec(req.headers.get("cookie") || "");
   if (!m) return false;
@@ -69,6 +91,64 @@ function signedIn(req) {
   return Number(exp) > Date.now() / 1000 && !!sig && same(sig, sign(exp));
 }
 const cookie = (value, maxAge) => `${COOKIE}=${value}; Path=/api/roster; HttpOnly; Secure; SameSite=Strict; Max-Age=${maxAge}`;
+
+// ---------- Connected managers ----------
+const MGR = "ffb_mgr";
+const managers = () => getStore({ name: "managers", consistency: "strong" });
+const mgrId = (swid) => createHash("sha256").update(`mgr:${normSwid(swid)}`).digest("hex").slice(0, 24);
+const msign = (id, exp) => createHmac("sha256", secret()).update(`mgr|${id}|${exp}`).digest("base64url");
+const mcookie = (value, maxAge) => `${MGR}=${value}; Path=/api/roster; HttpOnly; Secure; SameSite=Strict; Max-Age=${maxAge}`;
+const mgrCookieFor = (id) => { const exp = Math.floor(Date.now() / 1000) + MAX_AGE; return mcookie(`${id}.${exp}.${msign(id, exp)}`, MAX_AGE); };
+const encKey = () => createHash("sha256").update(`ffb-mgr-key:${process.env.ROSTER_PASSPHRASE}`).digest();
+function seal(text) {
+  const iv = randomBytes(12), c = createCipheriv("aes-256-gcm", encKey(), iv);
+  const enc = Buffer.concat([c.update(text, "utf8"), c.final()]);
+  return [iv, c.getAuthTag(), enc].map((b) => b.toString("base64url")).join(".");
+}
+function unseal(s) {
+  const [iv, tag, enc] = String(s).split(".").map((x) => Buffer.from(x, "base64url"));
+  const d = createDecipheriv("aes-256-gcm", encKey(), iv);
+  d.setAuthTag(tag);
+  return Buffer.concat([d.update(enc), d.final()]).toString("utf8");
+}
+// Who's asking: a connected manager (their own ESPN sign-in) or the site owner (the saved one).
+async function resolve(req) {
+  C = envCred(); WHO = null;
+  const m = new RegExp(`(?:^|;\\s*)${MGR}=([^;]+)`).exec(req.headers.get("cookie") || "");
+  if (m) {
+    const [id, exp, sig] = m[1].split(".");
+    if (id && Number(exp) > Date.now() / 1000 && sig && same(sig, msign(id, exp))) {
+      const rec = await managers().get(`m:${id}`, { type: "json" }).catch(() => null);
+      if (rec) {
+        try { C = { s2: unseal(rec.s2), swid: rec.swid }; WHO = { kind: "manager", id, name: rec.name || "" }; return; } catch { /* key changed: treat as signed out */ }
+      }
+    }
+  }
+  if (ownerCookie(req)) WHO = { kind: "owner" };
+}
+// Several Set-Cookie headers on one response.
+function withCookies(res, cookies) {
+  const h = new Headers(res.headers);
+  for (const c of cookies) h.append("set-cookie", c);
+  return new Response(res.body, { status: res.status, headers: h });
+}
+// Past seasons the site's own sign-in can't read, read once with a connected manager's and saved
+// (store "history", key "<leagueId>:<season>") for /api/espn to serve on the History tab.
+const HIST_VIEWS = ["mTeam", "mSettings", "mStandings", "mMatchupScore"];
+async function backfillHistory(leagueId, season) {
+  const hs = getStore({ name: "history", consistency: "strong" });
+  let saved = 0, years = [];
+  try { years = (await espnRead(leagueId, season, ["mStatus"])).status?.previousSeasons || []; } catch { return 0; }
+  for (const y of years) {
+    const key = `${leagueId}:${y}`;
+    if (await hs.get(key).catch(() => null)) continue;
+    const env = envCred();
+    const siteCanRead = await fetch(`${READS}/seasons/${y}/segments/0/leagues/${leagueId}?view=mTeam`, { headers: { accept: "application/json", "user-agent": "Mozilla/5.0 (fantasy-dashboard)", cookie: `espn_s2=${env.s2}; SWID=${env.swid}` } }).then((r) => r.ok).catch(() => true);
+    if (siteCanRead) continue;
+    try { await hs.setJSON(key, { at: Date.now(), data: await espnRead(leagueId, y, HIST_VIEWS) }); saved++; } catch { /* that manager wasn't in it either */ }
+  }
+  return saved;
+}
 // Requests that change something must come from a page on this site.
 function sameOrigin(req) {
   const origin = req.headers.get("origin");
@@ -77,8 +157,8 @@ function sameOrigin(req) {
 async function espnRead(leagueId, season, views) {
   const u = new URL(`${READS}/seasons/${season}/segments/0/leagues/${leagueId}`);
   for (const v of views) u.searchParams.append("view", v);
-  const res = await fetch(u, { headers: { accept: "application/json", "user-agent": "Mozilla/5.0 (fantasy-dashboard)", cookie: `espn_s2=${process.env.ESPN_S2}; SWID=${process.env.SWID}` } });
-  if (!res.ok) throw new Error(`ESPN returned ${res.status}`);
+  const res = await fetch(u, { headers: { accept: "application/json", "user-agent": "Mozilla/5.0 (fantasy-dashboard)", cookie: `espn_s2=${C.s2}; SWID=${C.swid}` } });
+  if (!res.ok) throw Object.assign(new Error(`ESPN returned ${res.status}`), { status: res.status });
   return res.json();
 }
 const ownedTeams = (data) => (data.teams || []).filter((t) => (t.owners || []).some((o) => String(o).toUpperCase().replace(/[{}]/g, "") === swidRaw())).map((t) => t.id);
@@ -99,7 +179,7 @@ async function espnWrite(leagueId, season, payload, log) {
       headers: {
         "content-type": "application/json", accept: "application/json", "user-agent": "Mozilla/5.0 (fantasy-dashboard)",
         origin: "https://fantasy.espn.com", referer: "https://fantasy.espn.com/",
-        cookie: `espn_s2=${process.env.ESPN_S2}; SWID=${process.env.SWID}`,
+        cookie: `espn_s2=${C.s2}; SWID=${C.swid}`,
       },
       body: JSON.stringify(payload),
     });
@@ -120,6 +200,7 @@ export default async (req, context) => {
     return json(503, { error: "not_configured", message: "Lineup editing isn't set up. Add ROSTER_PASSPHRASE (12+ characters) in Netlify, alongside ESPN_S2 and SWID." });
   }
   const ip = context.ip || req.headers.get("x-nf-client-connection-ip") || "?";
+  await resolve(req);
 
   if (action === "login" && req.method === "POST") {
     if (!sameOrigin(req)) return json(403, { error: "origin", message: "Sign in from the site itself." });
@@ -130,7 +211,7 @@ export default async (req, context) => {
       fails.delete(ip);
       const exp = Math.floor(Date.now() / 1000) + MAX_AGE;
       console.log(JSON.stringify({ event: "owner_login", ip, at: new Date().toISOString() }));
-      return json(200, { signedIn: true }, { "set-cookie": cookie(`${exp}.${sign(exp)}`, MAX_AGE) });
+      return withCookies(json(200, { signedIn: true }), [cookie(`${exp}.${sign(exp)}`, MAX_AGE), mcookie("", 0)]);
     }
     const n = (f?.n || 0) + 1;
     fails.set(ip, { n, until: n >= 5 ? Date.now() + 15 * 60e3 : 0 });
@@ -140,23 +221,105 @@ export default async (req, context) => {
   }
 
   if (action === "logout" && req.method === "POST") {
-    return json(200, { signedIn: false }, { "set-cookie": cookie("", 0) });
+    return withCookies(json(200, { signedIn: false }), [cookie("", 0), mcookie("", 0)]);
+  }
+
+  // Connect your own ESPN sign-in. Checked with ESPN, then kept encrypted; only works if that account
+  // manages a team in one of the site's leagues.
+  if (action === "connect" && req.method === "POST") {
+    if (!sameOrigin(req)) return json(403, { error: "origin", message: "Connect from the site itself." });
+    const f = fails.get(ip);
+    if (f?.until > Date.now()) return json(429, { error: "locked", message: "Too many tries. Wait 15 minutes." });
+    const bad = async (status, body) => { const n = (fails.get(ip)?.n || 0) + 1; fails.set(ip, { n, until: n >= 8 ? Date.now() + 15 * 60e3 : 0 }); await sleep(800); return json(status, body); };
+    const b = await req.json().catch(() => ({}));
+    const s2 = String(b.s2 || "").trim(), raw = normSwid(String(b.swid || "").trim());
+    if (s2.length < 60 || s2.length > 2000 || /[\s;]/.test(s2)) return bad(400, { error: "bad_s2", message: "That espn_s2 doesn't look right. Copy the whole value." });
+    if (!/^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/.test(raw)) return bad(400, { error: "bad_swid", message: "That SWID doesn't look right. It looks like {1A2B3C4D-…}." });
+    const leagues = (Array.isArray(b.leagues) ? b.leagues : []).slice(0, 10).map((l) => ({ id: String(l?.id || ""), season: String(l?.season || defaultSeason()) })).filter((l) => validLeague(l.id, l.season));
+    if (!leagues.length) return json(400, { error: "bad_request", message: "Missing leagues." });
+    C = { s2, swid: `{${raw}}` };
+    // Is the sign-in still good? (Same check as /api/auth.)
+    try {
+      const r = await fetch(`https://fan.api.espn.com/apis/v2/fans/${encodeURIComponent(C.swid)}?displayEvents=false&displayNow=false&displayRecs=false&displayHiddenPrefs=false`, { headers: { accept: "application/json", "user-agent": "Mozilla/5.0 (fantasy-dashboard)", cookie: `espn_s2=${C.s2}; SWID=${C.swid}` } });
+      if (r.status === 401 || r.status === 403) return bad(401, { error: "espn_rejected", message: "ESPN didn't accept that sign-in. Make sure you're signed in on fantasy.espn.com, then copy both values again." });
+      if (r.status === 404) return bad(400, { error: "bad_swid", message: "ESPN doesn't know that SWID. Copy it again, including the braces." });
+    } catch { return json(502, { error: "upstream", message: "Couldn't reach ESPN. Try again in a minute." }); }
+    // Which teams are theirs in each league.
+    const teams = {};
+    let name = "";
+    for (const l of leagues) {
+      try {
+        const d = await espnRead(l.id, l.season, ["mTeam"]);
+        const mine = ownedTeams(d);
+        if (mine.length) teams[l.id] = mine;
+        const me = (d.members || []).find((m) => normSwid(m.id) === raw);
+        if (me && !name) name = [me.firstName, me.lastName].filter(Boolean).join(" ") || me.displayName || "";
+      } catch { /* not in that league */ }
+    }
+    if (!Object.keys(teams).length) return bad(403, { error: "not_member", message: "That ESPN account doesn't manage a team in these leagues." });
+    fails.delete(ip);
+    const id = mgrId(raw), store = managers();
+    const prev = await store.get(`m:${id}`, { type: "json" }).catch(() => null);
+    await store.setJSON(`m:${id}`, { swid: `{${raw}}`, s2: seal(s2), name, teams, created: prev?.created || Date.now(), updated: Date.now() });
+    console.log(JSON.stringify({ event: "manager_connect", id, name, teams, ip, at: new Date().toISOString() }));
+    let history = 0;
+    for (const l of leagues) if (teams[l.id]) history += await backfillHistory(l.id, l.season).catch(() => 0);
+    return withCookies(json(200, { signedIn: true, kind: "manager", name, teams, history }), [mgrCookieFor(id), cookie("", 0)]);
+  }
+
+  // Forget your saved ESPN sign-in (every device you signed in is signed out).
+  if (action === "disconnect" && req.method === "POST") {
+    if (!sameOrigin(req)) return json(403, { error: "origin" });
+    if (WHO?.kind === "manager") {
+      await managers().delete(`m:${WHO.id}`).catch(() => {});
+      console.log(JSON.stringify({ event: "manager_disconnect", id: WHO.id, at: new Date().toISOString() }));
+    }
+    return withCookies(json(200, { signedIn: false }), [cookie("", 0), mcookie("", 0)]);
+  }
+
+  // A one-time code (10 minutes) to sign another device in as the same manager.
+  if (action === "handoff" && req.method === "POST") {
+    if (WHO?.kind !== "manager") return json(401, { error: "signed_out", message: "Connect your ESPN account first." });
+    if (!sameOrigin(req)) return json(403, { error: "origin" });
+    const abc = "ABCDEFGHJKMNPQRSTUVWXYZ23456789", bytes = randomBytes(8);
+    const code = [...bytes].map((x) => abc[x % abc.length]).join("");
+    const expires = Date.now() + 10 * 60e3;
+    await managers().setJSON(`h:${code}`, { id: WHO.id, expires });
+    return json(200, { code, expires });
+  }
+  if (action === "redeem" && req.method === "POST") {
+    if (!sameOrigin(req)) return json(403, { error: "origin" });
+    const f = fails.get(ip);
+    if (f?.until > Date.now()) return json(429, { error: "locked", message: "Too many tries. Wait 15 minutes." });
+    const b = await req.json().catch(() => ({}));
+    const code = String(b.code || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+    const store = managers(), h = code.length === 8 ? await store.get(`h:${code}`, { type: "json" }).catch(() => null) : null;
+    if (!h || h.expires < Date.now() || !(await store.get(`m:${h.id}`).catch(() => null))) {
+      const n = (f?.n || 0) + 1; fails.set(ip, { n, until: n >= 8 ? Date.now() + 15 * 60e3 : 0 });
+      await sleep(800);
+      return json(400, { error: "bad_code", message: "That code didn't work. Codes last 10 minutes and work once." });
+    }
+    await store.delete(`h:${code}`).catch(() => {});
+    fails.delete(ip);
+    return withCookies(json(200, { signedIn: true, kind: "manager" }), [mgrCookieFor(h.id), cookie("", 0)]);
   }
 
   if (action === "session" && req.method === "GET") {
     if (!signedIn(req)) return json(200, { signedIn: false });
+    const who = { signedIn: true, kind: WHO.kind, name: WHO.name || "" };
     const p = new URL(req.url).searchParams;
     const leagueId = p.get("leagueId"), season = p.get("season") || String(defaultSeason());
-    if (!validLeague(leagueId, season)) return json(200, { signedIn: true, teams: [] });
+    if (!validLeague(leagueId, season)) return json(200, { ...who, teams: [] });
     try {
-      return json(200, { signedIn: true, teams: ownedTeams(await espnRead(leagueId, season, ["mTeam"])) });
-    } catch {
-      return json(200, { signedIn: true, teams: [] });
+      return json(200, { ...who, teams: ownedTeams(await espnRead(leagueId, season, ["mTeam"])) });
+    } catch (e) {
+      // A connected manager's ESPN sign-in has run out: they need to connect again.
+      return json(200, { ...who, teams: [], expired: WHO.kind === "manager" && (e.status === 401 || e.status === 403) });
     }
   }
 
   if (action === "lineup" && req.method === "POST") {
-    if (!signedIn(req)) return json(401, { error: "signed_out", message: "Sign in as the owner first." });
+    if (!signedIn(req)) return json(401, { error: "signed_out", message: "Connect your ESPN account first." });
     if (!sameOrigin(req)) return json(403, { error: "origin", message: "Changes have to come from the site itself." });
     const b = await req.json().catch(() => ({}));
     const season = String(b.season || defaultSeason()), leagueId = String(b.leagueId || ""), teamId = Number(b.teamId);
@@ -190,7 +353,7 @@ export default async (req, context) => {
 
   // Free-agent pickup (with or without a drop), waiver claim, or a plain drop.
   if (action === "transaction" && req.method === "POST") {
-    if (!signedIn(req)) return json(401, { error: "signed_out", message: "Sign in as the owner first." });
+    if (!signedIn(req)) return json(401, { error: "signed_out", message: "Connect your ESPN account first." });
     if (!sameOrigin(req)) return json(403, { error: "origin", message: "Changes have to come from the site itself." });
     const b = await req.json().catch(() => ({}));
     const season = String(b.season || defaultSeason()), leagueId = String(b.leagueId || ""), teamId = Number(b.teamId);
@@ -222,7 +385,7 @@ export default async (req, context) => {
 
   // Your pending waiver claims and trade offers (sent or received). Owner only: claims are private.
   if (action === "pending" && req.method === "GET") {
-    if (!signedIn(req)) return json(401, { error: "signed_out", message: "Sign in as the owner first." });
+    if (!signedIn(req)) return json(401, { error: "signed_out", message: "Connect your ESPN account first." });
     const p = new URL(req.url).searchParams;
     const leagueId = p.get("leagueId"), season = p.get("season") || String(defaultSeason());
     if (!validLeague(leagueId, season)) return json(400, { error: "bad_request" });
@@ -258,7 +421,7 @@ export default async (req, context) => {
   // ESPN's own site sends (reorderPendingTransactions in its code): POST teams/{teamId}/pendingTransactions
   // with [{ id, subOrder }], subOrder counting up from 1. In budget leagues higher bids still go first.
   if (action === "reorder" && req.method === "POST") {
-    if (!signedIn(req)) return json(401, { error: "signed_out", message: "Sign in as the owner first." });
+    if (!signedIn(req)) return json(401, { error: "signed_out", message: "Connect your ESPN account first." });
     if (!sameOrigin(req)) return json(403, { error: "origin", message: "Changes have to come from the site itself." });
     const b = await req.json().catch(() => ({}));
     const season = String(b.season || defaultSeason()), leagueId = String(b.leagueId || ""), teamId = Number(b.teamId);
@@ -278,7 +441,7 @@ export default async (req, context) => {
     try {
       res = await fetch(`${WRITES}/seasons/${season}/segments/0/leagues/${leagueId}/teams/${teamId}/pendingTransactions`, {
         method: "POST",
-        headers: { "content-type": "application/json", accept: "application/json", "user-agent": "Mozilla/5.0 (fantasy-dashboard)", "x-fantasy-source": "kona", "x-fantasy-platform": "kona-PROD", origin: "https://fantasy.espn.com", referer: "https://fantasy.espn.com/", cookie: `espn_s2=${process.env.ESPN_S2}; SWID=${process.env.SWID}` },
+        headers: { "content-type": "application/json", accept: "application/json", "user-agent": "Mozilla/5.0 (fantasy-dashboard)", "x-fantasy-source": "kona", "x-fantasy-platform": "kona-PROD", origin: "https://fantasy.espn.com", referer: "https://fantasy.espn.com/", cookie: `espn_s2=${C.s2}; SWID=${C.swid}` },
         body: JSON.stringify(order.map((id, i) => ({ id, subOrder: i + 1 }))),
       });
       out = await res.json().catch(() => null);
@@ -295,17 +458,19 @@ export default async (req, context) => {
     const p = new URL(req.url).searchParams;
     const leagueId = p.get("leagueId"), season = p.get("season") || String(defaultSeason()), at = Number(p.get("at")) || 0;
     if (!validLeague(leagueId, season)) return json(400, { error: "bad_request" });
-    const owner = signedIn(req);
-    let claims, usesBudget, ranks;
+    // Failed claims are private on ESPN: the site owner sees the whole run, a connected manager only their own.
+    const owner = WHO?.kind === "owner";
+    let claims, usesBudget, ranks, mine = [];
     try {
       const info = await espnRead(leagueId, season, ["mStatus", "mSettings", "mTeam"]);
       ranks = Object.fromEntries((info.teams || []).map((t) => [t.id, t.waiverRank]));
+      if (WHO?.kind === "manager") mine = ownedTeams(info);
       usesBudget = !!info.settings?.acquisitionSettings?.isUsingAcquisitionBudget;
       const latest = info.status?.latestScoringPeriod || info.scoringPeriodId || 1;
       // The period the run happened in: around `at` if given, else the last couple of periods.
       const periods = [...new Set([latest, latest - 1, latest - 2].filter((x) => x >= 1))];
       const pages = await Promise.all(periods.map(async (sp) => {
-        const r = await fetch(`${READS}/seasons/${season}/segments/0/leagues/${leagueId}?view=mTransactions2&scoringPeriodId=${sp}`, { headers: { accept: "application/json", "user-agent": "Mozilla/5.0 (fantasy-dashboard)", cookie: `espn_s2=${process.env.ESPN_S2}; SWID=${process.env.SWID}` } });
+        const r = await fetch(`${READS}/seasons/${season}/segments/0/leagues/${leagueId}?view=mTransactions2&scoringPeriodId=${sp}`, { headers: { accept: "application/json", "user-agent": "Mozilla/5.0 (fantasy-dashboard)", cookie: `espn_s2=${C.s2}; SWID=${C.swid}` } });
         return r.ok ? r.json() : {};
       }));
       const byId = new Map();
@@ -319,7 +484,7 @@ export default async (req, context) => {
     const found = (at && runs.find((r) => at >= r[0].processDate - 15 * 60e3 && at <= r.at(-1).processDate + 6 * 3600e3)) || runs.at(-1) || [];
     // Today's waiver order only says who won in what order for the most recent run.
     const run = waiverOrder(found, found === runs.at(-1) && !usesBudget ? ranks : null);
-    const shown = owner ? run : run.filter((t) => t.status === "EXECUTED");
+    const shown = owner ? run : run.filter((t) => t.status === "EXECUTED" || mine.includes(t.teamId));
     const ids = [...new Set(shown.flatMap((t) => (t.items || []).map((i) => i.playerId)))];
     const names = {};
     if (ids.length) {
@@ -338,7 +503,7 @@ export default async (req, context) => {
   // Your ESPN watch list. ESPN keeps it on your team (team.watchList, only shown to you) and saves the whole
   // list with POST teams/{teamId} {watchList: [...]}, the same request its own site sends (team.watchPlayer).
   if (action === "watchlist" && req.method === "GET") {
-    if (!signedIn(req)) return json(401, { error: "signed_out", message: "Sign in as the owner first." });
+    if (!signedIn(req)) return json(401, { error: "signed_out", message: "Connect your ESPN account first." });
     const p = new URL(req.url).searchParams;
     const leagueId = p.get("leagueId"), season = p.get("season") || String(defaultSeason());
     if (!validLeague(leagueId, season)) return json(400, { error: "bad_request" });
@@ -350,7 +515,7 @@ export default async (req, context) => {
     } catch { return json(502, { error: "upstream", message: "Couldn't load your watch list from ESPN." }); }
   }
   if (action === "watch" && req.method === "POST") {
-    if (!signedIn(req)) return json(401, { error: "signed_out", message: "Sign in as the owner first." });
+    if (!signedIn(req)) return json(401, { error: "signed_out", message: "Connect your ESPN account first." });
     if (!sameOrigin(req)) return json(403, { error: "origin", message: "Changes have to come from the site itself." });
     const b = await req.json().catch(() => ({}));
     const season = String(b.season || defaultSeason()), leagueId = String(b.leagueId || ""), teamId = Number(b.teamId), playerId = Number(b.playerId);
@@ -365,7 +530,7 @@ export default async (req, context) => {
     try {
       res = await fetch(`${WRITES}/seasons/${season}/segments/0/leagues/${leagueId}/teams/${teamId}`, {
         method: "POST",
-        headers: { "content-type": "application/json", accept: "application/json", "user-agent": "Mozilla/5.0 (fantasy-dashboard)", "x-fantasy-source": "kona", "x-fantasy-platform": "kona-PROD", origin: "https://fantasy.espn.com", referer: "https://fantasy.espn.com/", cookie: `espn_s2=${process.env.ESPN_S2}; SWID=${process.env.SWID}` },
+        headers: { "content-type": "application/json", accept: "application/json", "user-agent": "Mozilla/5.0 (fantasy-dashboard)", "x-fantasy-source": "kona", "x-fantasy-platform": "kona-PROD", origin: "https://fantasy.espn.com", referer: "https://fantasy.espn.com/", cookie: `espn_s2=${C.s2}; SWID=${C.swid}` },
         body: JSON.stringify({ watchList: list }),
       });
       out = await res.json().catch(() => null);
@@ -378,7 +543,7 @@ export default async (req, context) => {
 
   // Propose a trade: players you send and players you'd get from one other team.
   if (action === "trade" && req.method === "POST") {
-    if (!signedIn(req)) return json(401, { error: "signed_out", message: "Sign in as the owner first." });
+    if (!signedIn(req)) return json(401, { error: "signed_out", message: "Connect your ESPN account first." });
     if (!sameOrigin(req)) return json(403, { error: "origin", message: "Changes have to come from the site itself." });
     const b = await req.json().catch(() => ({}));
     const season = String(b.season || defaultSeason()), leagueId = String(b.leagueId || "");
@@ -431,7 +596,7 @@ export default async (req, context) => {
   // { type: "WAIVER", executionType: "CANCEL", relatedTransactionId }. Trade offers use the same idea;
   // if ESPN refuses, the next shape is tried. After each one the pending queue is re-read to confirm.
   if (action === "cancel" && req.method === "POST") {
-    if (!signedIn(req)) return json(401, { error: "signed_out", message: "Sign in as the owner first." });
+    if (!signedIn(req)) return json(401, { error: "signed_out", message: "Connect your ESPN account first." });
     if (!sameOrigin(req)) return json(403, { error: "origin", message: "Changes have to come from the site itself." });
     const b = await req.json().catch(() => ({}));
     const season = String(b.season || defaultSeason()), leagueId = String(b.leagueId || ""), teamId = Number(b.teamId);
@@ -455,7 +620,7 @@ export default async (req, context) => {
     const tries = kind === "claim" ? [["POST", TX, { ...base, type: tx.type === "FREEAGENT" ? "FREEAGENT" : "WAIVER", executionType: "CANCEL" }]]
       : kind === "trade-out" ? [["POST", TX, { ...base, type: "TRADE_PROPOSAL", executionType: "CANCEL" }], ["POST", TX, { ...base, type: "TRADE_DECLINE", executionType: "EXECUTE" }]]
       : [["POST", TX, { ...base, type: "TRADE_DECLINE", executionType: "EXECUTE" }], ["POST", TX, { ...base, type: "TRADE_PROPOSAL", executionType: "CANCEL" }]];
-    const headers = { "content-type": "application/json", accept: "application/json", "user-agent": "Mozilla/5.0 (fantasy-dashboard)", "x-fantasy-source": "kona", "x-fantasy-platform": "kona-PROD", origin: "https://fantasy.espn.com", referer: "https://fantasy.espn.com/", cookie: `espn_s2=${process.env.ESPN_S2}; SWID=${process.env.SWID}` };
+    const headers = { "content-type": "application/json", accept: "application/json", "user-agent": "Mozilla/5.0 (fantasy-dashboard)", "x-fantasy-source": "kona", "x-fantasy-platform": "kona-PROD", origin: "https://fantasy.espn.com", referer: "https://fantasy.espn.com/", cookie: `espn_s2=${C.s2}; SWID=${C.swid}` };
     let lastMsg = "";
     for (const [method, url, body] of tries) {
       let res, out;
@@ -470,7 +635,7 @@ export default async (req, context) => {
 
   // ---------- League chat (ESPN's chat.espn.com service, same ESPN sign-in) ----------
   if (["chat", "chattopic", "chatsend", "chatnew", "chatread"].includes(action)) {
-    if (!signedIn(req)) return json(401, { error: "signed_out", message: "Sign in as the owner first." });
+    if (!signedIn(req)) return json(401, { error: "signed_out", message: "Connect your ESPN account first." });
     const isPost = req.method === "POST";
     if (isPost && !sameOrigin(req)) return json(403, { error: "origin", message: "Use the site itself." });
     const b = isPost ? await req.json().catch(() => ({})) : Object.fromEntries(new URL(req.url).searchParams);
@@ -478,7 +643,7 @@ export default async (req, context) => {
     if (!validLeague(leagueId, season)) return json(400, { error: "bad_request", message: "Missing league." });
     const COMM = `https://lm-api-communication.fantasy.espn.com/apis/v3/games/ffl/seasons/${season}/segments/0/leagues/${leagueId}/communication/`;
     const me = `{${swidRaw()}}`;
-    const headers = { accept: "application/json", "content-type": "application/json", "user-agent": "Mozilla/5.0 (fantasy-dashboard)", origin: "https://chat.espn.com", referer: "https://chat.espn.com/", cookie: `espn_s2=${process.env.ESPN_S2}; SWID=${process.env.SWID}` };
+    const headers = { accept: "application/json", "content-type": "application/json", "user-agent": "Mozilla/5.0 (fantasy-dashboard)", origin: "https://chat.espn.com", referer: "https://chat.espn.com/", cookie: `espn_s2=${C.s2}; SWID=${C.swid}` };
     const comm = async (path, init = {}, filter) => {
       const res = await fetch(COMM + path, { ...init, headers: filter ? { ...headers, "x-fantasy-filter": JSON.stringify(filter) } : headers });
       const out = await res.json().catch(() => null);

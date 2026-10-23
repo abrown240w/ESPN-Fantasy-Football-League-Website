@@ -1,10 +1,12 @@
-// Push notification watcher. Runs every minute; most minutes it only reads the saved NFL schedule and
-// stops. Each person only hears about their own team, and only the kinds of alerts they left on:
+// Push notification watcher. Scheduled every minute, but it only does work every minute around games
+// (from 15 minutes before a kickoff until the game ends); otherwise every 10 minutes, and every 30
+// overnight (midnight–6 AM Central). Quiet minutes stop before touching storage, to save compute credits.
+// Each person only hears about their own team, and only the kinds of alerts they left on:
 //   td / big / bonus   while games are live (every minute): touchdowns (with the play's points), 15+ point
 //                      plays, yardage bonuses. One play = one notification.
 //   injury             every 10 minutes: a rostered player's status changes (Active → Questionable, …)
-//   news               every 5 minutes: a new player note (the RotoWire updates ESPN shows) for someone
-//                      on your roster
+//   news               every 5 minutes around games, otherwise every 10: a new player note (the RotoWire
+//                      updates ESPN shows) for someone on your roster
 //   trade              every 10 minutes: a trade involving your team is accepted
 //   waiver             every 10 minutes: once a waiver run finishes, one summary of what you got
 //                      (missed claims only for the site owner: other teams' failed claims are private)
@@ -310,20 +312,28 @@ async function lineupAlerts(lid, season, st, teams, out) {
   }
 }
 
+let schedMem = null; // this instance's copy of the NFL schedule, so quiet minutes need no storage read
 export default async () => {
   newsRun.clear();
-  const s = store();
   const now = Date.now(), minute = new Date(now).getUTCMinutes();
+  const ct = chicagoNow();
+  // Game time: a game is on, or one kicks off within 15 minutes (until 6 hours after its start).
+  const gameTime = (x) => !!x?.games?.some((g) => g.state === "in" || (g.state === "pre" && now >= g.date - 15 * 60e3 && now <= g.date + 6 * 3600e3));
+  const step = (x) => (gameTime(x) ? 1 : ct.hour < 6 ? 30 : 10);
+  if (schedMem && minute % step(schedMem) !== 0) return;
+  const s = store();
   // NFL schedule: refreshed every 15 minutes, or every minute while a game is on or about to start.
   let sched = await s.get("sched", { type: "json" }).catch(() => null);
   const near = (x) => x?.games?.some((g) => g.state === "in" || (g.state === "pre" && now >= g.date - 3 * 60e3 && now <= g.date + 6 * 3600e3));
   if (!sched || now - sched.at > 15 * 60e3 || near(sched)) {
     try { sched = await loadSchedule(); await s.setJSON("sched", sched); } catch { /* keep the old copy */ }
   }
-  const live = !!sched?.games?.some((g) => g.state === "in");
-  const ct = chicagoNow();
+  schedMem = sched;
+  if (minute % step(sched) !== 0) return;
+  const live = !!sched?.games?.some((g) => g.state === "in"), busy = gameTime(sched);
   const lineupTime = ct.day === "Sun" && ct.hour === 10 && ct.minute >= 30 && ct.minute < 45;
-  const doInjuries = minute % 10 === 0, doNews = minute % 5 === 0, doTx = minute % 10 === 0;
+  // Around games: news every 5 minutes, the rest every 10. Otherwise everything on each (10- or 30-minute) run.
+  const doInjuries = !busy || minute % 10 === 0, doNews = !busy || minute % 5 === 0, doTx = !busy || minute % 10 === 0;
   await s.setJSON("beat", { at: now, live }).catch(() => {}); // proof the schedule is running
   if (!live && !doInjuries && !doNews && !doTx && !lineupTime) return;
 
