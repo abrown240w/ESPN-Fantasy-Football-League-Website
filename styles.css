@@ -2007,6 +2007,9 @@ body.cmp-picking .modal-card.pm-full { height: calc(100dvh - 100px) !important; 
   .mv-main > .section-head:first-child, .mv-side > .section-head:first-child { margin-top: 0; }
   .mv-side { position: sticky; top: calc(var(--top-h, 0px) + 10px); max-height: calc(100vh - var(--top-h, 0px) - 20px); overflow-y: auto; padding-right: 2px; }
   .mv-side .wv-order ol { grid-template-columns: 1fr; }
+  .mv-side { overflow-x: hidden; }
+  .mv-side .wv-order li { min-width: 0; }
+  .mv-side .wv-order li > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .mv-side .section-head { flex-wrap: wrap; }
   .mv-side .trade-sides { flex-direction: column; gap: 8px; }
   .mv-side .trade-swap { align-self: center; transform: rotate(90deg); }
