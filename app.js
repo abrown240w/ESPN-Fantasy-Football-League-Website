@@ -2249,10 +2249,10 @@ function renderLive() {
     .map((t) => `<option value="${t.id}" ${String(f.team) === String(t.id) ? "selected" : ""}>${esc(t.name)}</option>`).join("");
   // Desktop list: each game as the same condensed score header used on phones.
   const gameTile = (g) => {
-    const status = g.state === "in" ? `<span class="badge live">LIVE</span> <strong>${esc(g.detail)}</strong>${g.redZone ? ` <span class="badge out">RZ</span>` : ""}`
+    const status = g.state === "in" ? `<span class="badge live">LIVE</span> <strong>${esc(g.detail)}</strong>`
       : g.state === "post" ? `<span class="badge final">FINAL</span>` : `<strong>${esc(kickoff(g))}</strong>`;
     return `<div class="card game game-tile state-${g.state} ${state.liveSel === g.id ? "selected" : ""}" data-gsel="${esc(g.id)}" role="button" tabindex="0">
-      <div class="g-head">${scoreSide(g.away, g, false)}<div class="g-status">${status}${ddLine(g)}</div>${scoreSide(g.home, g, true)}</div></div>`;
+      <div class="g-head">${scoreSide(g.away, g, false)}<div class="g-status">${status}</div>${scoreSide(g.home, g, true)}</div>${g.state === "in" && (ddLine(g) || g.redZone) ? `<div class="g-dd-bar">${ddLine(g)}${g.redZone ? ` <span class="badge out">RED ZONE</span>` : ""}</div>` : ""}</div>`;
   };
   const split = MU_SPLIT.matches;
   if (split && !games.some((g) => g.id === state.liveSel)) state.liveSel = (games.find((g) => g.state === "in") || games[0])?.id;
