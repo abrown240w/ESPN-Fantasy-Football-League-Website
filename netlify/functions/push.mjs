@@ -6,6 +6,7 @@
 //         POST /api/push/status    {endpoint, leagueId}
 //         POST /api/push/test      {endpoint, leagueId}
 //         POST /api/push/unsubscribe {endpoint, leagueId}
+//         GET  /api/push/health                    what the watcher did last (no subscription details)
 
 import { PREFS, store, subKey, json, vapid, sendPush, allSubs, espn, defaultSeason } from "../lib/push-common.mjs";
 
@@ -18,6 +19,11 @@ const sameOrigin = (req) => { const o = req.headers.get("origin"); return !!o &&
 export default async (req, context) => {
   const action = context.params?.action;
   if (action === "key" && req.method === "GET") return json(200, { publicKey: (await vapid()).publicKey });
+  if (action === "health" && req.method === "GET") {
+    const s = store();
+    const [beat, health] = await Promise.all([s.get("beat", { type: "json" }), s.get("health", { type: "json" })].map((x) => x.catch(() => null)));
+    return json(200, { now: Date.now(), beat, health });
+  }
   if (req.method !== "POST") return json(404, { error: "not_found" });
   if (!sameOrigin(req)) return json(403, { error: "origin", message: "Use the site itself." });
   const b = await req.json().catch(() => ({}));

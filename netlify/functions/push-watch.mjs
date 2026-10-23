@@ -324,6 +324,7 @@ export default async () => {
   const ct = chicagoNow();
   const lineupTime = ct.day === "Sun" && ct.hour === 10 && ct.minute >= 30 && ct.minute < 45;
   const doInjuries = minute % 10 === 0, doNews = minute % 5 === 0, doTx = minute % 10 === 0;
+  await s.setJSON("beat", { at: now, live }).catch(() => {}); // proof the schedule is running
   if (!live && !doInjuries && !doNews && !doTx && !lineupTime) return;
 
   const subs = await allSubs();
@@ -331,13 +332,15 @@ export default async () => {
   const leagues = {};
   for (const sub of subs) (leagues[`${sub.leagueId}:${sub.season}`] ||= []).push(sub);
 
+  const health = { at: now, live, leagues: {} };
   for (const [lk, list] of Object.entries(leagues)) {
     const [lid, season] = lk.split(":");
     const teams = new Set(list.map((x) => String(x.teamId)));
-    const st = (await s.get(`state:${lid}`, { type: "json" }).catch(() => null)) || {};
-    const out = [];
+    const h = (health.leagues[lid] = { subs: list.length, teams: [...teams] });
+    let st = {};
     try {
-      if (!st.sp || st.season !== season || now - (st.spAt || 0) > 3600e3 || !st.teamNames || !st.leagueName) {
+      st = (await s.get(`state:${lid}`, { type: "json" }).catch(() => null)) || {};
+      if (!st.sp || st.season !== season || now - (st.spAt || 0) > 3600e3 || !st.teamNames) {
         const info = await espn(lid, season, ["mStatus", "mSettings", "mTeam"]);
         st.teamNames = Object.fromEntries((info.teams || []).map((t) => [t.id, t.name || [t.location, t.nickname].filter(Boolean).join(" ") || t.abbrev || `Team ${t.id}`]));
         st.leagueName = info.settings?.name || "";
@@ -345,7 +348,15 @@ export default async () => {
         st.scoring = (info.settings?.scoringSettings?.scoringItems || []).map((i) => ({ statId: i.statId, points: i.points, ...(i.pointsOverrides ? { pointsOverrides: i.pointsOverrides } : {}) }));
         st.season = season; st.spAt = now;
       }
-      if (live) await liveAlerts(lid, season, st, teams, out).catch((e) => console.log(JSON.stringify({ event: "watch_live_error", lid, message: e.message })));
+      // Live scoring first, saved and sent straight away, so the slower checks below can't hold it up.
+      if (live) {
+        const out = [];
+        await liveAlerts(lid, season, st, teams, out).catch((e) => { h.liveError = e.message; console.log(JSON.stringify({ event: "watch_live_error", lid, message: e.message })); });
+        h.sp = st.sp; h.starters = Object.keys(st.live?.players || {}).length;
+        await s.setJSON(`state:${lid}`, st);
+        await deliver(out, list, st, h, lid);
+      }
+      const out = [];
       if (doInjuries || !st.inj) await injuryAlerts(lid, season, st, teams, out).catch((e) => console.log(JSON.stringify({ event: "watch_injury_error", lid, message: e.message })));
       if (doNews || !st.news) await newsAlerts(lid, season, st, teams, out).catch((e) => console.log(JSON.stringify({ event: "watch_news_error", lid, message: e.message })));
       if (doTx || !st.seenTrades) await transactionAlerts(lid, season, st, teams, out).catch((e) => console.log(JSON.stringify({ event: "watch_tx_error", lid, message: e.message })));
@@ -353,22 +364,39 @@ export default async () => {
         await lineupAlerts(lid, season, st, teams, out).catch((e) => console.log(JSON.stringify({ event: "watch_lineup_error", lid, message: e.message })));
         st.lineupWeek = st.sp;
       }
-    } finally {
       await s.setJSON(`state:${lid}`, st);
+      await deliver(out, list, st, h, lid);
+    } catch (e) {
+      // One league failing (ESPN down, a bad save) shouldn't stop the others.
+      h.error = e.message;
+      console.log(JSON.stringify({ event: "watch_league_error", lid, message: e.message }));
     }
-    // Deliver: your team only, the kinds you left on, private details only for the owner.
-    for (const n of out) {
-      for (const sub of list) {
-        if (!n.kinds.some((k) => sub.prefs?.[k] !== false)) continue;
-        if (n.league ? String(sub.teamId) === n.actor : String(sub.teamId) !== n.teamId) continue;
-        const body = n.publicBody !== undefined && !sub.owner ? n.publicBody : n.body;
-        if (!body) continue;
-        // The league name is the bold first line; the alert and its details go underneath.
-        await sendPush(sub, st.leagueName ? { title: st.leagueName, body: `${n.title}\n${body}`, url: n.url, tag: n.tag } : { title: n.title, body, url: n.url, tag: n.tag });
-      }
-    }
-    if (out.length) console.log(JSON.stringify({ event: "watch_sent", lid, alerts: out.length, kinds: [...new Set(out.flatMap((n) => n.kinds))] }));
   }
+  // What the watcher did on its last run and its recent alerts (read by /api/push/health).
+  const prev = (await s.get("health", { type: "json" }).catch(() => null)) || {};
+  health.ms = Date.now() - now;
+  health.lastLive = live ? now : prev.lastLive || null;
+  health.recent = keepLast([...(prev.recent || []), ...Object.values(health.leagues).flatMap((x) => x.sent || [])], 40);
+  for (const x of Object.values(health.leagues)) delete x.sent;
+  await s.setJSON("health", health).catch(() => {});
 };
+
+// Deliver: your team only, the kinds you left on, private details only for the owner.
+async function deliver(out, list, st, h, lid) {
+  for (const n of out) {
+    let sent = 0, failed = 0, skipped = 0;
+    for (const sub of list) {
+      if (!n.kinds.some((k) => sub.prefs?.[k] !== false)) { if (String(sub.teamId) === n.teamId) skipped++; continue; }
+      if (n.league ? String(sub.teamId) === n.actor : String(sub.teamId) !== n.teamId) continue;
+      const body = n.publicBody !== undefined && !sub.owner ? n.publicBody : n.body;
+      if (!body) continue;
+      // The league name is the bold first line; the alert and its details go underneath.
+      const ok = await sendPush(sub, st.leagueName ? { title: st.leagueName, body: `${n.title}\n${body}`, url: n.url, tag: n.tag } : { title: n.title, body, url: n.url, tag: n.tag });
+      ok ? sent++ : failed++;
+    }
+    (h.sent ||= []).push({ at: Date.now(), lid, team: n.teamId || n.actor || "", kinds: n.kinds, title: n.title, sent, failed, skipped });
+  }
+  if (out.length) console.log(JSON.stringify({ event: "watch_sent", lid, alerts: out.length, kinds: [...new Set(out.flatMap((n) => n.kinds))] }));
+}
 
 export const config = { schedule: "* * * * *" };
