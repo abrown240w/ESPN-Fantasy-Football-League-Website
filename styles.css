@@ -1862,3 +1862,11 @@ body.cmp-picking .modal-card.pm-full { height: calc(100dvh - 100px) !important; 
 #cmp-stage .stg-x { position: sticky; top: 0; float: right; width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--border); background: var(--surface-2); color: inherit; font-size: 1.3rem; line-height: 1; cursor: pointer; z-index: 2; }
 #cmp-stage .cmp-btn, #cmp-stage .pm-cards { display: none; }
 #cmp-stage .cmp-vs.cols-2 { grid-template-columns: 1fr; }
+
+/* My team picker */
+.mt-list { display: flex; flex-direction: column; }
+.mt-pick { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; border: 0; border-top: 1px solid var(--border); background: transparent; color: inherit; font: inherit; padding: 9px 4px; cursor: pointer; }
+.mt-pick:first-child { border-top: 0; }
+.mt-pick:hover { background: var(--surface-2); }
+.mt-pick.on { background: rgba(42,120,214,.1); }
+.mt-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }

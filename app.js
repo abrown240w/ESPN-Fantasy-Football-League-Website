@@ -1914,7 +1914,7 @@ function fieldGraphic(g) {
 }
 
 // ---------- Live games ----------
-const LIVE_POLL_MS = 30000, IDLE_POLL_MS = 120000;
+const LIVE_POLL_MS = 20000, IDLE_POLL_MS = 120000;
 
 // The week the Live games tab shows: whichever week is selected (current week until one is picked).
 const liveSp = () => state.week?.sp || state.base.scoringPeriodFor(state.base.current);
@@ -2111,6 +2111,7 @@ function nextAlert() {
 
 // Live rail (computers): your players this week, live ones first, with their points so far.
 function liveRail(L, games, my) {
+  if (!my) return `<aside class="lv-rail card"><div class="rr-head">Your players</div><p class="muted small">Pick your team to follow your players here as the games play.</p><button type="button" class="pg-go" data-pickteam>Select my team ›</button></aside>`;
   const gOf = (p) => games.find((g) => g.home.proId === p.proId || g.away.proId === p.proId);
   const rank = { in: 0, post: 1, pre: 2 };
   const mine = L.players.filter((p) => String(p.teamId) === my).map((p) => ({ p, g: gOf(p) }))
@@ -2257,14 +2258,14 @@ function renderLive() {
   const updated = new Date(L.updated).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit", second: "2-digit" });
 
   el.innerHTML = `<div class="section-head"><h2>NFL week ${L.sp} ${counts.in ? `<span class="badge live">LIVE</span>` : ""}</h2>
-      <span class="muted small" title="${counts.in ? "Refreshes every 30 seconds" : ""}">Updated ${updated}</span></div>
+      <span class="muted small" title="${counts.in ? "Refreshes every 20 seconds" : ""}">Updated ${updated}</span></div>
     <div class="filters">
       <div class="seg" id="lv-show"><button data-s="rostered" class="${f.show === "rostered" ? "active" : ""}">Rostered players</button><button data-s="all" class="${f.show === "all" ? "active" : ""}">All players</button></div>
       <select id="lv-team" aria-label="Fantasy team"><option value="ALL">All fantasy teams</option>${teamOpts}</select>
     </div>
     ${L.byes?.length ? `<p class="muted small">On bye: ${L.byes.map(esc).join(", ")}</p>` : ""}
     ${!games.length ? `<p class="muted">No NFL games found for this week.</p>`
-      : split ? `<div class="mu-split lv-split ${DESK.matches && my ? "lv-three" : ""}"><div class="mu-list">${games.map(gameTile).join("")}</div><div class="mu-pane" id="lv-pane">${selGame ? gameCard(selGame, true) : ""}</div>${DESK.matches && my ? liveRail(L, games, my) : ""}</div>`
+      : split ? `<div class="mu-split lv-split ${DESK.matches ? "lv-three" : ""}"><div class="mu-list">${games.map(gameTile).join("")}</div><div class="mu-pane" id="lv-pane">${selGame ? gameCard(selGame, true) : ""}</div>${DESK.matches ? liveRail(L, games, my) : ""}</div>`
       : `<div class="games">${games.map((g) => gameCard(g)).join("")}</div>`}${games.some((g) => g.state !== "post") ? wxCredit() : ""}`;
   $("lv-show").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => { f.show = b.dataset.s; renderLive(); }));
   $("lv-team").addEventListener("change", (e) => { f.team = e.target.value; renderLive(); });
@@ -2822,11 +2823,33 @@ function erGameLine(p) {
 }
 
 // Roster chips: each opens its own popup.
+// "My team": anyone can say which team is theirs (saved on this device), so Live, Matchup and the rest open on it.
+// Signed-in owners get theirs automatically.
+function openPickTeam() {
+  const mine = myTeamId(), owner = ownerTeam();
+  const head = `<div class="pm-head"><div><h2 id="pl-modal-title">👤 My team</h2><div class="muted small">${owner ? "You're signed in as the owner, so your team is set automatically." : "Pick your team and Live, Matchup and the Roster open on it. Saved on this device."}</div></div></div>`;
+  if (owner) return showModal(`${head}<div class="mt-list"><div class="mt-pick on">${logoImg(team(owner), 30)}<span class="mt-main"><strong>${esc(team(owner).name)}</strong><span class="muted small">${esc(team(owner).owner)} · ${recordStr(team(owner))}</span></span><span class="pos">✓</span></div></div>`);
+  const ids = Object.keys(state.base.teams).sort((a, b) => team(a).name.localeCompare(team(b).name));
+  showModal(`${head}<div class="mt-list">${ids.map((id) => `<button type="button" class="mt-pick ${String(id) === String(mine) ? "on" : ""}" data-mypick="${esc(id)}">${logoImg(team(id), 30)}<span class="mt-main"><strong>${esc(team(id).name)}</strong><span class="muted small">${esc(team(id).owner)} · ${recordStr(team(id))}</span></span>${String(id) === String(mine) ? `<span class="pos">✓</span>` : ""}</button>`).join("")}</div>`);
+}
+function chooseMyTeam(id) {
+  setMyTeam(id);
+  Object.assign(state, { rosterTeam: String(id), openMatchup: null, winWin: null, preDrawn: {} });
+  document.querySelector("#pl-modal .modal-close")?.click();
+  updateEspnLink();
+  render();
+}
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-mypick]");
+  if (b) { chooseMyTeam(b.dataset.mypick); return; }
+  if (e.target.closest("[data-pickteam]")) openPickTeam();
+});
 function chipPopup(kind, teamId, side) {
   const t = team(teamId);
   const head = (icon, title, sub = "") => `<div class="pm-head">${logoImg(t, 40)}<div><h2 id="pl-modal-title">${icon} ${title}</h2><div class="muted small">${esc(t.name)}${sub ? ` · ${sub}` : ""}</div></div></div>`;
   const reopen = () => { if (!$("pl-modal").hidden && state.chipOpen === kind) chipPopup(kind, teamId, side); };
   state.chipOpen = kind;
+  if (kind === "myteam") return openPickTeam();
   if (kind === "news") {
     const d = side ? ensureNews(side.players.map((p) => p.id), reopen) : null;
     if (!d) return showModal(`${head("📰", "News")}<div class="loading small"><span class="spinner"></span> Loading news…</div>`);
@@ -2963,6 +2986,7 @@ function renderRoster() {
     canEdit ? chip("claims", "📋", "Claims", P ? `${claims} pending` : "…") : "",
     canEdit ? chip("trades", "⇄", "Trades", P ? `${offers} offer${offers === 1 ? "" : "s"}` : "…") : "",
     deadline ? chip("deadline", "📅", "Trade deadline", new Date(deadline).toLocaleString(undefined, { month: "numeric", day: "numeric", hour: "numeric", minute: "2-digit" })) : "",
+    chip("myteam", "👤", "My team", myTeamId() ? esc(team(myTeamId()).abbrev || team(myTeamId()).name) : "Select"),
     chip("awards", "🏆", "Awards", nAwards == null ? "View" : `${nAwards} award${nAwards === 1 ? "" : "s"}`),
   ].join("");
   const opts = ids.map((id) => `<option value="${id}" ${id === String(sel) ? "selected" : ""}>${esc(team(id).name)}</option>`).join("");

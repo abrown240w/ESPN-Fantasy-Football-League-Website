@@ -5,6 +5,7 @@
 
 const FANTASY = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl";
 const SCOREBOARD = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard";
+const SUMMARY = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/summary";
 // Stat IDs used for stat lines: passing (incl. attempts/completions), rushing (incl. carries),
 // receiving (incl. targets), kicking (FG/XP made and attempted) and defense (sacks, INT, fumble
 // recoveries, forced fumbles, points and yards allowed).
@@ -25,6 +26,32 @@ async function getJson(url, { fantasy = false, headers = {} } = {}) {
   const res = await fetch(url, { headers: h });
   if (!res.ok) throw new Error(`${url} returned ${res.status}`);
   return res.json();
+}
+
+// ESPN's scoreboard reports only the very latest event as the "last play", and right after a kickoff, punt or
+// turnover that is usually a timeout, a review or a TV break. So the real last play (the kick or the
+// turnover itself) is read from the game's play-by-play, which lists every play. Cached briefly per game.
+const STOPPAGE = /timeout|two-minute|end (of )?(period|half|quarter|game|regulation)|official|injury|coin toss|review|challenge/i;
+const playCache = new Map(); // event id -> { at, play }
+export function pickLastPlay(summary) {
+  const dr = summary?.drives || {};
+  const plays = [...(dr.previous || []).flatMap((x) => x.plays || []), ...(dr.current?.plays || [])];
+  const p = [...plays].reverse().find((q) => !STOPPAGE.test(q.type?.text || ""));
+  if (!p) return null;
+  const team = p.start?.team?.id ?? p.team?.id;
+  return {
+    id: p.id, type: p.type?.text || "", text: String(p.text || "").trim(),
+    start: p.start?.yardLine ?? null, end: p.end?.yardLine ?? null, endText: p.end?.possessionText || "",
+    yards: p.statYardage ?? null, teamId: team ? Number(team) : null, scoring: !!p.scoringPlay,
+    drive: dr.current?.description || "",
+  };
+}
+async function realLastPlay(eventId) {
+  const hit = playCache.get(eventId);
+  if (hit && Date.now() - hit.at < 10e3) return hit.play;
+  const play = pickLastPlay(await getJson(`${SUMMARY}?event=${eventId}`));
+  playCache.set(eventId, { at: Date.now(), play });
+  return play;
 }
 
 const hex = (c) => (/^[0-9a-f]{6}$/i.test(c || "") ? `#${c}` : null);
@@ -92,6 +119,20 @@ export default async (req) => {
         away: { ...side(away), timeouts: sit.awayTimeouts ?? null },
       };
     });
+    // For games in progress, replace a timeout / review "last play" with the actual last play.
+    await Promise.all(games.filter((g) => g.state === "in").map(async (g) => {
+      try {
+        const rp = await realLastPlay(g.id), cur = g.field?.lastPlay;
+        if (!rp) return;
+        const stale = !cur || STOPPAGE.test(cur.type || "") || cur.start == null || !g.lastPlay;
+        if (!stale) return;
+        const lastPlay = { type: rp.type, start: rp.start, end: rp.end, yards: rp.yards, teamId: rp.teamId, scoring: rp.scoring };
+        g.lastPlay = rp.text;
+        // No situation at all (the ball between plays): still give the graphic a spot from that play.
+        g.field = g.field ? { ...g.field, lastPlay, yardLine: g.field.yardLine ?? rp.end, possText: g.field.possText || rp.endText }
+          : { yardLine: rp.end, possText: rp.endText, down: null, distance: null, lastPlay, driveStart: null, driveDesc: rp.drive };
+      } catch { /* keep the scoreboard's own last play */ }
+    }));
     const proIds = games.flatMap((g) => [g.home.proId, g.away.proId]).filter(Boolean);
     const byes = (board.week?.teamsOnBye || []).map((t) => t.abbreviation);
 
