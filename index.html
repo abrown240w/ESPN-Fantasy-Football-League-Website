@@ -50,6 +50,11 @@
       <button data-tab="live"><i class="live-dot" id="live-dot" aria-hidden="true"></i>Live</button>
       <button data-tab="players">Players</button>
       <button data-tab="league">League</button>
+      <button data-tab="season" class="desk-tab">Standings</button>
+      <button data-tab="managers" class="desk-tab">Weekly</button>
+      <button data-tab="transactions" class="desk-tab">Moves</button>
+      <button data-tab="trade" class="desk-tab">Trades</button>
+      <button data-tab="history" class="desk-tab">History</button>
     </nav>
   </header>
 
@@ -86,6 +91,8 @@
     · <button type="button" id="owner-btn" class="linkish">Owner sign-in</button>
   </footer>
 
+  <!-- Home-screen app on a phone turned sideways: iPhones ignore the manifest's portrait lock, so ask to turn it back. -->
+  <div id="rotate-note" aria-hidden="true"><div><span class="rn-icon">📱</span>Turn your phone upright</div></div>
   <script src="app.js"></script>
 </body>
 </html>

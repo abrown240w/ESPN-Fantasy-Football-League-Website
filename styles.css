@@ -1872,7 +1872,20 @@ body.cmp-picking .modal-card.pm-full { height: calc(100dvh - 100px) !important; 
 .mt-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 
 /* Live game tiles keep the original side-by-side header; a live game adds a bar underneath */
-.game-tile .g-dd-bar { border-top: 1px solid var(--border); padding: 5px 10px; text-align: center; font-size: .74rem; background: var(--surface-2); border-radius: 0 0 var(--radius, 12px) var(--radius, 12px); }
+.card.game.game-tile { padding: 0; overflow: hidden; }
+.game-tile .g-head { grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 4px; padding: 8px; }
+.game-tile .g-team { gap: 5px; }
+.game-tile .g-logo { width: 22px; height: 22px; }
+.game-tile .g-name { font-size: .8rem; min-width: 0; }
+.game-tile .g-name .small { font-size: .62rem; white-space: nowrap; }
+.game-tile .g-at { display: none; }
+.game-tile .g-score { margin: 0 0 0 auto; font-size: 1.15rem; }
+.game-tile .g-team.right .g-score { margin: 0 auto 0 0; }
+.game-tile .g-to { gap: 3px; margin-top: 2px; }
+.game-tile .g-to i { width: 6px; height: 6px; }
+.game-tile .g-status { font-size: .7rem; line-height: 1.25; }
+.game-tile .g-status strong { display: block; margin-top: 2px; white-space: nowrap; }
+.game-tile .g-dd-bar { border-top: 1px solid var(--border); padding: 4px 10px; text-align: center; font-size: .74rem; background: var(--surface); }
 .game-tile .g-dd-bar .g-dd { display: inline; }
 .game-tile .g-dd-bar .badge { margin-left: 6px; }
 
@@ -1889,3 +1902,31 @@ body.cmp-picking .modal-card.pm-full { height: calc(100dvh - 100px) !important; 
 .pts-card.below .pts-arrow { bottom: auto; top: -7px; border: 0; border-left: 1px solid var(--border); border-top: 1px solid var(--border); }
 .pts-line { font-size: .82rem; color: var(--ink-2); margin: 2px 0 8px; }
 .pts-link.pts-active, .pts-active { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+
+/* Portrait only in the phone app: sideways shows a "turn it upright" screen (iPhones ignore the manifest lock) */
+#rotate-note { display: none; }
+@media (orientation: landscape) and (max-height: 500px) and (pointer: coarse) {
+  html.standalone #rotate-note { display: flex; position: fixed; inset: 0; z-index: 1000; align-items: center; justify-content: center; text-align: center; background: #3b4f6b; color: #fff; font-weight: 700; font-size: 1.1rem; }
+  html.standalone #rotate-note .rn-icon { display: block; font-size: 2.6rem; margin-bottom: 8px; transform: rotate(-90deg); }
+  html.standalone body { overflow: hidden; }
+}
+
+/* Computers: chat sits in a bar at the bottom right; the chat window slides up out of it */
+@media (min-width: 1000px) {
+  .chat-open.chat-bar { position: fixed; right: 20px; bottom: 0; z-index: 90; width: 340px; height: 42px; justify-content: flex-start; padding: 0 16px; border-radius: 12px 12px 0 0; font-size: .92rem; box-shadow: 0 -4px 18px rgba(0,0,0,.25); }
+  .chat-open.chat-bar::after { content: "▴"; margin-left: auto; font-size: 1rem; opacity: .85; }
+  .chat-open.chat-bar .chat-dot { position: static; margin-left: 8px; border: 0; }
+  .chat-open.chat-bar[hidden], body.chat-up .chat-open.chat-bar { display: none; }
+  #pl-modal.chat-pop { inset: auto 20px 0 auto; width: 380px; height: min(640px, calc(100vh - var(--top-h, 0px) - 20px)); padding: 0; display: block; background: transparent; pointer-events: none; z-index: 95; }
+  #pl-modal.chat-pop .modal-card { pointer-events: auto; width: 100%; height: 100%; max-height: none; border-radius: 12px 12px 0 0; box-shadow: 0 -8px 30px rgba(0,0,0,.3); }
+  #pl-modal.chat-pop.rise .modal-card { animation: chat-rise .24s cubic-bezier(.2, .8, .3, 1); }
+  @keyframes chat-rise { from { transform: translateY(calc(100% - 42px)); opacity: .6; } to { transform: none; opacity: 1; } }
+}
+@media (prefers-reduced-motion: reduce) { #pl-modal.chat-pop.rise .modal-card { animation: none; } }
+
+/* Computers: League's sub-tabs sit in the main tab row in place of "League" */
+.tabs .desk-tab { display: none; }
+@media (min-width: 1000px) {
+  .tabs .desk-tab { display: inline-flex; }
+  .tabs button[data-tab="league"] { display: none; }
+}

@@ -599,10 +599,12 @@ const homeOf = (t) => (t === "league" ? "season" : t);
 const LEAGUE_SUBS = [["season", "Standings"], ["managers", "Weekly"], ["transactions", "Moves"], ["trade", "Trades"], ["history", "History"]];
 function showView(name) {
   for (const v of ["roster", "matchups", "live", "players", "usage", "injuries", "trade", "transactions", "managers", "season", "history"]) $(`view-${v}`).hidden = v !== name;
-  document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === groupOf(name)));
+  // Computers have League's sub-tabs in the main row instead of a League tab.
+  const desk = DESK.matches;
+  document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("active", b.classList.contains("desk-tab") ? b.dataset.tab === name : b.dataset.tab === groupOf(name)));
   const ln = $("league-nav");
-  ln.hidden = groupOf(name) !== "league";
-  document.body.classList.toggle("in-league", groupOf(name) === "league");
+  ln.hidden = desk || groupOf(name) !== "league";
+  document.body.classList.toggle("in-league", !desk && groupOf(name) === "league");
   if (!ln.hidden) ln.innerHTML = LEAGUE_SUBS.map(([k, l]) => `<button type="button" data-sub="${k}" class="${k === name ? "active" : ""}">${l}</button>`).join("");
   paintLiveDot();
 }
@@ -906,23 +908,47 @@ function renderPlayers() {
   const pool = f.watch && W ? [...rostered, ...avail].filter((p) => W.has(String(p.id)))
     : f.mode === "all" ? [...rostered, ...avail]
     : f.mine && me ? [...avail, ...rostered.filter((p) => String(p.teamId) === me)] : avail;
+  // Computers: the injury report is part of the table (its columns, and All / Injured / Healthy buttons).
+  const desk = DESK.matches, D = desk ? ensureInjuries() : null;
+  f.inj ||= "all";
+  const K = D && !D.error ? injuryKit(D, w) : null, injMemo = new Map();
+  const injOf = (p) => {
+    const id = String(p.id);
+    if (!K?.byId.has(id)) return null;
+    if (!injMemo.has(id)) injMemo.set(id, K.enrich(K.byId.get(id)));
+    return injMemo.get(id);
+  };
+  const hurt = (p) => (K ? K.byId.has(String(p.id)) : false) || (!!p.injury && !/^(ACTIVE|NORMAL)$/i.test(p.injury));
+  const injCols = K ? K.cols.slice(1).map((c) => ({ ...c, key: `inj_${c.key}`,
+    sort: (r) => { const x = injOf(r); return x ? (c.sort ? c.sort(x) : x[c.key]) : null; },
+    render: (r) => { const x = injOf(r); return x ? (c.render ? c.render(x) : esc(x[c.key])) : `<span class="muted">–</span>`; } })) : [];
   // Search and NFL team on one line; Available / All / watch list / injuries; then the positions.
   el.innerHTML = `<div class="pl-top"><div class="filters pl-search"><input id="pl-q" type="search" placeholder="Search players…" value="${esc(f.q)}">
       <select id="pl-nfl" aria-label="NFL team"><option value="ALL">All teams</option>${Object.keys(NFL_NAMES).sort((a, b) => NFL_NAMES[a].localeCompare(NFL_NAMES[b])).map((t) => `<option value="${t}" ${f.nfl === t ? "selected" : ""}>${esc(NFL_NAMES[t].split(" ").pop())}</option>`).join("")}</select></div>
     ${playersNav(f.mode)}
     <div class="filters pl-filters">
       ${posSeg("pl-pos", f.pos)}
+      ${desk ? `<div class="seg" id="pl-inj" role="group" aria-label="Injuries">${[["all", "All"], ["injured", "Injured"], ["healthy", "Healthy"]].map(([k, l]) => `<button type="button" data-i="${k}" class="${f.inj === k ? "active" : ""}">${l}</button>`).join("")}</div>` : ""}
     </div>
     ${me ? `<label class="pl-mine ${f.mode === "all" ? "off" : ""}"><input type="checkbox" id="pl-mine" ${f.mine ? "checked" : ""} ${f.mode === "all" ? "disabled" : ""}> Include my team</label>` : ""}</div>
     <div class="pl-main"><div id="pl-list"></div>${fcCredit()}${nvCredit()}</div>`;
   const draw = () => {
     const q = f.q.toLowerCase();
-    const rows = pool.filter((p) => (f.pos === "ALL" || p.pos === f.pos) && (!f.nfl || f.nfl === "ALL" || PRO[p.proId] === f.nfl) && (!q || p.name.toLowerCase().includes(q)));
-    drawPlayerTable($("pl-list"), ["player", ...(actTeam() ? ["act"] : []), ...(W ? ["watch"] : []), "pos", "opp", "proj", "pts", "ppg", "seasonPts", "own", "snap", "tgt", "rush", "pprRank", "posRank", "value"], rows, f.sort, w.sp, "No players match those filters.");
+    const inj = desk ? f.inj : "all";
+    const rows = pool.filter((p) => (f.pos === "ALL" || p.pos === f.pos) && (!f.nfl || f.nfl === "ALL" || PRO[p.proId] === f.nfl) && (!q || p.name.toLowerCase().includes(q))
+      && (inj === "all" || (inj === "injured") === hurt(p)));
+    if (inj === "healthy" && f.sort.key.startsWith("inj_")) f.sort = { key: "proj", dir: -1 };
+    drawPlayerTable($("pl-list"), ["player", ...(actTeam() ? ["act"] : []), ...(W ? ["watch"] : []), "pos", "opp", "proj", "pts", "ppg", "seasonPts", "own", "snap", "tgt", "rush", "pprRank", "posRank", "value", ...(inj === "healthy" ? [] : injCols)], rows, f.sort, w.sp,
+      desk && inj !== "all" && !D ? "Loading the injury report…" : "No players match those filters.");
   };
   $("pl-q").addEventListener("input", (e) => { f.q = e.target.value; draw(); });
   $("pl-nfl").addEventListener("change", (e) => { f.nfl = e.target.value; draw(); });
   bindPosSeg("pl-pos", (v) => (f.pos = v), draw);
+  $("pl-inj")?.querySelectorAll("button").forEach((b) => b.addEventListener("click", () => {
+    f.inj = b.dataset.i;
+    $("pl-inj").querySelectorAll("button").forEach((x) => x.classList.toggle("active", x === b));
+    draw();
+  }));
   $("pl-mine")?.addEventListener("change", (e) => { f.mine = e.target.checked; renderPlayers(); });
   draw();
 }
@@ -980,7 +1006,7 @@ function paintWatchCount() {
 // The row at the top of Players and the Injury Report: Available | All players, and the Injury Report.
 const playersNav = (cur) => `<div class="pl-nav"><div class="seg">${[["avail", "Available"], ["all", "All players"]].map(([k, l]) => `<button type="button" data-plm="${k}" class="${cur === k && !state.players.watch ? "active" : ""}">${l}</button>`).join("")}</div>
   ${(() => { const c = watchCounts(); return c ? `<div class="seg"><button type="button" data-watchf class="${state.players.watch ? "active" : ""}" title="Your watch list: available / total">👁 <b>${c.avail}/${c.total}</b></button></div>` : ""; })()}
-  <div class="seg inj-seg"><button type="button" data-injr>🩺 <span class="nm-full">Injury Report</span><span class="nm-short">Injuries</span></button></div></div>`;
+  ${DESK.matches ? "" : `<div class="seg inj-seg"><button type="button" data-injr>🩺 <span class="nm-full">Injury Report</span><span class="nm-short">Injuries</span></button></div>`}</div>`;
 document.addEventListener("click", (e) => {
   const m = e.target.closest(".pl-nav [data-plm]"), inj = e.target.closest(".pl-nav [data-injr]");
   const wf = e.target.closest(".pl-nav [data-watchf]");
@@ -1387,7 +1413,7 @@ const PCOLS = {
 // Draws a player table into `el`; header clicks re-sort it in place.
 function drawPlayerTable(el, keys, rows, sortState, sp, empty) {
   if (!rows.length) { el.innerHTML = `<p class="muted pr-empty">${empty}</p>`; return; }
-  const cols = keys.map((k) => { const c = PCOLS[k]; return c.render ? { ...c, render: (r) => c.render(r, sp) } : c; });
+  const cols = keys.map((k) => { const c = typeof k === "object" ? k : PCOLS[k]; return c.render ? { ...c, render: (r) => c.render(r, sp) } : c; });
   const redraw = () => drawPlayerTable(el, keys, rows, sortState, sp, empty);
   el.replaceChildren(sortableTable(cols, rows, sortState, redraw, { rowClass: (p) => `${gsState(p)} ${myRow(p.teamId)}`, tableClass: "pt-table" }));
 }
@@ -1843,9 +1869,14 @@ function fieldGraphic(g) {
     const text = shown.text || "";
     const kind = playKind(lp.type, text);
     const offDir = lp.teamId === home.proId ? 1 : lp.teamId === away.proId ? -1 : dir || 1; // direction the snapping team moves
-    let endA = lp.end;
+    let endA = lp.end, startA = lp.start;
+    // Extra points are always snapped from the 15 of the goal the team just scored in; ESPN's spots for
+    // them are often left over from the touchdown or the next kickoff, so they aren't used.
+    const isXp = /extra point/i.test(lp.type), isFg = /field goal/i.test(lp.type);
+    const goalA = offDir > 0 ? 100 : 0;
+    if (isXp) startA = endA = goalA - offDir * 15;
     if (kind === "incomplete") endA = lp.start + offDir * (/deep/i.test(text) ? 20 : 8); // no target spot recorded
-    const xs = X(lp.start), xe = X(endA), Y = P(0, 96)[1], mid = (xs + xe) / 2;
+    const xs = X(startA), xe = X(endA), Y = P(0, 96)[1], mid = (xs + xe) / 2;
     const gained = Math.round((lp.end - lp.start) * offDir);
     const ydsTxt = (n) => `${n > 0 ? "+" : ""}${n} yds`;
     const tag = (txt, y, cls = "lp-yds") => parts.push(`<text x="${Math.min(W - EZ - 30, Math.max(EZ + 30, mid))}" y="${y}" class="${cls}">${esc(txt)}</text>`);
@@ -1877,12 +1908,12 @@ function fieldGraphic(g) {
       const kd = /(?:kicks|punts) (\d+) yards?/i.exec(text)?.[1], fgd = /(\d+) yard field goal/i.exec(text)?.[1];
       let land = /to (?:the )?end zone|touchback/i.test(text) ? (lp.start > 50 ? 0 : 100)
         : textSpot(text, /(?:kicks|punts) \d+ yards? (?:from [A-Z]{2,3} -?\d+ )?to ([A-Z]{2,3}) (-?\d+)/, home, away);
-      if (/field goal|extra point/i.test(lp.type)) land = lp.end;
       if (land == null) land = lp.end;
-      const xl = X(land), lift = Math.min(52, 22 + Math.abs(xl - xs) / 6);
-      if (Math.abs(xl - xs) >= 4) parts.push(`<path d="M${xs} ${Y} Q${(xs + xl) / 2} ${Y - lift * 2} ${xl} ${Y}" fill="none" stroke="#fff" stroke-width="4" stroke-dasharray="14 6" ${Math.abs(xe - xl) < 4 ? `marker-end="url(#arrow-${esc(g.id)})"` : ""}/>`);
-      const ret = Math.round(Math.abs(lp.end - land));
-      if (ret >= 1 && !/field goal|extra point/i.test(lp.type)) parts.push(`<path d="M${xl} ${Y + 6} L${xe} ${Y + 6}" stroke="#fff" stroke-width="4" marker-end="url(#arrow-${esc(g.id)})"/>`);
+      // Field goals and extra points fly to the posts at the back of the end zone.
+      const xl = isXp || isFg ? P(x(goalA) - offDir * 10 * S, 96)[0] : X(land), lift = Math.min(52, 22 + Math.abs(xl - xs) / 6);
+      if (Math.abs(xl - xs) >= 4) parts.push(`<path d="M${xs} ${Y} Q${(xs + xl) / 2} ${Y - lift * 2} ${xl} ${Y}" fill="none" stroke="#fff" stroke-width="4" stroke-dasharray="14 6" ${isXp || isFg || Math.abs(xe - xl) < 4 ? `marker-end="url(#arrow-${esc(g.id)})"` : ""}/>`);
+      const ret = isXp || isFg ? 0 : Math.round(Math.abs(lp.end - land));
+      if (ret >= 1) parts.push(`<path d="M${xl} ${Y + 6} L${xe} ${Y + 6}" stroke="#fff" stroke-width="4" marker-end="url(#arrow-${esc(g.id)})"/>`);
       const good = /good/i.test(lp.type) || /is GOOD/.test(text);
       const what = /punt/i.test(lp.type) ? `Punt${kd ? ` ${kd} yds` : ""}${/fair catch/i.test(text) ? " · fair catch" : /touchback/i.test(text) ? " · touchback" : ret >= 1 ? ` · ${ret} yd return` : ""}`
         : /field goal/i.test(lp.type) ? `FG${fgd ? ` ${fgd} yds` : ""} ${good ? "✓" : "✗"}`
@@ -3095,10 +3126,33 @@ const chatTime = (ms) => {
   const d = new Date(ms), today = new Date();
   return d.toDateString() === today.toDateString() ? d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) : d.toLocaleDateString(undefined, { month: "numeric", day: "numeric" });
 };
+// On computers the chat is a window that slides up out of the bar at the bottom right (the page stays
+// usable behind it); on phones it fills the screen.
 function chatShell(inner) {
+  const m = $("pl-modal"), was = !m.hidden && m.classList.contains("chat-pop");
   showModal(inner);
-  $("pl-modal").querySelector(".modal-card").classList.add("pm-full", "chat-card");
-  setDock(true);
+  m.querySelector(".modal-card").classList.add("pm-full", "chat-card");
+  if (!DESK.matches) return setDock(true);
+  m.classList.add("chat-pop");
+  document.body.classList.remove("modal-open");
+  document.body.classList.add("chat-up");
+  if (!was) { m.classList.remove("rise"); void m.offsetWidth; }
+  m.classList.add("rise"); // (redrawing an open window keeps it in place)
+}
+function dropChatPop() {
+  $("pl-modal")?.classList.remove("chat-pop", "rise");
+  document.body.classList.remove("chat-up");
+}
+// Computers: the chat button leaves the header for a bar along the bottom right of the screen.
+let chatHome = null;
+function placeChatBtn() {
+  const b = $("chat-open");
+  if (!b) return;
+  chatHome ||= { parent: b.parentElement, next: b.nextElementSibling };
+  if (DESK.matches) { if (b.parentElement !== document.body) document.body.appendChild(b); }
+  else if (b.parentElement !== chatHome.parent) chatHome.parent.insertBefore(b, chatHome.next);
+  b.classList.toggle("chat-bar", DESK.matches);
+  updateEspnLink();
 }
 // Unread numbers on the league buttons at the top of the chat popup.
 function paintLgCounts() {
@@ -4119,7 +4173,7 @@ function updateEspnLink() {
   const a = $("espn-open");
   if (!a || !state.base) return;
   const chat = $("chat-open"), owner = !state.demo && !!ownerTeam();
-  if (chat) { chat.hidden = !owner; a.hidden = owner; if (owner) ensureChatBadge(); }
+  if (chat) { chat.hidden = !owner; a.hidden = owner && !DESK.matches; if (owner) ensureChatBadge(); }
   const my = myTeamId(), season = state.base.season;
   a.href = my && state.base.teams[my]
     ? `${ESPN_FF}/team?leagueId=${espnLeague()}&teamId=${my}&seasonId=${season}`
@@ -4359,7 +4413,7 @@ function ensureInjuries() {
     fetchInjuries()
       .then((x) => { if (state.base === base) state.injuries = { ...x, at: Date.now() }; })
       .catch((e) => { if (state.base === base) state.injuries = { error: e.message, at: Date.now(), players: [], depth: {} }; })
-      .finally(() => { if (state.base === base && state.tab === "injuries") render(); });
+      .finally(() => { if (state.base === base && (state.tab === "injuries" || state.tab === "players")) render(); });
   }
   return d && d !== "loading" ? d : null;
 }
@@ -4389,12 +4443,8 @@ function openInjuryReport() {
   const draw = () => { if (el.isConnected) renderInjuries(el, draw); };
   draw();
 }
-function renderInjuries(el = $("view-injuries"), redraw = () => renderInjuries()) {
-  ensureUsage(); // weeks missed and snap shares fill in when they arrive
-  const D = ensureInjuries(), week = ensureCurrentRosters();
-  if (!D) { el.innerHTML = `<div class="loading"><span class="spinner"></span> Loading the injury report…</div>`; setTimeout(() => { if (el.isConnected) redraw(); }, 800); return; }
-  if (D.error) { el.innerHTML = `<div class="banner">${esc(D.error)}</div>`; return; }
-  const f = (state.injF ||= { pos: "ALL", roster: "all", mine: false, sort: { key: "status", dir: 1 } });
+// The Injury Report's columns, shared with the Players table on computers.
+function injuryKit(D, week) {
   const owners = new Map((week?.sides || []).flatMap((sd) => sd.players.map((p) => [String(p.id), sd.teamId])));
   const me = String(myTeamId() || "");
   const ownerTag = (id) => { const t = owners.get(String(id)); return t ? `<span class="inj-owner" title="${esc(team(t).name)}">${esc(team(t).abbrev)}</span>` : `<span class="inj-owner fa">FA</span>`; };
@@ -4452,11 +4502,7 @@ function renderInjuries(el = $("view-injuries"), redraw = () => renderInjuries()
   const who = (x, p) => (x ? `${plink(x[0], shortName(x[1]))} ${ownerTag(x[0])} ${moveBtns({ id: x[0], name: x[1], posId: posIdOf(p.pos), proId: p.proId })}${snap(x[0]) != null ? `<div class="pt-sub">${pctTxt(snap(x[0]))} snaps last game</div>` : ""}` : `<span class="muted">–</span>`);
   const recovery = (p) => { const t = `${p.type} ${p.detail} ${p.status}`; return RECOVERY.find(([re]) => re.test(t))?.[1] || "Varies"; };
 
-  const rows = D.players
-    .filter((p) => f.pos === "ALL" || p.pos === f.pos)
-    .filter((p) => f.roster === "all" || (f.roster === "rostered" ? owners.has(String(p.id)) : !owners.has(String(p.id)) || (f.mine && String(owners.get(String(p.id))) === me)))
-    .map((p) => ({ ...p, out: weeksOut(p), next: nextUp(p), fnext: fantasyNext(p) }))
-    .map((p) => ({ ...p, ret: retWeek(p) }));
+  const enrich = (p) => { const x = { ...p, out: weeksOut(p), next: nextUp(p), fnext: fantasyNext(p) }; x.ret = retWeek(x); return x; };
   const cols = [
     { key: "name", label: "Player", cls: "pt-player", dir: 1, render: (p) => `<div class="pt-name inj-name">${plinkNm(p)}</div><div class="pt-sub inj-sub">${esc(p.pos)} ${ownerTag(p.id)}${injBadge({ injury: INJ_CODE[p.status] || p.status.toUpperCase() })}${moveBtns({ id: p.id, name: p.name, posId: posIdOf(p.pos), proId: p.proId })}</div>` },
     { key: "status", label: "Status", dir: 1, sort: (p) => INJ_ORDER[p.status] ?? 9, render: (p) => esc(p.status) },
@@ -4467,6 +4513,19 @@ function renderInjuries(el = $("view-injuries"), redraw = () => renderInjuries()
     { key: "next", label: "Next up", title: "Next healthy player behind him on the team's depth chart", dir: 1, sort: (p) => p.next?.[1] || "~", render: (p) => who(p.next, p) },
     { key: "fnext", label: "Fantasy fill-in", title: "Of his healthy backups, the one who played the most snaps last game", dir: 1, sort: (p) => p.fnext?.[1] || "~", render: (p) => who(p.fnext, p) },
   ];
+  return { owners, me, ownerTag, enrich, cols, byId: new Map(D.players.map((p) => [String(p.id), p])) };
+}
+function renderInjuries(el = $("view-injuries"), redraw = () => renderInjuries()) {
+  ensureUsage(); // weeks missed and snap shares fill in when they arrive
+  const D = ensureInjuries(), week = ensureCurrentRosters();
+  if (!D) { el.innerHTML = `<div class="loading"><span class="spinner"></span> Loading the injury report…</div>`; setTimeout(() => { if (el.isConnected) redraw(); }, 800); return; }
+  if (D.error) { el.innerHTML = `<div class="banner">${esc(D.error)}</div>`; return; }
+  const f = (state.injF ||= { pos: "ALL", roster: "all", mine: false, sort: { key: "status", dir: 1 } });
+  const K = injuryKit(D, week), { owners, me } = K, cols = K.cols;
+  const rows = D.players
+    .filter((p) => f.pos === "ALL" || p.pos === f.pos)
+    .filter((p) => f.roster === "all" || (f.roster === "rostered" ? owners.has(String(p.id)) : !owners.has(String(p.id)) || (f.mine && String(owners.get(String(p.id))) === me)))
+    .map(K.enrich);
   const btn = (key, val, label) => `<button type="button" data-${key}="${val}" class="${f[key] === val ? "active" : ""}">${label}</button>`;
   el.innerHTML = `<div class="filters inj-filters">
       <div class="seg">${["ALL", "QB", "RB", "WR", "TE", "K"].map((p) => btn("pos", p, p === "ALL" ? "All" : p)).join("")}</div>
@@ -5128,6 +5187,7 @@ function initPlayerModal() {
     state.cards = [];
     hideCmp();
     setDock(false);
+    dropChatPop();
     document.body.classList.remove("modal-open");
     m.querySelector(".modal-card").classList.remove("pm-full", "chat-card");
     clearInterval(state.chatTimer); state.chatView = null;
@@ -5260,6 +5320,7 @@ async function openPtsPop(id, sp, anchor) {
 function showModal(html) {
   const m = $("pl-modal");
   setDock(false);
+  dropChatPop();
   m.querySelector(".modal-card").classList.remove("pm-full", "chat-card");
   $("pl-modal-body").innerHTML = html;
   m.hidden = false;
@@ -5291,6 +5352,8 @@ async function openPlayer(id, focusSp, tab, opts = {}) {
   closeStage();
   pushCard(id, opts.replace);
   const m = $("pl-modal"), body = $("pl-modal-body");
+  dropChatPop();
+  m.querySelector(".modal-card").classList.remove("chat-card");
   m.querySelector(".modal-card").classList.add("pm-full"); // same size on every tab, so switching tabs doesn't jump
   state.pmNewsSnap = null;
   m.hidden = false;
@@ -5687,7 +5750,7 @@ function keepState(el, draw) {
 
 function render() {
   if (!state.week) return;
-  if (!$("owner-btn").dataset.wired) { $("owner-btn").dataset.wired = "1"; $("owner-btn").addEventListener("click", openOwnerSignIn); $("notify-btn")?.addEventListener("click", openNotifications); $("chat-open")?.addEventListener("click", openChat); }
+  if (!$("owner-btn").dataset.wired) { $("owner-btn").dataset.wired = "1"; $("owner-btn").addEventListener("click", openOwnerSignIn); $("notify-btn")?.addEventListener("click", openNotifications); $("chat-open")?.addEventListener("click", openChat); placeChatBtn(); DESK.addEventListener?.("change", placeChatBtn); }
   ensureOwner();
   updateOwnerLink();
   if (!state.live && !state.liveBoot && state.tab !== "live") { state.liveBoot = true; refreshLive().finally(() => { state.liveBoot = false; }); }
@@ -6129,11 +6192,11 @@ function initSwipeTabs() {
   });
 }
 
-// Keyboard (computers): 1–5 switch tabs, / jumps to the player search.
+// Keyboard (computers): 1–9 switch tabs (in the order across the top), / jumps to the player search.
 document.addEventListener("keydown", (e) => {
   if (e.metaKey || e.ctrlKey || e.altKey || e.target.closest?.("input, textarea, select, [contenteditable]") || !state.week) return;
-  const tabs = ["roster", "matchups", "live", "players", "league"];
-  if (/^[1-5]$/.test(e.key)) { switchTab(tabs[+e.key - 1], null, true); e.preventDefault(); }
+  const tabs = [...document.querySelectorAll("#tabs button[data-tab]")].filter((b) => b.offsetParent).map((b) => b.dataset.tab);
+  if (/^[1-9]$/.test(e.key) && tabs[+e.key - 1]) { switchTab(tabs[+e.key - 1], null, true); e.preventDefault(); }
   else if (e.key === "/") { e.preventDefault(); if (state.tab !== "players") switchTab("players", null, true); setTimeout(() => $("pl-q")?.focus(), 50); }
 });
 function bindUi() {
