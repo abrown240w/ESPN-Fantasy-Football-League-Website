@@ -3596,6 +3596,7 @@ function startPick(baseId) {
   baseId = String(baseId);
   const d = state.playerCache?.[baseId]?.data?.player || {};
   hideCmp();
+  closeStage();
   document.querySelector("#pl-modal .modal-close")?.click(); // closes the cards; the bar keeps who we're comparing
   state.cmpPick = { id: baseId, name: d.name || "this player", pos: POS[d.posId] || "", team: PRO[d.proId] || "" };
   paintPickBar();
@@ -3620,6 +3621,7 @@ async function finishPick(pickId) {
   pickId = String(pickId);
   if (pickId === c.id) { paintPickBar("That's the same player: pick someone else"); return; }
   endPick();
+  if (wideStage()) return openStage([c.id, pickId]);
   await openPlayer(c.id);
   await openPlayer(pickId);
   openCompare([c.id, pickId]);
@@ -3640,12 +3642,61 @@ function openComparePicker(baseId) {
   showCmp(`${head}<div class="cmp-picks">${grp("Starters", others.filter((p) => p.starter))}${grp("Bench", others.filter((p) => !p.starter && p.slotId !== IR))}${grp("IR", others.filter((p) => p.slotId === IR))}</div>`);
   $("cmp-body").querySelectorAll("[data-cmp-pick]").forEach((b) => b.addEventListener("click", async () => {
     const id = b.dataset.cmpPick;
+    if (wideStage()) return openStage([String(baseId), id]);
     await openPlayer(id);
     openCompare([String(baseId), id]);
   }));
 }
+// On wide screens (1300px+) two players compare with both cards on screen and the comparison between them.
+const wideStage = () => DESK.matches && innerWidth >= 1300;
+const stageOpen = () => !!$("cmp-stage") && !$("cmp-stage").hidden;
+function closeStage() {
+  const st = $("cmp-stage");
+  if (!st || st.hidden) return;
+  st.hidden = true;
+  st.innerHTML = "";
+  state.stageIds = null;
+  document.body.classList.remove("modal-open");
+}
+async function openStage(ids) {
+  ids = ids.slice(0, 2).map(String);
+  hideCmp();
+  if (!$("pl-modal").hidden) document.querySelector("#pl-modal .modal-close").click();
+  let st = $("cmp-stage");
+  if (!st) {
+    st = document.createElement("div");
+    st.id = "cmp-stage";
+    st.hidden = true;
+    st.addEventListener("click", (e) => {
+      const other = e.target.closest("[data-cmp-other]");
+      if (other) { startPick(other.dataset.cmpOther); return; }
+      if (e.target === st || e.target.closest(".stg-x")) closeStage();
+    });
+    document.body.appendChild(st);
+  }
+  const load = `<div class="loading small"><span class="spinner"></span> Loading…</div>`;
+  st.innerHTML = `<div class="stg-card" id="stg-a">${load}</div><div class="stg-cmp"><button type="button" class="stg-x" aria-label="Close comparison">×</button><div id="stg-body">${load}</div></div><div class="stg-card" id="stg-b">${load}</div>`;
+  st.hidden = false;
+  document.body.classList.add("modal-open");
+  state.stageIds = ids;
+  ensureValues(); ensureUsage();
+  const cache = (state.playerCache ||= {});
+  await Promise.all(ids.map(async (id) => {
+    const hit = cache[id];
+    if (hit && Date.now() - hit.at < 60000) return;
+    try { cache[id] = { at: Date.now(), data: await fetchPlayer(id) }; } catch { /* that card shows an error */ }
+  }));
+  if (!stageOpen() || state.stageIds !== ids) return;
+  ids.forEach((id, i) => {
+    const el = $(i ? "stg-b" : "stg-a");
+    if (!cache[id]?.data) { el.innerHTML = `<div class="banner">Couldn't load that player.</div>`; return; }
+    renderPlayerModal(cache[id].data, null, { body: el, st: { pmTab: "overview" }, stage: true, alive: () => stageOpen() && state.stageIds === ids });
+  });
+  renderCompare(ids, $("stg-body"));
+}
 async function openCompare(ids) {
   ids = [...new Set(ids.map(String))].slice(0, 3);
+  if (wideStage() && ids.length === 2) return openStage(ids);
   state.cmpIds = ids;
   showCmp(`<div class="pm-head"><h2 id="cmp-title">⚖ Compare players</h2></div><div class="loading small"><span class="spinner"></span> Loading their seasons…</div>`);
   ensureValues(); ensureUsage();
@@ -3722,7 +3773,8 @@ function cmpFit(x, wk) {
   }
   return { gain, slot, displaced, need, healthy, open, drops, offers, side, cand, startsNow: baseIds.has(x.id) };
 }
-function renderCompare(ids) {
+function renderCompare(ids, target) {
+  const put = (h) => { if (target) target.innerHTML = h; else showCmp(h); };
   const wk = cmpWeek(), M = ids.map((id) => cmpModel(id, wk)), me = cmpMe();
   const cols = M.length;
   const pct0 = (v) => `${Math.round(v)}%`;
@@ -3797,12 +3849,12 @@ function renderCompare(ids) {
     ? `${esc(best[0].m.name)} is the better fit for your lineup (+${f1(best[0].f.gain)} vs +${f1(best[1].f.gain)} pts a week).`
     : best.length > 1 ? `They'd help your lineup about the same (+${f1(best[0].f.gain)} and +${f1(best[1].f.gain)} pts a week).`
     : `${esc(best[0].m.name)}: ${grade(best[0].f.gain)[0].toLowerCase()} for your lineup (+${f1(best[0].f.gain)} pts a week).`;
-  showCmp(`<div class="pm-head"><div><h2 id="cmp-title">⚖ Compare players</h2>${bottom ? `<div class="cmp-bottom">${bottom}</div>` : ""}<button type="button" class="cmp-other sm" data-cmp-other="${esc(ids[0])}">Compare other</button></div></div>
+  put(`<div class="pm-head"><div><h2 id="cmp-title">⚖ Compare players</h2>${bottom ? `<div class="cmp-bottom">${bottom}</div>` : ""}<button type="button" class="cmp-other sm" data-cmp-other="${esc(ids[0])}">Compare other</button></div></div>
     <h3 class="pm-sub">Fit with your team</h3><div class="cmp-vs cols-${cols}">${verdicts}</div>
     <h3 class="pm-sub">Season</h3><div class="table-wrap"><table class="cmp-table"><thead>${head}</thead><tbody>${season}</tbody></table></div>
     <h3 class="pm-sub">Week by week</h3><div class="table-wrap">${weekly}</div>
     <p class="muted small">Fit uses ESPN's projections for this week and the best lineup your roster can field. It's an estimate, not a promise.</p>`);
-  const body = $("cmp-body");
+  const body = target || $("cmp-body");
   body.querySelectorAll("[data-cmp-add]").forEach((b) => b.addEventListener("click", () => {
     const m = M.find((q) => q.id === b.dataset.cmpAdd);
     hideCmp();
@@ -5063,6 +5115,7 @@ function initPlayerModal() {
     e.preventDefault();
     e.stopPropagation();
     if (state.cmpPick && b.classList.contains("pl-link")) { finishPick(b.dataset.pid); return; }
+    if (stageOpen()) closeStage();
     state.modalReturn = b;
     openPlayer(b.dataset.pid, b.dataset.sp ? Number(b.dataset.sp) : null);
   }, true);
@@ -5080,7 +5133,11 @@ function initPlayerModal() {
   });
   // Esc with nothing open cancels "Compare other".
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && state.cmpPick && $("pl-modal").hidden && cmp.hidden) endPick(); });
-  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !cmp.hidden) { hideCmp(); e.stopImmediatePropagation(); } }, true);
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    if (stageOpen()) { closeStage(); e.stopImmediatePropagation(); }
+    else if (!cmp.hidden) { hideCmp(); e.stopImmediatePropagation(); }
+  }, true);
 }
 
 // On computers the player card and chat open as a panel docked on the right (the page stays usable);
@@ -5134,6 +5191,7 @@ function closeCard(id) {
 }
 async function openPlayer(id, focusSp, tab, opts = {}) {
   id = String(id);
+  closeStage();
   pushCard(id, opts.replace);
   const m = $("pl-modal"), body = $("pl-modal-body");
   m.querySelector(".modal-card").classList.add("pm-full"); // same size on every tab, so switching tabs doesn't jump
@@ -5160,6 +5218,7 @@ async function openPlayer(id, focusSp, tab, opts = {}) {
 
 // Jump from a player popup to their game on Live games: open the game with the box score on their team.
 function goLiveGame(id, side) {
+  closeStage();
   document.querySelector("#pl-modal .modal-close")?.click();
   (state.liveOpen ||= {})[id] = true;
   state.liveSel = id;
@@ -5170,8 +5229,11 @@ function goLiveGame(id, side) {
   setTimeout(scrollTo, 1600); // again once the live data has loaded
 }
 
-function renderPlayerModal(d, focusSp) {
-  const body = $("pl-modal-body");
+// ctx is only given for the side-by-side compare screen: { body, st, alive, stage }, so two cards can be on screen
+// at once, each with its own tab and game-log view. Otherwise it draws into the usual popup.
+function renderPlayerModal(d, focusSp, ctx) {
+  const S = ctx?.st || state, body = ctx?.body || $("pl-modal-body");
+  const alive = () => (ctx ? ctx.alive() : !$("pl-modal").hidden);
   const p = d.player, pos = POS[p.posId] || "";
   // Fantasy owner and lineup status from this week's rosters, when loaded.
   const cur = state.weekCache?.[state.base.current]?.sides?.flatMap((s) => s.players).find((x) => String(x.id) === String(p.id));
@@ -5193,10 +5255,10 @@ function renderPlayerModal(d, focusSp) {
   const uCell = (v, n, unit) => (v == null ? `<td class="num muted">–</td>` : `<td class="num">${Math.round(v)}%<div class="pt-sub">${n} ${unit}</div></td>`);
   // Game log views: Passing / Rushing / Receiving / Usage (QB, RB, WR, TE). Starts on the one that fits him.
   const hasViews = [1, 2, 3, 4].includes(p.posId);
-  if (state.glFor !== String(p.id)) { state.glFor = String(p.id); state.glMode = { 1: "pass", 2: "rush", 3: "rec", 4: "rec" }[p.posId] || "pass"; }
-  const mode = hasViews ? state.glMode : "game";
+  if (S.glFor !== String(p.id)) { S.glFor = String(p.id); S.glMode = { 1: "pass", 2: "rush", 3: "rec", 4: "rec" }[p.posId] || "pass"; }
+  const mode = hasViews ? S.glMode : "game";
   const STAT = { pass: [3, 4], rush: [24, 25], rec: [42, 43] };
-  const ncols = mode === "use" ? 5 : mode === "game" ? 3 : 6;
+  const ncols = mode === "use" ? 5 : mode === "game" ? 3 : mode === "rec" ? 8 : 6;
   const sv = (w, id) => Math.round(w.stats?.[id] || 0);
   // Opponent, with its rank against his position (red = tough, green = easy).
   const oppCell = (opp, home, sub = "") => {
@@ -5224,7 +5286,7 @@ function renderPlayerModal(d, focusSp) {
       cells = pts;
     } else {
       const [yd, td] = STAT[mode];
-      cells = `<td class="num">${sv(w, yd)}</td><td class="num">${sv(w, td)}</td><td class="num">${sv(w, 20)}/${sv(w, 72)}</td>${pts}`;
+      cells = `${mode === "rec" ? `<td class="num">${sv(w, 58)}</td><td class="num">${sv(w, 53)}</td>` : ""}<td class="num">${sv(w, yd)}</td><td class="num">${sv(w, td)}</td><td class="num">${sv(w, 20)}/${sv(w, 72)}</td>${pts}`;
     }
     const line = mode === "game" ? esc(compactLine(p.posId, w.stats) || gameLine(p.posId, w.stats)) : "";
     return `<tr class="gl-row ${open ? "open" : ""}" data-sp="${sp}"><td class="gl-wk">${sp}</td>${oppCell(w.opp, w.home, line)}${cells}</tr>
@@ -5232,12 +5294,12 @@ function renderPlayerModal(d, focusSp) {
   }).join("");
   const heads = mode === "use" ? `<th class="num" title="Share of the team's offensive snaps">Snap%</th><th class="num" title="Share of the team's targets">Tgt%</th><th class="num" title="Share of the team's rushing attempts">Rush%</th>`
     : mode === "game" ? `<th class="num">FPTS</th>`
-    : `<th class="num" title="${{ pass: "Passing", rush: "Rushing", rec: "Receiving" }[mode]} yards">Yds</th><th class="num" title="${{ pass: "Passing", rush: "Rushing", rec: "Receiving" }[mode]} touchdowns">TD</th><th class="num" title="Interceptions thrown / fumbles lost">I/F</th><th class="num" title="Fantasy points (tap to see how they were scored)">FPTS</th>`;
+    : `${mode === "rec" ? `<th class="num" title="Targets">Tgt</th><th class="num" title="Receptions">Rec</th>` : ""}<th class="num" title="${{ pass: "Passing", rush: "Rushing", rec: "Receiving" }[mode]} yards">Yds</th><th class="num" title="${{ pass: "Passing", rush: "Rushing", rec: "Receiving" }[mode]} touchdowns">TD</th><th class="num" title="Interceptions thrown / fumbles lost">I/F</th><th class="num" title="Fantasy points (tap to see how they were scored)">FPTS</th>`;
   const logTable = (sps) => `<table class="data gamelog gl-compact gl-${mode}"><thead><tr><th class="gl-wk">Wk</th><th>Opp</th>${heads}</tr></thead><tbody>${logRows(sps)}</tbody></table>`;
   const glModes = hasViews ? `<div class="seg gl-modes">${[["pass", "Passing"], ["rush", "Rushing"], ["rec", "Receiving"], ["use", "Usage"]].map(([k, l]) => `<button type="button" data-glm="${k}" class="${mode === k ? "active" : ""}">${l}</button>`).join("")}</div>` : "";
 
-  state.pmFor = String(p.id);
-  const rerender = () => { if (!$("pl-modal").hidden && state.pmFor === String(p.id)) renderPlayerModal(d, focusSp); };
+  S.pmFor = String(p.id);
+  const rerender = () => { if (alive() && S.pmFor === String(p.id)) renderPlayerModal(d, focusSp, ctx); };
 
   // This week's NFL game (from the live scoreboard, any state) and this player's box-score lines in it.
   if (!state.live && !state.liveForPopup) { state.liveForPopup = true; Promise.resolve().then(refreshLive).catch(() => {}).finally(() => { state.liveForPopup = false; rerender(); }); }
@@ -5306,9 +5368,9 @@ function renderPlayerModal(d, focusSp) {
   };
 
   const tabs = [["overview", lg?.state === "in" ? `<span class="pm-live-dot"></span>Overview` : "Overview"], ["log", "Game log"], ["news", "News"], ["usage", "Usage"], ["depth", "Depth chart"]];
-  if (state.pmTab === "game") state.pmTab = "overview";
-  if (!tabs.some(([k]) => k === state.pmTab)) state.pmTab = "overview";
-  const tab = state.pmTab;
+  if (S.pmTab === "game") S.pmTab = "overview";
+  if (!tabs.some(([k]) => k === S.pmTab)) S.pmTab = "overview";
+  const tab = S.pmTab;
 
   let pane = "";
   if (tab === "overview") {
@@ -5333,8 +5395,8 @@ function renderPlayerModal(d, focusSp) {
     const score = (sd) => (lg.state === "pre" ? "" : ` ${sd.score ?? ""}`);
     const nd = ensureNews([p.id], rerender), all = nd?.players?.[p.id] || [];
     // What was unread when the card opened stays marked "New" while you flip tabs.
-    if (nd && !state.pmNewsSnap) { state.pmNewsSnap = unreadNews(String(p.id), all); markNewsRead(String(p.id), all); }
-    const fresh = state.pmNewsSnap || [];
+    if (nd && !S.pmNewsSnap) { S.pmNewsSnap = unreadNews(String(p.id), all); markNewsRead(String(p.id), all); }
+    const fresh = S.pmNewsSnap || [];
     const shown = fresh.length ? fresh.slice(0, 3) : all.slice(0, 1);
     const newsBox = !nd ? "" : !all.length ? "" : `<h3 class="pm-sub">${fresh.length ? `News <span class="badge live">${fresh.length} new</span>` : "Latest news"}</h3>
       <div class="news">${shown.map((n) => newsItem(n)).join("")}</div>${all.length > shown.length ? `<button type="button" class="link-btn pm-allnews" data-pmtab="news">All news (${all.length}) ›</button>` : ""}`;
@@ -5359,14 +5421,14 @@ function renderPlayerModal(d, focusSp) {
   } else {
     const nd = ensureNews([p.id], rerender);
     const items = nd?.players?.[p.id] || [];
-    if (nd && !state.pmNewsSnap) { state.pmNewsSnap = unreadNews(String(p.id), items); markNewsRead(String(p.id), items); }
-    const isNew = new Set((state.pmNewsSnap || []).map((n) => n.published));
+    if (nd && !S.pmNewsSnap) { S.pmNewsSnap = unreadNews(String(p.id), items); markNewsRead(String(p.id), items); }
+    const isNew = new Set((S.pmNewsSnap || []).map((n) => n.published));
     pane = !nd ? `<div class="loading small"><span class="spinner"></span> Loading news…</div>`
       : items.length ? `<div class="news">${items.map((n) => newsItem(n, isNew.has(n.published) ? `<span class="badge live news-new">NEW</span>` : "")).join("")}</div>${newsCredit()}`
       : `<p class="muted small">No player updates from ESPN yet.</p>`;
   }
 
-  const cardStrip = (state.cards || []).length > 1 ? `<div class="pm-cards">${state.cards.map((cid) => { const nm = state.playerCache?.[cid]?.data?.player?.name || "Player"; return `<span class="pc-chip ${cid === String(p.id) ? "active" : ""}" data-card="${esc(cid)}" role="button" tabindex="0">${esc(shortName(nm))}<button type="button" class="pc-x" data-cardx="${esc(cid)}" aria-label="Close ${esc(nm)}">×</button></span>`; }).join("")}</div>` : "";
+  const cardStrip = !ctx && (state.cards || []).length > 1 ? `<div class="pm-cards">${state.cards.map((cid) => { const nm = state.playerCache?.[cid]?.data?.player?.name || "Player"; return `<span class="pc-chip ${cid === String(p.id) ? "active" : ""}" data-card="${esc(cid)}" role="button" tabindex="0">${esc(shortName(nm))}<button type="button" class="pc-x" data-cardx="${esc(cid)}" aria-label="Close ${esc(nm)}">×</button></span>`; }).join("")}</div>` : "";
   body.innerHTML = `${cardStrip}<div class="pm-head">
       ${headshot({ id: p.id, name: p.name, posId: p.posId, proId: p.proId }, 64)}
       <div><h2 id="pl-modal-title">${esc(p.name)}${injBadge({ injury: p.injury })}</h2>
@@ -5378,9 +5440,9 @@ function renderPlayerModal(d, focusSp) {
     <div class="pm-pane">${pane}</div>`;
   body.querySelectorAll("[data-pmtab]").forEach((b) => b.addEventListener("click", () => {
     const x = body.querySelector(".pm-tabs")?.scrollLeft || 0;
-    state.pmTab = b.dataset.pmtab;
-    renderPlayerModal(d, focusSp);
-    body.closest(".modal-card").scrollTop = 0;
+    S.pmTab = b.dataset.pmtab;
+    renderPlayerModal(d, focusSp, ctx);
+    const sc = body.closest(".modal-card, .stg-card"); if (sc) sc.scrollTop = 0;
     const row = body.querySelector(".pm-tabs");
     if (row) { row.scrollLeft = x; row.querySelector(".active")?.scrollIntoView({ block: "nearest", inline: "nearest" }); }
   }));
@@ -5398,14 +5460,14 @@ function renderPlayerModal(d, focusSp) {
       const t = e.changedTouches[0], dx = t.clientX - sx, dy = t.clientY - sy;
       if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
       const keys = [...body.querySelectorAll(".pm-tabs [data-pmtab]")].map((b) => b.dataset.pmtab);
-      const next = keys[keys.indexOf(state.pmTab) + (dx < 0 ? 1 : -1)];
+      const next = keys[keys.indexOf(S.pmTab) + (dx < 0 ? 1 : -1)];
       if (!next) return;
-      state.pmSlide = dx < 0 ? "right" : "left";
+      S.pmSlide = dx < 0 ? "right" : "left";
       body.querySelector(`.pm-tabs [data-pmtab="${next}"]`)?.click();
     }, { passive: true });
   }
   const paneEl = body.querySelector(".pm-pane");
-  if (state.pmSlide && paneEl) { paneEl.classList.add(`slide-${state.pmSlide}`); state.pmSlide = null; }
+  if (S.pmSlide && paneEl) { paneEl.classList.add(`slide-${S.pmSlide}`); S.pmSlide = null; }
   // » shows while tabs are hidden off the right edge; tapping it scrolls them into view.
   const tabRow = body.querySelector(".pm-tabs"), more = body.querySelector(".pm-more");
   const updMore = () => { more.hidden = tabRow.scrollLeft + tabRow.clientWidth >= tabRow.scrollWidth - 4; };
@@ -5416,14 +5478,14 @@ function renderPlayerModal(d, focusSp) {
   const ue = body.querySelector(".pm-usage");
   if (ue) {
     // Starts on his NFL team each time a card opens; the menu can look at any team.
-    if (state.pmUsageFor !== String(p.id)) { state.pmUsageFor = String(p.id); state.players.utTeam = PRO[p.proId] || ""; state.players.utMode = "snap"; }
+    if (S.pmUsageFor !== String(p.id)) { S.pmUsageFor = String(p.id); state.players.utTeam = PRO[p.proId] || ""; state.players.utMode = "snap"; }
     const draw = () => { if (body.querySelector(".pm-usage") === ue) renderUsage(ue, draw); };
     draw();
   }
   body.querySelectorAll("[data-card]").forEach((b) => b.addEventListener("click", (e) => { if (!e.target.closest("[data-cardx]")) openPlayer(b.dataset.card); }));
   body.querySelectorAll("[data-cardx]").forEach((b) => b.addEventListener("click", (e) => { e.stopPropagation(); closeCard(b.dataset.cardx); }));
   body.querySelector("[data-compare]")?.addEventListener("click", () => startCompare(String(p.id)));
-  body.querySelectorAll("[data-glm]").forEach((b) => b.addEventListener("click", () => { state.glMode = b.dataset.glm; renderPlayerModal(d, focusSp); }));
+  body.querySelectorAll("[data-glm]").forEach((b) => b.addEventListener("click", () => { S.glMode = b.dataset.glm; renderPlayerModal(d, focusSp, ctx); }));
   body.querySelectorAll("[data-txmore]").forEach((b) => b.addEventListener("click", () => { const box = body.querySelector(".tx-more"); box.hidden = !box.hidden; b.textContent = box.hidden ? b.dataset.txmore : "Show less ▴"; }));
   body.querySelectorAll(".gl-pts").forEach((b) => b.addEventListener("click", () => {
     const row = b.closest("tr"), bd = row.nextElementSibling;

@@ -535,7 +535,7 @@ table.data.pt-table th { z-index: 2; }
 .upg-diff { align-self: center; font-weight: 800; color: var(--good); font-variant-numeric: tabular-nums; }
 .pr-sum { display: flex; flex-wrap: wrap; gap: 4px 16px; align-items: center; margin: 4px 0 6px; }
 .pr-sum-key { margin-left: auto; }
-#pl-modal .pr-list { margin-top: 4px; }
+#pl-modal .pr-list, #cmp-stage .pr-list { margin-top: 4px; }
 
 /* NFL game status markers (Matchups & Roster) */
 .nm-short { display: none; }
@@ -785,7 +785,7 @@ table.data.bx-table th, table.data.bx-table td { padding: 6px 6px; font-size: .8
 .news-item.alert .news-head::before { content: "● "; color: var(--bad); }
 .news-who { display: block; font-weight: 700; margin-bottom: 1px; }
 .news-item p { margin: 6px 0 0; color: var(--ink-2); }
-#pl-modal .news { border: 1px solid var(--grid); border-radius: 10px; padding: 2px 12px; margin-bottom: 8px; }
+#pl-modal .news, #cmp-stage .news { border: 1px solid var(--grid); border-radius: 10px; padding: 2px 12px; margin-bottom: 8px; }
 
 /* Rivalries (History) */
 .riv-pick { align-items: center; }
@@ -1852,3 +1852,13 @@ body.cmp-picking .modal-card.pm-full { height: calc(100dvh - 100px) !important; 
 .er-row.er-total .er-l { padding-left: 14px; font-size: .9rem; }
 .er-row.er-total .erc { font-weight: 800; }
 .er-row.er-total .erc small { font-weight: 600; }
+
+/* Compare on wide screens: both cards with the comparison between them */
+#cmp-stage { position: fixed; top: var(--top-h, 0px); left: 0; right: 0; bottom: 0; z-index: 70; display: flex; gap: 14px; padding: 14px; background: rgba(10, 20, 40, .6); }
+#cmp-stage[hidden] { display: none; }
+#cmp-stage .stg-card, #cmp-stage .stg-cmp { background: var(--surface); color: var(--ink); border-radius: 14px; overflow-y: auto; padding: 16px; box-shadow: 0 12px 40px rgba(0,0,0,.35); }
+#cmp-stage .stg-card { flex: 0 0 clamp(390px, 27vw, 470px); }
+#cmp-stage .stg-cmp { flex: 1 1 0; min-width: 0; position: relative; }
+#cmp-stage .stg-x { position: sticky; top: 0; float: right; width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--border); background: var(--surface-2); color: inherit; font-size: 1.3rem; line-height: 1; cursor: pointer; z-index: 2; }
+#cmp-stage .cmp-btn, #cmp-stage .pm-cards { display: none; }
+#cmp-stage .cmp-vs.cols-2 { grid-template-columns: 1fr; }
