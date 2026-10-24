@@ -2429,3 +2429,26 @@ main .table-wrap:has(> .pt-table), body.has-chatbar main .table-wrap:has(> .pt-t
 .cx-mine label { display: grid; gap: 2px; min-width: 0; flex: 1 1 220px; }
 .cx-mine select { font: inherit; font-weight: 600; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--ink); min-width: 180px; }
 .cx-h { font-size: 1rem; margin: 0 0 6px; }
+
+/* Matchup: My teams / this league / All leagues (computers and tablets) */
+.lg-wp { display: none; }
+@media (min-width: 900px) {
+  .mu-scope { display: flex; margin: 0 0 2px; }
+  .mu-scope button { flex: 1; white-space: nowrap; }
+  .section-head .mu-scope { margin: 0 0 0 auto; }
+  .section-head .mu-scope button { flex: none; }
+  .mu-lg-head { display: flex; align-items: center; gap: 8px; margin: 8px 2px 0; font-size: .9rem; }
+  .mu-lg-head:first-of-type { margin-top: 0; }
+  .mu-lg-head .badge { font-size: .62rem; }
+  .lg-pick-team { text-align: center; font-weight: 700; color: var(--accent-ink); padding: 14px; }
+  /* Multiview: your matchup in each picked league, side by side (as many as fit, at least ~500px each) */
+  .mv-pick { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 12px; }
+  .mv-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 500px), 1fr)); gap: 18px; align-items: start; }
+  .mv-panel { min-width: 0; }
+  .mv-panel .card.detail { margin: 0; }
+  .mv-head { display: flex; align-items: center; gap: 8px; margin: 0 2px 8px; font-size: 1rem; }
+  .mv-head .mv-open { margin-left: auto; font-weight: 700; }
+  /* Win chance under each card */
+  .mu-cards .lg-wp { display: flex; grid-column: 1 / -1; align-items: center; gap: 8px; margin-top: 8px; font-size: .72rem; font-weight: 700; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+  .mu-cards .lg-wp .mt-wp { height: 4px; }
+}

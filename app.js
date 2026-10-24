@@ -676,25 +676,66 @@ function renderMatchups() {
   // Phones can also be on the league summary ("league"); otherwise default to your own matchup.
   if (!(state.openMatchup === "league" && !split) && !w.matchups.some((m) => m.id === state.openMatchup && m.away)) state.openMatchup = (mine?.away ? mine : w.matchups.find((m) => m.away))?.id ?? null;
   if (!split) return renderMatchupsPhone(el, label);
+  // A game picked from another league's card opens once that league has loaded.
+  if (state.pendingOpen != null) { if (w.matchups.some((m) => m.id === state.pendingOpen && m.away)) state.openMatchup = state.pendingOpen; state.pendingOpen = null; }
+  const scope = LEAGUES.length > 1 ? (state.muScope ||= store.get("ffb.muScope") || "league") : "league";
+  if (scope !== "league") ensureOtherLeagues();
+  const setScope = () => el.querySelectorAll("[data-scope]").forEach((b) => b.addEventListener("click", () => {
+    state.muScope = b.dataset.scope;
+    store.set("ffb.muScope", state.muScope);
+    renderMatchups();
+  }));
+  const crossClick = () => el.querySelectorAll(".lg-card[data-lg]").forEach((c) => c.addEventListener("click", () => {
+    if (c.dataset.pickin) { if (state.demo) return; switchLeague(c.dataset.lg, "").then(() => openPickTeam()); return; }
+    openOtherLeagueGame(c.dataset.lg, +c.dataset.mb, scope === "all" ? "league" : scope);
+  }));
+  // Multiview: your game in each league you pick, as the full breakdown, side by side (as many as fit),
+  // so you can follow them all at once. No scoring feed here.
+  if (scope === "all") {
+    const on = multiLeagues();
+    el.innerHTML = `<div class="section-head"><h2>Week ${w.week} · my matchups</h2>${scopeSeg(scope)}</div>
+      <div class="mv-pick" role="group" aria-label="Leagues to show">${LEAGUES.map((l) => `<button type="button" class="pl-tool ${on.includes(l.id) ? "active" : ""}" aria-pressed="${on.includes(l.id)}" data-mvlg="${esc(l.id)}">${esc(state.demo && l.id === curLeague() ? "Demo" : lgShort(l))}</button>`).join("")}</div>
+      <div class="mv-grid">${LEAGUES.filter((l) => on.includes(l.id)).map((l) => `<section class="mv-panel">${multiPanel(l)}</section>`).join("") || `<p class="muted">Pick at least one league above.</p>`}</div>`;
+    setScope();
+    el.querySelectorAll("[data-mvlg]").forEach((b) => b.addEventListener("click", () => {
+      const id = b.dataset.mvlg, cur = multiLeagues();
+      store.set("ffb.mvLeagues", JSON.stringify(cur.includes(id) ? cur.filter((x) => x !== id) : LEAGUES.map((l) => l.id).filter((x) => x === id || cur.includes(x))));
+      renderMatchups();
+    }));
+    el.querySelectorAll("[data-mvopen]").forEach((b) => b.addEventListener("click", () => {
+      if (b.dataset.mvopen === curLeague()) { state.openMatchup = +b.dataset.mb; state.muScope = "league"; store.set("ffb.muScope", "league"); renderMatchups(); scrollTo(0, 0); }
+      else openOtherLeagueGame(b.dataset.mvopen, +b.dataset.mb, "league");
+    }));
+    el.querySelectorAll("[data-mvteam]").forEach((b) => b.addEventListener("click", () => {
+      if (b.dataset.mvteam === curLeague()) openPickTeam();
+      else if (!state.demo) switchLeague(b.dataset.mvteam, "").then(() => openPickTeam());
+    }));
+    fitNames(el);
+    updateStickies();
+    return;
+  }
   const sel = w.matchups.find((m) => m.id === state.openMatchup);
+  const list = scope === "mine" ? LEAGUES.map((l) => leagueBlock(l, true)).join("") : leagueCards();
   el.innerHTML = `<div class="section-head"><h2>Week ${w.week} matchups ${statusBadge(w.status)}</h2><span class="muted small hide-phone">${label}</span></div>
     <div class="${split ? "mu-split" : "mu-stack"}">
-      <div class="${split ? "mu-list mu-cards" : "mt-grid"}">${split ? leagueCards() : w.matchups.map(matchupTile).join("")}</div>
+      <div class="mu-list mu-cards">${LEAGUES.length > 1 ? scopeSeg(scope) : ""}${list}</div>
       <div class="${split ? "mu-pane" : "mu-detail"}" id="mu-pane">${sel ? matchupDetail(sel, true) : `<p class="muted">Pick a matchup.</p>`}</div>
       <aside class="card mu-feed" id="mu-feed">${sel ? scoringFeed(sel) : ""}</aside>
     </div>
     <p class="muted small show-phone mu-note">${label}</p>`;
   fitNames(el);
+  setScope();
+  crossClick();
   $("mu-feed")?.addEventListener("click", (e) => {
     if (!e.target.closest("#mf-more")) return;
     state.feedMax = (state.feedMax || 60) + 60;
     $("mu-feed").innerHTML = scoringFeed(w.matchups.find((x) => x.id === state.openMatchup));
   });
-  el.querySelectorAll(".mini-tile[data-mu], .lg-card[data-mb]").forEach((c) => c.addEventListener("click", () => {
+  el.querySelectorAll(".mini-tile[data-mu], .lg-card[data-mb]:not([data-lg])").forEach((c) => c.addEventListener("click", () => {
     const m = w.matchups.find((x) => x.id === +(c.dataset.mu || c.dataset.mb));
     if (!m?.away || state.openMatchup === m.id) return;
     state.openMatchup = m.id;
-    el.querySelectorAll(".mini-tile[data-mu], .lg-card[data-mb]").forEach((b) => b.classList.toggle("selected", b === c));
+    el.querySelectorAll(".mini-tile[data-mu], .lg-card[data-mb]:not([data-lg])").forEach((b) => b.classList.toggle("selected", b === c));
     const pane = $("mu-pane");
     pane.innerHTML = matchupDetail(m, true);
     state.feedMax = 0;
@@ -763,21 +804,124 @@ function leagueCards() {
   const html = leagueSummary().replace(/^[\s\S]*?<div class="lg-list">/, "").replace(/<\/div>\s*$/, "");
   return html.replace(new RegExp(`class="lg-card ([^"]*)" data-mb="${state.openMatchup}"`), `class="lg-card $1 selected" data-mb="${state.openMatchup}"`);
 }
-// All matchups as stacked cards; tap one to open it.
-function leagueSummary() {
-  const w = state.week, st = w.status, me = String(myTeamId());
+// One matchup as a score card (home over away; side by side on computers, with a small win-chance bar
+// until the week is final). `lg` tags cards from another league (the Matchup tab's My teams / All leagues).
+function scoreCard(m, w, lg = "", selected = false) {
+  const st = w.status, me = String(myTeamId());
   const row = (sd, lead) => {
     const t = team(sd.teamId);
     return `<div class="lg-row ${lead === false ? "trail" : ""}">${logoImg(t, 40)}<div class="lg-id"><strong>${esc(t.name)}</strong><span>${esc(shortOwner(t.owner))} <i>|</i> ${recordStr(t)}${streakHtml(sd.teamId)}</span></div>
       <div class="lg-pts"><strong>${st === "upcoming" ? f1(sd.proj) : f2(sd.score)}</strong><small>${st === "upcoming" ? "proj" : f1(st === "live" ? sd.liveProj : sd.proj)}</small></div></div>`;
   };
-  const cards = w.matchups.map((m) => {
-    if (!m.away) return `<div class="lg-card bye">${row(m.home, null)}<div class="muted small lg-bye">Bye</div></div>`;
-    const lead = st === "upcoming" || m.home.score === m.away.score ? null : m.home.score > m.away.score;
-    const mine = [m.home.teamId, m.away.teamId].map(String).includes(me);
-    return `<button type="button" class="lg-card ${mine ? "mine" : ""}" data-mb="${m.id}">${row(m.home, lead == null ? null : lead)}${row(m.away, lead == null ? null : !lead)}</button>`;
-  }).join("");
-  return `<div class="mu-swipe mu-lghead"><strong>Week ${w.week} scoreboard</strong> ${statusBadge(w.status)}</div><div class="lg-list">${cards}</div>`;
+  if (!m.away) return `<div class="lg-card bye">${row(m.home, null)}<div class="muted small lg-bye">Bye</div></div>`;
+  const lead = st === "upcoming" || m.home.score === m.away.score ? null : m.home.score > m.away.score;
+  const mine = [m.home.teamId, m.away.teamId].map(String).includes(me);
+  const wp = st !== "final" && m.wp != null ? `<div class="lg-wp"><span>${pct(m.wp)}</span><span class="mt-wp"><i style="width:${m.wp * 100}%"></i></span><span>${pct(1 - m.wp)}</span></div>` : "";
+  return `<button type="button" class="lg-card ${mine ? "mine" : ""} ${selected ? "selected" : ""}" data-mb="${m.id}" ${lg ? `data-lg="${esc(lg)}"` : ""}>${row(m.home, lead == null ? null : lead)}${row(m.away, lead == null ? null : !lead)}${wp}</button>`;
+}
+// All matchups as stacked cards; tap one to open it.
+function leagueSummary() {
+  const w = state.week;
+  return `<div class="mu-swipe mu-lghead"><strong>Week ${w.week} scoreboard</strong> ${statusBadge(w.status)}</div><div class="lg-list">${w.matchups.map((m) => scoreCard(m, w)).join("")}</div>`;
+}
+
+// ---------- Matchups across your leagues (computers and tablets) ----------
+// The Matchup tab can list just this league's games, your game in every league ("My teams"), or every
+// league's games side by side ("All leagues"). Other leagues load in the background (this week's
+// scores and your team there) and refresh about once a minute while games are on.
+const curLeague = () => (state.demo ? LEAGUES[0].id : String(state.leagueId || LEAGUES[0].id));
+const lgShort = (l) => l.label.replace(/\s*League\s*$/i, "");
+// Run `fn` as if `x` were the league on screen (team names, records, "my team").
+function inLeague(x, fn) {
+  if (!x || x.id === curLeague()) return fn();
+  const keep = { leagueId: state.leagueId, base: state.base, owner: state.owner, week: state.week };
+  Object.assign(state, { leagueId: x.id, base: x.base, owner: x.owner, week: x.week || state.week });
+  try { return fn(); } finally { Object.assign(state, keep); }
+}
+async function loadOtherLeague(id, wk) {
+  const get = async (views, sp) => {
+    if (state.demo) return window.DemoLeague.response(views, sp);
+    const q = new URLSearchParams({ leagueId: id });
+    views.forEach((v) => q.append("view", v));
+    if (sp) q.set("scoringPeriodId", sp);
+    const res = await fetch(`/api/espn?${q}`);
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.message || "Couldn't load this league.");
+    return body;
+  };
+  const base = buildBase(await get(["mTeam", "mSettings", "mStatus", "mMatchupScore"]));
+  if (state.demo) base.raw.siteOwnerTeamIds = [String(Object.keys(base.teams)[LEAGUES.findIndex((l) => l.id === id) * 2] || "")]; // a different "your team" in each pretend league
+  const week = Math.min(wk, base.weeks);
+  const x = { id, base, at: Date.now(), wk };
+  // Signed in with ESPN: which team is yours there.
+  if (!state.demo && signedInHere()) {
+    const d = await fetch(`/api/roster/session?${new URLSearchParams({ leagueId: id, season: base.season })}`).then((r) => r.json()).catch(() => null);
+    if (d) x.owner = { key: `${base.raw?.id || id}:${base.season}`, data: d };
+  }
+  const raw = await get(["mBoxscore", "mMatchupScore", "mRoster"], base.scoringPeriodFor(week));
+  x.week = inLeague(x, () => buildWeek(raw, week));
+  return x;
+}
+function ensureOtherLeagues() {
+  const wk = state.week.week, all = (state.xl ||= {});
+  for (const l of LEAGUES) {
+    if (l.id === curLeague()) continue;
+    const x = all[l.id];
+    const stale = !x || (x.wk !== wk && !x.loading) || (!x.loading && x.week?.status === "live" && Date.now() - x.at > 60e3) || (x.error && Date.now() - x.at > 60e3);
+    if (!stale || x?.loading) continue;
+    all[l.id] = { ...(x?.wk === wk ? x : {}), loading: true };
+    const base = state.base;
+    loadOtherLeague(l.id, wk)
+      .then((d) => { all[l.id] = d; })
+      .catch((e) => { all[l.id] = { id: l.id, error: e.message, at: Date.now(), wk }; })
+      .finally(() => { if (state.base === base && state.tab === "matchups" && (state.muScope || "league") !== "league") keepState($("view-matchups"), renderMatchups); });
+  }
+  return all;
+}
+// One league's block: its name, then your game (My teams) or every game (All leagues).
+function leagueBlock(l, onlyMine) {
+  const cur = l.id === curLeague();
+  const x = cur ? { id: l.id, base: state.base, week: state.week } : state.xl?.[l.id];
+  const head = `<div class="mu-lg-head"><strong>${esc(state.demo && cur ? "Demo League" : l.label)}</strong>${x?.week ? statusBadge(x.week.status) : ""}</div>`;
+  if (!x?.week) return `${head}${x?.error ? `<p class="muted small">${esc(x.error)}</p>` : `<div class="loading small"><span class="spinner"></span> Loading…</div>`}`;
+  return inLeague(x, () => {
+    const w = x.week, me = String(myTeamId() || "");
+    const list = onlyMine ? w.matchups.filter((m) => [m.home?.teamId, m.away?.teamId].map(String).includes(me)) : w.matchups;
+    if (onlyMine && !list.length) return `${head}<button type="button" class="lg-card lg-pick-team" data-lg="${esc(l.id)}" data-pickin="1">Select your team in ${esc(lgShort(l))} ›</button>`;
+    return head + list.map((m) => scoreCard(m, w, cur ? "" : l.id, cur && m.id === state.openMatchup)).join("");
+  });
+}
+const scopeSeg = (scope) => `<div class="seg mu-scope" role="tablist">${[["mine", "My teams"], ["league", state.demo ? "Demo" : lgShort(LEAGUES.find((l) => l.id === curLeague()) || { label: "This league" })], ["all", "Multiview"]]
+  .map(([k, l]) => `<button type="button" role="tab" data-scope="${k}" class="${scope === k ? "active" : ""}">${esc(l)}</button>`).join("")}</div>`;
+// Multiview: which leagues to show (saved on this device; all of them to start).
+function multiLeagues() {
+  let ids = null;
+  try { ids = JSON.parse(store.get("ffb.mvLeagues") || "null"); } catch { /* use all */ }
+  return Array.isArray(ids) ? ids.filter((id) => LEAGUES.some((l) => l.id === id)) : LEAGUES.map((l) => l.id);
+}
+// One league in Multiview: its name, then your matchup there as the full breakdown.
+function multiPanel(l) {
+  const cur = l.id === curLeague();
+  const x = cur ? { id: l.id, base: state.base, week: state.week } : state.xl?.[l.id];
+  const name = esc(state.demo && cur ? "Demo League" : l.label);
+  if (!x?.week) return `<div class="mv-head"><strong>${name}</strong></div>${x?.error ? `<p class="muted small">${esc(x.error)}</p>` : `<div class="loading small"><span class="spinner"></span> Loading…</div>`}`;
+  return inLeague(x, () => {
+    const me = String(myTeamId() || ""), m = x.week.matchups.find((mm) => [mm.home?.teamId, mm.away?.teamId].map(String).includes(me));
+    const head = (extra = "") => `<div class="mv-head"><strong>${name}</strong>${statusBadge(x.week.status)}${extra}</div>`;
+    if (!m) return `${head()}<button type="button" class="lg-card lg-pick-team" data-mvteam="${esc(l.id)}">Select your team in ${esc(lgShort(l))} ›</button>`;
+    if (!m.away) return `${head()}<p class="muted">${esc(team(m.home.teamId).name)} has a bye this week.</p>`;
+    return `${head(`<button type="button" class="linkish mv-open" data-mvopen="${esc(l.id)}" data-mb="${m.id}">Open ›</button>`)}${matchupDetail(m, true)}`;
+  });
+}
+// A card from another league: switch to it and open that game.
+function openOtherLeagueGame(lg, mb, scope) {
+  state.muScope = scope;
+  store.set("ffb.muScope", scope);
+  if (state.demo) { state.openMatchup = mb; renderMatchups(); return; } // the demo's "other leagues" are the demo again
+  const go = switchLeague(lg, "");
+  state.pendingOpen = mb;
+  scrollTo(0, 0);
+  return go;
 }
 // Open a game (or the league summary) and slide it in from the side it came from.
 function pickMatchup(id, dir) {
