@@ -551,6 +551,18 @@
         ts("Time of possession", "29:12", "30:48"),
       ],
       players: { away: cats(A), home: cats(H) },
+      scoring: (() => {
+        const out = [];
+        let a = 0, h = 0, n = 0;
+        for (const p of [...forTeam(A), ...forTeam(H)].sort((x, y) => x.id - y.id)) {
+          const home = p.proId === H, qb = forTeam(p.proId).find((x) => x.posId === 1);
+          const add = (type, kind, text, pts) => { if (home) h += pts; else a += pts; n++; out.push({ id: `${id}-${n}`, type, kind, text, period: Math.min(4, 1 + Math.floor(n / 2)), clock: `${(n * 7) % 15}:${String((n * 23) % 60).padStart(2, "0")}`, team: home ? g.home.abbr : g.away.abbr, proId: p.proId, away: a, home: h }); };
+          for (let i = 0; i < (p.stats[25] || 0); i++) add("TD", "Rushing Touchdown", `${p.name} ${3 + ((p.id + i) % 30)} Yd Rush (Kick)`, 7);
+          for (let i = 0; i < (p.stats[43] || 0); i++) add("TD", "Passing Touchdown", `${p.name} ${5 + ((p.id + i) % 40)} Yd pass from ${qb && qb !== p ? qb.name : "QB"} (Kick)`, 7);
+          if (p.posId === 5 && p.pts) add("FG", "Field Goal Good", `${p.name} ${30 + (p.id % 25)} Yd Field Goal`, 3);
+        }
+        return out;
+      })(),
     };
   }
 

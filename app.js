@@ -680,6 +680,7 @@ function renderMatchups() {
     <div class="${split ? "mu-split" : "mu-stack"}">
       <div class="${split ? "mu-list mu-cards" : "mt-grid"}">${split ? leagueCards() : w.matchups.map(matchupTile).join("")}</div>
       <div class="${split ? "mu-pane" : "mu-detail"}" id="mu-pane">${sel ? matchupDetail(sel, true) : `<p class="muted">Pick a matchup.</p>`}</div>
+      <aside class="card mu-feed" id="mu-feed">${sel ? scoringFeed(sel) : ""}</aside>
     </div>
     <p class="muted small show-phone mu-note">${label}</p>`;
   fitNames(el);
@@ -690,6 +691,7 @@ function renderMatchups() {
     el.querySelectorAll(".mini-tile[data-mu], .lg-card[data-mb]").forEach((b) => b.classList.toggle("selected", b === c));
     const pane = $("mu-pane");
     pane.innerHTML = matchupDetail(m, true);
+    $("mu-feed").innerHTML = scoringFeed(m);
     pane.scrollTop = 0;
     pane.classList.remove("swap");
     void pane.offsetWidth; // restart the fade
@@ -925,6 +927,66 @@ function onFieldLine(m) {
 
 // withHead = false when the breakdown opens under its matchup card, which already shows the teams,
 // scores and win chance.
+// Computers, Matchup tab: every score this week by a starter in the selected matchup (touchdowns, the
+// passes that threw them, field goals and extra points, D/ST returns and safeties), newest first.
+const feedName = (s) => ` ${String(s).toLowerCase().replace(/\b(jr|sr|ii|iii|iv|v)\b\.?/g, "").replace(/[^a-z ]/g, "").replace(/\s+/g, " ").trim()} `;
+function scoringFeed(m) {
+  if (!m?.away) return "";
+  const gs = ensureGameStatus()?.byPro || {}, sides = [[m.home, team(m.home.teamId)], [m.away, team(m.away.teamId)]];
+  const games = new Map(); // game id -> { g, starters: [{ p, t }] }
+  for (const [s, t] of sides) for (const p of s.starters) {
+    const g = gs[p.proId];
+    if (!g || g.state === "pre") continue;
+    if (!games.has(g.id)) games.set(g.id, { g, starters: [] });
+    games.get(g.id).starters.push({ p, t });
+  }
+  const head = `<h3>Scoring feed</h3>`;
+  if (!games.size) return `${head}<p class="muted small">No starters have played yet this week.</p>`;
+  const plays = [];
+  let loading = false;
+  for (const { g, starters } of games.values()) {
+    ensureBox(g, () => { if (state.tab === "matchups" && state.openMatchup === m.id && $("mu-feed")) $("mu-feed").innerHTML = scoringFeed(m); });
+    const d = state.boxes?.[g.id];
+    if (!d || d === "loading") { loading = true; continue; }
+    (d.scoring || []).forEach((pl, i) => {
+      const txt = feedName(pl.text);
+      for (const { p, t } of starters) {
+        if (p.proId !== pl.proId) continue;
+        let role = "";
+        if (p.posId === 16) role = pl.type === "SF" || /interception|fumble|return|blocked|safety/i.test(pl.kind) ? "D/ST score" : "";
+        else {
+          const nm = feedName(p.name);
+          if (!txt.includes(nm)) continue;
+          role = txt.startsWith(nm) ? (pl.type === "FG" ? "Field goal" : "Touchdown") : txt.includes(` from${nm}`) || txt.includes(` pass${nm}`) ? "TD pass" : txt.includes(`${nm}kick `) ? "Extra point" : "Two-point try";
+        }
+        if (!role) continue;
+        const [mm, ss] = (pl.clock || "0:00").split(":").map(Number);
+        // Roughly when it happened: kickoff plus game time (a quarter takes about 45 real minutes).
+        const at = Date.parse(g.date) + ((pl.period - 1) * 15 + (15 - (mm || 0) - (ss || 0) / 60)) * 3 * 60e3;
+        plays.push({ pl, p, t, role, at, i, g });
+      }
+    });
+  }
+  // One entry per play, listing every starter in it (a QB and his receiver can both be starting).
+  const byPlay = new Map();
+  for (const x of plays) {
+    const k = `${x.g.id}:${x.pl.id || x.i}`;
+    if (!byPlay.has(k)) byPlay.set(k, { ...x, who: [] });
+    byPlay.get(k).who.push(x);
+  }
+  const items = [...byPlay.values()].sort((a, b) => b.at - a.at || b.i - a.i);
+  if (!plays.length) return `${head}${loading ? `<div class="loading small"><span class="spinner"></span> Loading scoring plays…</div>` : `<p class="muted small">No scores by these starters yet.</p>`}`;
+  const q = (n) => (n > 4 ? "OT" : `Q${n}`);
+  const kind = (pl) => (pl.type === "FG" ? "Field goal" : pl.type === "SF" ? "Safety" : pl.type === "TD" ? "Touchdown" : pl.kind || "Score");
+  return `${head}<div class="mf-list">${items.map(({ pl, g, who }) => {
+    const score = pl.away != null && pl.home != null ? ` ${g.home ? `${pl.home}-${pl.away}` : `${pl.away}-${pl.home}`}` : "";
+    return `<div class="mf-item ${who.some((x) => myRow(x.t.id)) ? "my-row" : ""}">
+      <div class="mf-top"><span class="mf-role ${pl.type === "TD" ? "td" : ""}">${esc(kind(pl))}</span><span class="mf-when muted">${q(pl.period)} ${esc(pl.clock)} · ${esc(pl.team)} ${g.home ? "vs" : "@"} ${esc(g.oppAbbr || "")}${score}</span></div>
+      ${who.map(({ p, t, role }) => `<div class="mf-who">${logoImg(t, 18)}${plinkNm(p)}<span class="mf-tag">${esc(role)}</span></div>`).join("")}
+      <div class="mf-text small muted">${esc(pl.text)}</div></div>`;
+  }).join("")}</div>`;
+}
+
 function matchupDetail(m, withHead = true) {
   const { home, away } = m, st = state.week.status;
   if (!away) return "";
@@ -947,7 +1009,7 @@ function matchupDetail(m, withHead = true) {
       <div class="mx-info">
         <div class="mx-name">${plinkNm(p)}${injBadge(p)}</div>
         <div class="mx-game">${gameLineHtml(p)}${oprk}</div>
-        ${p.short ? `<div class="mx-stats" title="${esc(p.line)}">${esc(p.short)}</div>` : ""}
+        <div class="mx-stats" ${p.short ? `title="${esc(p.line)}"` : ""}>${p.short ? esc(p.short) : "&nbsp;"}</div>
       </div>
       <div class="mx-pts"><div class="mx-score">${pts}</div><div class="mx-proj">${f1(p.proj)}</div></div>
     </div>`;
@@ -1013,12 +1075,12 @@ function renderPlayers() {
   // Search and NFL team on one line; Available / All / watch list / injuries; then the positions.
   el.innerHTML = `<div class="pl-top"><div class="filters pl-search"><input id="pl-q" type="search" placeholder="Search players…" value="${esc(f.q)}">
       <select id="pl-nfl" aria-label="NFL team"><option value="ALL">All teams</option>${Object.keys(NFL_NAMES).sort((a, b) => NFL_NAMES[a].localeCompare(NFL_NAMES[b])).map((t) => `<option value="${t}" ${f.nfl === t ? "selected" : ""}>${esc(NFL_NAMES[t].split(" ").pop())}</option>`).join("")}</select></div>
-    ${playersNav(f.mode)}
+    ${playersNav(f.mode, me && !DESK.matches ? { on: !!f.mine && f.mode !== "all", off: f.mode === "all" } : null)}
     <div class="filters pl-filters">
       ${posSeg("pl-pos", f.pos, true)}
       ${desk ? `<div class="seg" id="pl-inj" role="group" aria-label="Injuries">${[["all", "All"], ["injured", "Injured"], ["healthy", "Healthy"]].map(([k, l]) => `<button type="button" data-i="${k}" class="${f.inj === k ? "active" : ""}">${l}</button>`).join("")}</div>` : ""}
     </div>
-    ${me ? `<label class="pl-mine ${f.mode === "all" ? "off" : ""}"><input type="checkbox" id="pl-mine" ${f.mine ? "checked" : ""} ${f.mode === "all" ? "disabled" : ""}> Include my team</label>` : ""}</div>
+    ${me && DESK.matches ? `<label class="pl-mine ${f.mode === "all" ? "off" : ""}"><input type="checkbox" id="pl-mine" ${f.mine ? "checked" : ""} ${f.mode === "all" ? "disabled" : ""}> Include my team</label>` : ""}</div>
     <div class="pl-main"><div id="pl-list"></div>${fcCredit()}${nvCredit()}</div>`;
   const draw = () => {
     const q = f.q.toLowerCase();
@@ -1092,12 +1154,18 @@ function paintWatchCount() {
 }
 
 // The row at the top of Players and the Injury Report: Available | All players, and the Injury Report.
-const playersNav = (cur) => `<div class="pl-nav"><div class="seg pl-seg">${[["avail", "Available"], ["all", `<span class="nm-full">All players</span><span class="nm-short">All</span>`]].map(([k, l]) => `<button type="button" data-plm="${k}" class="${cur === k && !state.players.watch ? "active" : ""}">${l}</button>`).join("")}
-  ${(() => { const c = watchCounts(); return c ? `<button type="button" data-watchf class="${state.players.watch ? "active" : ""}" title="Your watch list: available / total">${ic("eye")} <b>${c.avail}/${c.total}</b></button>` : ""; })()}
-  ${DESK.matches ? "" : `<button type="button" data-injr class="pl-inj-btn" title="Injury Report" aria-label="Injury Report">${ic("first-aid-kit")}</button>`}</div></div>`;
+// Players: Available | All, then the watch list and (phones) the Injury Report as their own buttons, then
+// (phones) a My team toggle that adds your own roster to the Available list.
+const playersNav = (cur, mine) => {
+  const c = watchCounts(), inj = !DESK.matches;
+  return `<div class="pl-nav"><div class="seg pl-seg">${[["avail", "Available"], ["all", `<span class="nm-full">All players</span><span class="nm-short">All</span>`]].map(([k, l]) => `<button type="button" data-plm="${k}" class="${cur === k && !state.players.watch ? "active" : ""}">${l}</button>`).join("")}</div>
+  ${c || inj ? `<div class="pl-tools">${c ? `<button type="button" data-watchf class="pl-tool ${state.players.watch ? "active" : ""}" title="Your watch list: available / total">${ic("eye")} <b>${c.avail}/${c.total}</b></button>` : ""}${inj ? `<button type="button" data-injr class="pl-tool" title="Injury Report" aria-label="Injury Report">${ic("first-aid-kit")}</button>` : ""}</div>` : ""}
+  ${mine ? `<button type="button" data-plmine class="pl-tool pl-mine-btn ${mine.on ? "active" : ""}" aria-pressed="${mine.on}" ${mine.off ? "disabled" : ""} title="Include your own team's players">${ic("user")} My team</button>` : ""}</div>`;
+};
 document.addEventListener("click", (e) => {
   const m = e.target.closest(".pl-nav [data-plm]"), inj = e.target.closest(".pl-nav [data-injr]");
-  const wf = e.target.closest(".pl-nav [data-watchf]");
+  const wf = e.target.closest(".pl-nav [data-watchf]"), mb = e.target.closest(".pl-nav [data-plmine]");
+  if (mb) { state.players.mine = !state.players.mine; renderPlayers(); return; }
   if (wf) { state.players.watch = !state.players.watch; renderPlayers(); return; }
   if (m) { state.players.mode = m.dataset.plm; state.players.watch = false; if (state.tab === "players") renderPlayers(); else switchTab("players"); }
   else if (inj) openInjuryReport();
@@ -1460,10 +1528,10 @@ function playerRow(p, { label, sp, action = "", owner = true, unread = false, co
 // ---------- Player tables (Players tab) ----------
 // Sortable columns. The Player cell keeps the matchup-style name, game line and stats,
 // and rows get the same highlighting (bold = playing, gold = on the field, red = red zone).
+// Two lines for every player (name, then game · stats) so the table's rows are all the same height.
 function playerCell(p) {
   return `<div class="pt-name">${plinkNm(p)}${injBadge(p)}</div>
-    <div class="mx-game">${gameLineHtml(p)}</div>
-    ${p.short ? `<div class="mx-stats" title="${esc(p.line)}">${esc(p.short)}</div>` : ""}`;
+    <div class="mx-game pt-line" ${p.short ? `title="${esc(p.line)}"` : ""}>${gameLineHtml(p)}${p.short ? ` <span class="pt-stats">· ${esc(p.short)}</span>` : ""}</div>`;
 }
 function ownerCell(p) {
   if (p.owner) {
@@ -1699,7 +1767,7 @@ function renderSeason() {
   const SUBS = [["standings", "Standings & Awards"], ["pos", "Position Rankings"], ["luck", "Luck & Weekly Scoring"]];
   el.innerHTML = `${desk ? `<div class="seg st-subs" role="tablist">${SUBS.map(([k, l]) => `<button type="button" role="tab" data-stsub="${k}" class="${sub === k ? "active" : ""}">${l}</button>`).join("")}</div>` : ""}
     <section class="st-sec" ${show("standings")}><div class="section-head"><h2>Standings & power rankings</h2><span class="muted small">Through week ${season.weeks[season.weeks.length - 1]}</span></div>
-    ${desk ? `<div class="st-top"><div id="st-table"></div><aside class="st-rail" id="st-rail"></aside></div>` : `<div id="st-table"></div>`}</section>
+    ${desk ? `<div class="st-top"><div class="st-main"><div id="st-table"></div></div><aside class="st-rail" id="st-rail"></aside></div>` : `<div id="st-table"></div>`}</section>
     <section class="st-sec" ${show("pos")}><div class="section-head"><h2>Position rankings</h2><span class="muted small">Each team's current roster, by points per game this season</span></div><div id="pr-table"></div></section>
     <section class="st-sec st-luck" ${show("luck")}><div><div class="section-head"><h2>Luck meter</h2><span class="muted small">Actual wins minus expected wins (based on weekly scores vs. the whole league)</span></div>
     <div class="card chart-card" id="luck-chart"></div></div>
@@ -1734,6 +1802,7 @@ function renderSeason() {
     for (const r of season.rows) r.rosterValue = rosters[r.id] ? sum(rosters[r.id], (p) => p.value) : null;
   }
   const draw = () => $("st-table").replaceChildren(sortableTable(cols, season.rows, state.standings.sort, draw, { rowClass: (r) => myRow(r.id) }));
+
   draw();
   // Computers: a column beside the standings with the playoff race (and the award leaders, below).
   if ($("st-rail")) {
@@ -1759,7 +1828,8 @@ function renderSeason() {
   // Wide screens without the sub-tabs: Standings and Position rankings next to each other.
   if (!desk) { const g = document.createElement("div"); g.className = "st-grid"; const prHead = $("pr-table").previousElementSibling, a = document.createElement("div"), b = document.createElement("div");
     $("st-table").before(g); a.append($("st-table")); b.append(prHead, $("pr-table")); g.append(a, b); }
-  ($("st-table").closest(".st-top") || $("st-table")).insertAdjacentHTML("afterend", (odds && odds.weeksLeft ? `<p class="small muted st-odds-note">Playoff odds simulate the remaining ${odds.weeksLeft} week${odds.weeksLeft > 1 ? "s" : ""} 5,000 times using each team's scoring so far. Ties are broken by points for, which may differ from your league's tiebreaker.</p>` : "") + fcCredit());
+  if (desk) $("st-table").after($("aw-sec")); // computers: the awards sit right under the standings
+  else $("st-table").insertAdjacentHTML("afterend", fcCredit());
   $("luck-chart").innerHTML = luckChart(season.rows);
   $("heatmap").innerHTML = heatmap(season);
   // Season awards: how many of each weekly award every team has won (regular season).
@@ -2316,7 +2386,7 @@ function renderLive() {
       <div class="mx-info">
         <div class="mx-name">${plinkNm(p, false)} <span class="muted small">${POS[p.posId] || ""}</span>${injBadge({ injury: p.injury })}</div>
         <div class="mx-game lv-owner">${role(p)}</div>
-        ${line && g.state !== "pre" ? `<div class="mx-stats" title="${esc(statLine(p.posId, p.stats))}">${esc(line)}</div>` : ""}
+        <div class="mx-stats" ${line && g.state !== "pre" ? `title="${esc(statLine(p.posId, p.stats))}"` : ""}>${line && g.state !== "pre" ? esc(line) : "&nbsp;"}</div>
       </div>
       <div class="mx-pts"><div class="mx-score">${pts}</div>${bump ? `<div class="lp-delta ${bump > 0 ? "pos" : "neg"}">${signed(bump)}</div>` : ""}<div class="mx-proj">${f1(p.proj)}</div></div>
     </div>`;
@@ -2870,7 +2940,7 @@ function openTeamRoster(teamId) {
   const w = state.week, t = team(teamId), side = w.sides.find((x) => String(x.teamId) === String(teamId));
   const row = (p) => `<div class="er-row ${gsState(p)}"><div class="er-l"><span class="sp ro">${p.slotId === BENCH ? "BE" : esc(SLOT[p.slotId] || p.slot)}</span>${headshot(p, 36)}<div class="er-info">
       <div class="er-name">${plink(p.id, shortName(p.name))} ${p.posId === 16 ? "" : proIc(p.proId)}<span class="er-pos">${esc(p.pos)}</span>${injBadge(p)} ${moveBtns(p)}</div>
-      <div class="er-game">${erGameLine(p)}</div>${p.short ? `<div class="er-stats" title="${esc(p.line)}">${esc(p.short)}</div>` : ""}</div></div>
+      <div class="er-game">${erGameLine(p)}</div><div class="er-stats" ${p.short ? `title="${esc(p.line)}"` : ""}>${p.short ? esc(p.short) : "&nbsp;"}</div></div></div>
     <div class="er-r rs">${erCols(rosteredRow(p)).join("")}</div></div>`;
   const section = (title, list) => (list.length ? `<div class="er-sec"><div class="er-row er-hd"><div class="er-l">${title}</div><div class="er-r rs">${erHeads().join("")}</div></div>${list.map(row).join("")}</div>` : "");
   const body = !side ? `<p class="muted">No lineup for week ${w.week}.</p>`
@@ -3096,7 +3166,7 @@ function renderRoster() {
         <div class="er-name">${plink(p.id, shortName(p.name))} ${p.posId === 16 ? "" : proIc(p.proId)}<span class="er-pos">${esc(p.pos)}</span>${injBadge(p)}${unread(p) ? newsDot(p) : ""}${trade}</div>
         <div class="er-sub">${p.own != null ? `${Math.round(p.own)}% Rost` : ""}${p.start != null ? ` <span class="er-bar">|</span> ${Math.round(p.start)}% Start` : ""}${upg}</div>
         <div class="er-game">${erGameLine(p)}</div>
-        ${p.short ? `<div class="er-stats" title="${esc(p.line)}">${esc(p.short)}</div>` : ""}
+        <div class="er-stats" ${p.short ? `title="${esc(p.line)}"` : ""}>${p.short ? esc(p.short) : "&nbsp;"}</div>
       </div></div>
       <div class="er-r rs">${erColsAll(rosteredRow(p))}</div></div>`;
   };

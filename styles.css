@@ -1107,7 +1107,7 @@ table.data.bx-table th, table.data.bx-table td { padding: 6px 6px; font-size: .8
    inner panels get their own rounded corners. (clip, not hidden, so sticky score bars still stick.) */
 .pr-list, .card.mx, .card.game, .mini-tile { overflow: clip; }
 .pr-row, .mx-side, .news-item, .pick-row, .rh-stats, .trade-verdict, .mx-bench-head, .g-sit, .bx-panel, .pg-cat, .stick-bar { border-radius: 8px; }
-.pr-row[class*="is-"], .mx-side[class*="is-"] { margin: 1px 2px; }
+.pr-row[class*="is-"], .mx-side[class*="is-"] { margin: 0 2px; }
 
 /* Scoring alerts: a banner that drops in at the top for 5 seconds */
 .fx-alert { position: fixed; top: calc(env(safe-area-inset-top, 0px) + 8px); left: 50%; z-index: 1000; width: min(440px, calc(100vw - 16px));
@@ -2322,3 +2322,83 @@ main .table-wrap:has(> .pt-table), body.has-chatbar main .table-wrap:has(> .pt-t
 @media (max-width: 999px) { .topbar .league-select { padding-right: 11px; } .topbar .brand-row { flex-wrap: nowrap; } }
 
 @media (max-width: 999px) { .topbar #league-name { max-width: 46vw; } }
+
+/* Players controls: Available | All · watch list and Injury Report · My team (phones) */
+.pl-mine { color: var(--ink); }
+.pl-tools { display: flex; gap: 6px; }
+.pl-tool { height: 34px; display: inline-flex; align-items: center; gap: 5px; padding: 0 10px; border: 1px solid var(--btn-line); border-radius: 10px; background: var(--surface); color: var(--accent-ink); font: inherit; font-size: .85rem; font-weight: 600; cursor: pointer; white-space: nowrap; }
+.pl-tool .ic { width: 1.15em; height: 1.15em; }
+.pl-tool.active { background: var(--btn); border-color: var(--btn); color: #fff; }
+.pl-tool:disabled { opacity: .45; cursor: default; }
+.pl-mine-btn { margin-left: auto; }
+@media (max-width: 640px) { .pl-nav { gap: 6px; flex-wrap: nowrap; } .pl-tool { padding: 0 8px; } .pl-nav .seg button { padding: 7px 9px; } }
+
+/* Even row heights: every line in a player cell is one line (long text ends in "…"), and the stat line is
+   always there, so rows only differ when a table is meant to (e.g. trades listing several players). */
+.pt-name, .mx-name, .er-name { flex-wrap: nowrap !important; white-space: nowrap; overflow: hidden; min-width: 0; }
+.pt-name .pl-link, .mx-name .pl-link, .er-name .pl-link { overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 0 1 auto; }
+.pt-name > :not(.pl-link), .er-name > :not(.pl-link) { flex: none; }
+.pt-player .pt-sub, .pt-line, .mx-game, .mx-stats, .er-sub, .er-game, .er-stats { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pt-line { display: block; font-size: .78rem; color: var(--muted); line-height: 1.3; }
+.pt-stats { color: var(--ink-2); }
+.mx-name { display: flex; align-items: center; gap: 3px; }
+.mx-side.right .mx-name { justify-content: flex-end; }
+.pt-name .badge, .mx-name .badge, .er-name .badge { line-height: 1.15; padding-top: 0; padding-bottom: 0; align-self: center; }
+.pt-name, .mx-name { height: 1.45em; align-items: center; }
+.er-name { height: 1.5em; align-items: center; }
+.pt-line, .mx-game, .mx-stats, .er-sub, .er-game, .er-stats { height: 1.3em; line-height: 1.3; }
+.mx-pts .mx-score { height: 1.25rem; line-height: 1.25rem; display: flex; align-items: center; }
+.mx-side.right .mx-pts .mx-score { justify-content: flex-end; }
+.mx-pts .mx-score .pts-link, .mx-pts .mx-score .pl-link { line-height: 1.1; padding-top: 0; padding-bottom: 0; }
+.mx-pts .mx-proj, .mx-pts .lp-delta { height: 1rem; line-height: 1rem; }
+.mx-pts:has(.lp-delta) .mx-proj { display: none; }
+.mx-slot { white-space: nowrap; overflow: hidden; text-overflow: clip; font-size: .7rem; letter-spacing: -.01em; }
+.pt-table td:not(.pt-player) .pt-sub { line-height: 1.2; }
+
+/* Computers: no inner scroll boxes; side panels and the game scroll with the page */
+@media (min-width: 900px) {
+  .mu-pane, body.has-chatbar .mu-pane { position: static; max-height: none; overflow: visible; }
+  .mu-pane .mx-top { top: var(--top-h, 0px); }
+}
+@media (min-width: 1000px) {
+  .lv-rail, .mv-side, body.has-chatbar .lv-rail, body.has-chatbar .mv-side { position: static; max-height: none; overflow: visible; }
+  /* Credit lines live in the footer */
+  main .fc-credit { display: none; }
+  /* Footer sits at the bottom of the page, and below the chat bar's room rather than above it */
+  body { display: flex; flex-direction: column; min-height: 100vh; }
+  body > main { flex: 1 0 auto; width: 100%; box-sizing: border-box; }
+  body > .site-footer { flex: none; }
+  body.has-chatbar { padding-bottom: 0; }
+  body.has-chatbar .site-footer { padding-bottom: var(--chatbar); }
+  /* Standings: awards under the table; the side column scrolls with the page */
+  .st-rail { position: static !important; }
+  .st-main #aw-sec { margin-top: 18px; }
+  .st-main #aw-sec .section-head:first-child { margin-top: 0; }
+  /* Award leaders: the award on one line, the leaders under it */
+  .lead-row { grid-template-columns: 22px minmax(0, 1fr); row-gap: 2px; }
+  .lead-what { font-weight: 600; color: var(--ink); }
+  .lead-who { grid-column: 2; text-align: left; font-weight: 500; color: var(--ink-2); }
+}
+
+/* Matchup scoring feed (computers) */
+.mu-feed { display: none; }
+@media (min-width: 900px) {
+  .mu-feed { display: block; margin: 0; padding: 12px 14px; grid-column: 2; }
+  .mu-feed h3 { margin: 0 0 6px; font-size: 1rem; }
+  .mf-item { padding: 8px 6px; border-top: 1px solid var(--grid); }
+  .mf-item:first-child { border-top: 0; }
+  .mf-item.my-row { border-radius: 6px; }
+  .mf-top { display: flex; align-items: center; gap: 6px; font-size: .78rem; }
+  .mf-role { font-weight: 800; text-transform: uppercase; letter-spacing: .03em; color: var(--ink-2); }
+  .mf-role.td { color: #16a34a; }
+  .mf-when { margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .mf-who { display: flex; align-items: center; gap: 6px; font-weight: 700; margin: 3px 0 1px; min-width: 0; }
+  .mf-who .pl-link { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mf-who .nm-short { display: none; } .mf-who .nm-full { display: inline; }
+  .mf-tag { margin-left: auto; flex: none; font-size: .72rem; font-weight: 600; color: var(--ink-2); background: var(--surface-2); border-radius: 8px; padding: 1px 6px; }
+  .mf-text { line-height: 1.3; }
+}
+@media (min-width: 1300px) {
+  .mu-split:not(.lv-split) { grid-template-columns: minmax(280px, 340px) minmax(0, 900px) minmax(250px, 310px); }
+  .mu-feed { grid-column: 3; grid-row: 1; }
+}

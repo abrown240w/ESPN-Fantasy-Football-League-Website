@@ -34,7 +34,7 @@ export default async (req) => {
   const event = new URL(req.url).searchParams.get("event") || "";
   if (!/^\d{6,12}$/.test(event)) return json(400, { error: "bad_request", message: "Invalid game." });
   try {
-    const res = await fetch(`${SUMMARY}?event=${event}`, { headers: { accept: "application/json", "user-agent": "Mozilla/5.0 (fantasy-dashboard)" } });
+    const res = await fetch(`${SUMMARY}?event=${event}`, { headers: { accept: "application/json", "user-agent": "brownleague.netlify.app (private fantasy league site)" } });
     if (!res.ok) throw new Error(`ESPN returned ${res.status}`);
     const d = await res.json();
     const comp = d.header?.competitions?.[0] || {};
@@ -65,7 +65,14 @@ export default async (req) => {
     }
     for (const side of ["away", "home"]) if (teams[side]) delete teams[side].stats;
 
-    return json(200, { event, state, updated: Date.now(), teams, teamStats, players }, {
+    // Scoring plays, in game order: "D'Andre Swift 4 Yd Rush (Cairo Santos Kick)".
+    const scoring = (d.scoringPlays || []).map((p) => ({
+      id: String(p.id || ""), type: p.type?.abbreviation || p.scoringType?.abbreviation || "", kind: p.type?.text || "",
+      text: (p.text || "").trim(), period: p.period?.number || 0, clock: p.clock?.displayValue || "",
+      team: p.team?.abbreviation || "", proId: Number(p.team?.id) || null, away: p.awayScore ?? null, home: p.homeScore ?? null,
+    }));
+
+    return json(200, { event, state, updated: Date.now(), teams, teamStats, players, scoring }, {
       "cache-control": `public, max-age=${state === "in" ? 15 : 300}`,
       "netlify-cdn-cache-control": `public, max-age=${state === "in" ? 20 : state === "post" ? 3600 : 300}`,
     });
