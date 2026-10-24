@@ -2126,3 +2126,82 @@ body.cmp-picking .modal-card.pm-full { height: calc(100dvh - 100px) !important; 
   .rr-vs .rr-team strong { grid-area: pts; text-align: right; font-size: 1.3rem; }
   .rr-vs .rr-team + .rr-team strong { text-align: left; }
 }
+
+/* ===================== Redesign (Oct 2026) =====================
+   Red header (under the status bar in the home-screen app), a bottom tab bar on phones and tablets,
+   outline icons instead of emoji, one button family (main · secondary · text), numbers that line up. */
+:root { --brand: #c8102e; --brand-2: #a50d26; --btn: #1a5fb4; --btn-line: #c9d6e6; --tabbar-h: 58px; }
+:root[data-theme="dark"] { --btn: #2a78d6; --btn-line: rgba(255,255,255,.18); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --btn: #2a78d6; --btn-line: rgba(255,255,255,.18); } }
+body { font-variant-numeric: tabular-nums; }
+.ic { width: 1.15em; height: 1.15em; flex: none; vertical-align: -0.2em; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+h2 .ic, h3 .ic { vertical-align: -0.15em; color: var(--ink-2); }
+
+/* Header: red, edge to edge */
+.topbar { background: var(--brand); color: #fff; border-bottom: 0; padding-top: env(safe-area-inset-top, 0px); }
+.topbar .brand h1, .topbar .league-select { color: #fff; }
+.topbar .league-select { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E"); }
+.topbar .league-select option { color: #0b0b0b; }
+.topbar #league-meta { color: rgba(255,255,255,.82); }
+.topbar .week-nav select, .topbar .icon-btn, .topbar .hdr-btn { background: rgba(255,255,255,.16); border: 1px solid rgba(255,255,255,.22); color: #fff; }
+.topbar .week-nav select option { color: #0b0b0b; }
+.topbar .icon-btn:hover, .topbar .hdr-btn:hover { background: rgba(255,255,255,.26); border-color: rgba(255,255,255,.4); }
+.topbar .espn-open:not(.chat-open) { background: #fff; color: var(--brand); }
+.topbar .espn-open:not(.chat-open):hover { background: #ffe9ec; }
+.topbar .chat-open { background: rgba(255,255,255,.16); border: 1px solid rgba(255,255,255,.22); color: #fff; }
+.chat-open .ic, .hdr-btn .ic { width: 1.2em; height: 1.2em; }
+.hdr-btn, .chat-open { gap: 6px; }
+
+/* Tabs on computers: white text on red, white underline */
+.topbar .tabs button { color: rgba(255,255,255,.82); }
+.topbar .tabs button.active { color: #fff; border-bottom-color: #fff; }
+.topbar .tabs button:hover { color: #fff; }
+.tab-ic { display: none; position: relative; }
+.tab-ic .live-dot { position: absolute; top: -2px; right: -6px; width: 9px; height: 9px; }
+
+/* Phones and tablets: compact header, tabs as a bar along the bottom */
+@media (max-width: 999px) {
+  .topbar-inner { padding-top: 8px; padding-bottom: 9px; }
+  .topbar #league-meta, .topbar #prev-week, .topbar #next-week, .topbar .espn-open:not(.chat-open) { display: none; }
+  .topbar .week-nav select { border-radius: 999px; padding: 5px 10px; font-size: .82rem; font-weight: 600; }
+  .topbar .hdr-btn, .topbar .chat-open { display: inline-grid; place-items: center; width: 34px; height: 34px; padding: 0; border-radius: 50%; font-size: 1rem; position: relative; }
+  .topbar .hdr-btn .hb-l, .topbar .chat-open .hb-l { display: none; }
+  .topbar .chat-open .chat-dot { top: -4px; right: -4px; }
+  #tabs { position: fixed; left: 0; right: 0; bottom: 0; z-index: 80; display: flex; background: var(--surface); border-top: 1px solid var(--border); padding: 4px 0 env(safe-area-inset-bottom, 0px); box-shadow: 0 -2px 12px rgba(0,0,0,.12); max-width: none; }
+  #tabs[hidden] { display: none; }
+  #tabs button { flex: 1 1 0; flex-direction: column; gap: 2px; padding: 5px 0 6px; border: 0; color: var(--muted); font-size: .68rem; font-weight: 600; }
+  #tabs button.active { color: var(--brand); border: 0; }
+  #tabs .tab-ic { display: block; font-size: 1.45rem; line-height: 0; }
+  #tabs .live-dot { animation: none; }
+  #tabs .live-dot.on { animation: live-pulse 1.6s ease-in-out infinite; }
+  body { padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0px)); }
+  #cmp-bar { bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0px) + 8px); }
+  /* League sub-tabs: a row of chips */
+  .subnav.seg { border: 0; border-radius: 0; overflow-x: auto; scrollbar-width: none; gap: 6px; padding: 8px 10px; background: var(--surface); width: auto; margin: 0 0 6px; }
+  .subnav.seg::-webkit-scrollbar { display: none; }
+  .subnav.seg button { flex: none; border: 1px solid var(--border); border-radius: 999px; padding: 5px 12px; background: var(--surface); color: var(--ink-2); font-weight: 600; }
+  .subnav.seg button.active { background: var(--btn); border-color: var(--btn); color: #fff; }
+}
+:root[data-theme="dark"] #tabs button.active { color: #ff5a6e; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) #tabs button.active { color: #ff5a6e; } }
+
+/* Players: one segmented control */
+.pl-seg button { display: inline-flex; align-items: center; gap: 4px; }
+.pl-seg .pl-inj-btn { padding-left: 11px; padding-right: 11px; }
+.pl-seg .ic { width: 1.15em; height: 1.15em; }
+
+/* One button family. Main: solid blue. Secondary: white with a blue outline. Text: a plain link. */
+.mv-start, .mv-done, .mv-go, .owner-form button, .cx-code button, #er-quick, .er-quick-btn, .ta-propose {
+  background: var(--btn); border: 1px solid var(--btn); color: #fff; border-radius: 10px; font-weight: 600; box-shadow: none; }
+.mv-start:hover, .mv-done:hover, .mv-go:hover, .owner-form button:hover, .cx-code button:hover, #er-quick:hover, .er-quick-btn:hover, .ta-propose:hover { filter: brightness(1.08); }
+.pg-go, .er-btn:not(#er-quick):not(.er-quick-btn), .pd-btn, .mv-cancel, .odds-btn, .cmp-btn, .wr-last, .aw-key, .bx-toggle, .cmp-other, .ac-block button, .ac-actions button, .ct-new, .upg-btn {
+  background: var(--surface); border: 1px solid var(--btn-line); color: var(--accent-ink); border-radius: 10px; font-weight: 600; box-shadow: none; }
+.pg-go:hover, .er-btn:not(#er-quick):not(.er-quick-btn):hover, .pd-btn:hover, .mv-cancel:hover, .odds-btn:hover, .cmp-btn:hover, .wr-last:hover, .aw-key:hover, .bx-toggle:hover, .cmp-other:hover, .ac-block button:hover, .ac-actions button:hover, .ct-new:hover, .upg-btn:hover { border-color: var(--btn); }
+.ac-actions .ac-danger { color: #b3261e; border-color: #e7a6a1; }
+.link-btn, .cx-links a { color: var(--accent-ink); font-weight: 600; text-decoration: none; }
+.cx-links { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; font-size: .85rem; }
+.cx-links a { display: inline-flex; align-items: center; gap: 5px; }
+.er-chip .er-chip-t { display: inline-flex; align-items: center; gap: 5px; }
+.er-chip .er-chip-t .ic { color: var(--ink-2); width: 1.1em; height: 1.1em; }
+.ct-new .ic { width: 1.2em; height: 1.2em; }
+.wx .ic, .g-wx .ic { width: 1.15em; height: 1.15em; }

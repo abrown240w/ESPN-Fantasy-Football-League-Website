@@ -2,12 +2,12 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <script>
     // Installed on the home screen: behave like an app, no zooming.
     if (navigator.standalone || matchMedia("(display-mode: standalone)").matches) {
       document.documentElement.classList.add("standalone");
-      document.querySelector('meta[name="viewport"]').content = "width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no";
+      document.querySelector('meta[name="viewport"]').content = "width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover";
       for (const ev of ["gesturestart", "gesturechange", "gestureend"]) document.addEventListener(ev, (e) => e.preventDefault(), { passive: false });
       document.addEventListener("touchmove", (e) => { if (e.touches.length > 1) e.preventDefault(); }, { passive: false });
     }
@@ -21,8 +21,8 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="Fantasy">
-  <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <meta name="theme-color" content="#fcfcfb">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#c8102e">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -41,18 +41,18 @@
         <button class="icon-btn" id="next-week" aria-label="Next week">&#8250;</button>
         <button class="icon-btn refresh-btn" id="refresh" aria-label="Refresh data" title="Refresh">&#8635;</button>
         <!-- Computers: notifications and owner sign-in sit here (phones have them as Roster tiles). -->
-        <button type="button" class="hdr-btn" id="notify-btn" title="Notifications">🔔 Alerts</button>
-        <button type="button" class="hdr-btn" id="owner-btn" title="Owner sign-in">🔑 Sign in</button>
-        <button type="button" class="espn-open chat-open" id="chat-open" hidden title="League chat">💬 Chat<span class="chat-dot" id="chat-dot" hidden></span></button>
+        <button type="button" class="hdr-btn" id="notify-btn" title="Notifications" aria-label="Notifications"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 5a2 2 0 1 1 4 0a7 7 0 0 1 4 6v3a4 4 0 0 0 2 3h-16a4 4 0 0 0 2 -3v-3a7 7 0 0 1 4 -6"/> <path d="M9 17v1a3 3 0 0 0 6 0v-1"/></svg><span class="hb-l">Alerts</span></button>
+        <button type="button" class="hdr-btn" id="owner-btn" title="Connect your ESPN account" aria-label="Sign in"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M16.555 3.843l3.602 3.602a2.877 2.877 0 0 1 0 4.069l-2.643 2.643a2.877 2.877 0 0 1 -4.069 0l-.301 -.301l-6.558 6.558a2 2 0 0 1 -1.239 .578l-.175 .008h-1.172a1 1 0 0 1 -.993 -.883l-.007 -.117v-1.172a2 2 0 0 1 .467 -1.284l.119 -.13l.414 -.414h2v-2h2v-2l2.144 -2.144l-.301 -.301a2.877 2.877 0 0 1 0 -4.069l2.643 -2.643a2.877 2.877 0 0 1 4.069 0z"/> <path d="M15 9h.01"/></svg><span class="hb-l">Sign in</span></button>
+        <button type="button" class="espn-open chat-open" id="chat-open" hidden title="League chat" aria-label="League chat"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 20l1.3 -3.9c-2.324 -3.437 -1.426 -7.872 2.1 -10.374c3.526 -2.501 8.59 -2.296 11.845 .48c3.255 2.777 3.695 7.266 1.029 10.501c-2.666 3.235 -7.615 4.215 -11.574 2.293l-4.7 1"/></svg><span class="hb-l">Chat</span><span class="chat-dot" id="chat-dot" hidden></span></button>
         <a class="espn-open" id="espn-open" href="https://fantasy.espn.com/football/" target="_blank" rel="noopener" title="Open in ESPN">ESPN<span class="espn-arrow" aria-hidden="true">↗</span></a>
       </div>
     </div>
     <nav class="wrap tabs" id="tabs" hidden>
-      <button data-tab="roster" class="active">Roster</button>
-      <button data-tab="matchups">Matchup</button>
-      <button data-tab="live"><i class="live-dot" id="live-dot" aria-hidden="true"></i>Live</button>
-      <button data-tab="players">Players</button>
-      <button data-tab="league">League</button>
+      <button data-tab="roster" class="active"><span class="tab-ic"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 7m-4 0a4 4 0 1 0 8 0a4 4 0 1 0 -8 0"/> <path d="M3 21v-2a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v2"/> <path d="M16 3.13a4 4 0 0 1 0 7.75"/> <path d="M21 21v-2a4 4 0 0 0 -3 -3.85"/></svg></span><span class="tab-l">Roster</span></button>
+      <button data-tab="matchups"><span class="tab-ic"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 3v5l-11 9l-4 4l-3 -3l4 -4l9 -11z"/> <path d="M5 13l6 6"/> <path d="M14.32 17.32l3.68 3.68l3 -3l-3.365 -3.365"/> <path d="M10 5.5l-2 -2.5h-5v5l3 2.5"/></svg></span><span class="tab-l">Matchup</span></button>
+      <button data-tab="live"><span class="tab-ic"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M18.364 19.364a9 9 0 1 0 -12.728 0"/> <path d="M15.536 16.536a5 5 0 1 0 -7.072 0"/> <path d="M12 13m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0"/></svg><i class="live-dot" id="live-dot" aria-hidden="true"></i></span><span class="tab-l">Live</span></button>
+      <button data-tab="players"><span class="tab-ic"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 10m-7 0a7 7 0 1 0 14 0a7 7 0 1 0 -14 0"/> <path d="M21 21l-6 -6"/></svg></span><span class="tab-l">Players</span></button>
+      <button data-tab="league"><span class="tab-ic"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 21l8 0"/> <path d="M12 17l0 4"/> <path d="M7 4l10 0"/> <path d="M17 4v8a5 5 0 0 1 -10 0v-8"/> <path d="M5 9m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0"/> <path d="M19 9m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0"/></svg></span><span class="tab-l">League</span></button>
       <button data-tab="season" class="desk-tab">Standings</button>
       <button data-tab="managers" class="desk-tab">Weekly</button>
       <button data-tab="transactions" class="desk-tab">Moves</button>

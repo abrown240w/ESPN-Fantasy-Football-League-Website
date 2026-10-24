@@ -18,6 +18,51 @@ const LEAGUES = [
   { id: "1001176763", label: "Work League" },
 ];
 
+// ---------- Icons ----------
+// Outline icons from Tabler Icons (MIT, https://tabler.io/icons), inlined so they work offline and look the
+// same on every phone and computer. ic("bell") returns an <svg> sized to the text around it.
+const ICONS = {
+  "alert-triangle": '<path d="M12 9v4"/> <path d="M10.363 3.591l-8.106 13.534a1.914 1.914 0 0 0 1.636 2.871h16.214a1.914 1.914 0 0 0 1.636 -2.87l-8.106 -13.536a1.914 1.914 0 0 0 -3.274 0z"/> <path d="M12 16h.01"/>',
+  "arrows-exchange": '<path d="M7 10h14l-4 -4"/> <path d="M17 14h-14l4 4"/>',
+  "bell": '<path d="M10 5a2 2 0 1 1 4 0a7 7 0 0 1 4 6v3a4 4 0 0 0 2 3h-16a4 4 0 0 0 2 -3v-3a7 7 0 0 1 4 -6"/> <path d="M9 17v1a3 3 0 0 0 6 0v-1"/>',
+  "broadcast": '<path d="M18.364 19.364a9 9 0 1 0 -12.728 0"/> <path d="M15.536 16.536a5 5 0 1 0 -7.072 0"/> <path d="M12 13m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0"/>',
+  "building-stadium": '<path d="M12 12m-8 0a8 2 0 1 0 16 0a8 2 0 1 0 -16 0"/> <path d="M4 12v7c0 .94 2.51 1.785 6 2v-3h4v3c3.435 -.225 6 -1.07 6 -2v-7"/> <path d="M15 6h4v-3h-4v7"/> <path d="M7 6h4v-3h-4v7"/>',
+  "calendar": '<path d="M4 7a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2v-12z"/> <path d="M16 3v4"/> <path d="M8 3v4"/> <path d="M4 11h16"/> <path d="M11 15h1"/> <path d="M12 15v3"/>',
+  "chart-bar": '<path d="M3 13a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v6a1 1 0 0 1 -1 1h-4a1 1 0 0 1 -1 -1z"/> <path d="M15 9a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v10a1 1 0 0 1 -1 1h-4a1 1 0 0 1 -1 -1z"/> <path d="M9 5a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v14a1 1 0 0 1 -1 1h-4a1 1 0 0 1 -1 -1z"/> <path d="M4 20h14"/>',
+  "chevron-down": '<path d="M6 9l6 6l6 -6"/>',
+  "clipboard-list": '<path d="M9 5h-2a2 2 0 0 0 -2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-12a2 2 0 0 0 -2 -2h-2"/> <path d="M9 3m0 2a2 2 0 0 1 2 -2h2a2 2 0 0 1 2 2v0a2 2 0 0 1 -2 2h-2a2 2 0 0 1 -2 -2z"/> <path d="M9 12l.01 0"/> <path d="M13 12l2 0"/> <path d="M9 16l.01 0"/> <path d="M13 16l2 0"/>',
+  "cloud": '<path d="M6.657 18c-2.572 0 -4.657 -2.007 -4.657 -4.483c0 -2.475 2.085 -4.482 4.657 -4.482c.393 -1.762 1.794 -3.2 3.675 -3.773c1.88 -.572 3.956 -.193 5.444 1c1.488 1.19 2.162 3.007 1.77 4.769h.99c1.913 0 3.464 1.56 3.464 3.486c0 1.927 -1.551 3.487 -3.465 3.487h-11.878"/>',
+  "cloud-fog": '<path d="M7 16a4.6 4.4 0 0 1 0 -9a5 4.5 0 0 1 11 2h1a3.5 3.5 0 0 1 0 7h-12"/> <path d="M5 20l14 0"/>',
+  "cloud-rain": '<path d="M7 18a4.6 4.4 0 0 1 0 -9a5 4.5 0 0 1 11 2h1a3.5 3.5 0 0 1 0 7"/> <path d="M11 13v2m0 3v2m4 -5v2m0 3v2"/>',
+  "cloud-storm": '<path d="M7 18a4.6 4.4 0 0 1 0 -9a5 4.5 0 0 1 11 2h1a3.5 3.5 0 0 1 0 7h-1"/> <path d="M13 14l-2 4l3 0l-2 4"/>',
+  "external-link": '<path d="M12 6h-6a2 2 0 0 0 -2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-6"/> <path d="M11 13l9 -9"/> <path d="M15 4h5v5"/>',
+  "eye": '<path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0"/> <path d="M21 12c-2.4 4 -5.4 6 -9 6c-3.6 0 -6.6 -2 -9 -6c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6"/>',
+  "first-aid-kit": '<path d="M8 8v-2a2 2 0 0 1 2 -2h4a2 2 0 0 1 2 2v2"/> <path d="M4 8m0 2a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2z"/> <path d="M10 14h4"/> <path d="M12 12v4"/>',
+  "key": '<path d="M16.555 3.843l3.602 3.602a2.877 2.877 0 0 1 0 4.069l-2.643 2.643a2.877 2.877 0 0 1 -4.069 0l-.301 -.301l-6.558 6.558a2 2 0 0 1 -1.239 .578l-.175 .008h-1.172a1 1 0 0 1 -.993 -.883l-.007 -.117v-1.172a2 2 0 0 1 .467 -1.284l.119 -.13l.414 -.414h2v-2h2v-2l2.144 -2.144l-.301 -.301a2.877 2.877 0 0 1 0 -4.069l2.643 -2.643a2.877 2.877 0 0 1 4.069 0z"/> <path d="M15 9h.01"/>',
+  "list-details": '<path d="M13 5h8"/> <path d="M13 9h5"/> <path d="M13 15h8"/> <path d="M13 19h5"/> <path d="M3 4m0 1a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v4a1 1 0 0 1 -1 1h-4a1 1 0 0 1 -1 -1z"/> <path d="M3 14m0 1a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v4a1 1 0 0 1 -1 1h-4a1 1 0 0 1 -1 -1z"/>',
+  "list-numbers": '<path d="M11 6h9"/> <path d="M11 12h9"/> <path d="M12 18h8"/> <path d="M4 16a2 2 0 1 1 4 0c0 .591 -.5 1 -1 1.5l-3 2.5h4"/> <path d="M6 10v-6l-2 2"/>',
+  "lock": '<path d="M5 13a2 2 0 0 1 2 -2h10a2 2 0 0 1 2 2v6a2 2 0 0 1 -2 2h-10a2 2 0 0 1 -2 -2v-6z"/> <path d="M11 16a1 1 0 1 0 2 0a1 1 0 0 0 -2 0"/> <path d="M8 11v-4a4 4 0 1 1 8 0v4"/>',
+  "logout": '<path d="M14 8v-2a2 2 0 0 0 -2 -2h-7a2 2 0 0 0 -2 2v12a2 2 0 0 0 2 2h7a2 2 0 0 0 2 -2v-2"/> <path d="M9 12h12l-3 -3"/> <path d="M18 15l3 -3"/>',
+  "message-circle": '<path d="M3 20l1.3 -3.9c-2.324 -3.437 -1.426 -7.872 2.1 -10.374c3.526 -2.501 8.59 -2.296 11.845 .48c3.255 2.777 3.695 7.266 1.029 10.501c-2.666 3.235 -7.615 4.215 -11.574 2.293l-4.7 1"/>',
+  "news": '<path d="M16 6h3a1 1 0 0 1 1 1v11a2 2 0 0 1 -4 0v-13a1 1 0 0 0 -1 -1h-10a1 1 0 0 0 -1 1v12a3 3 0 0 0 3 3h11"/> <path d="M8 8l4 0"/> <path d="M8 12l4 0"/> <path d="M8 16l4 0"/>',
+  "pencil": '<path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4"/> <path d="M13.5 6.5l4 4"/>',
+  "plug-connected": '<path d="M7 12l5 5l-1.5 1.5a3.536 3.536 0 1 1 -5 -5l1.5 -1.5z"/> <path d="M17 12l-5 -5l1.5 -1.5a3.536 3.536 0 1 1 5 5l-1.5 1.5z"/> <path d="M3 21l2.5 -2.5"/> <path d="M18.5 5.5l2.5 -2.5"/> <path d="M10 11l-2 2"/> <path d="M13 14l-2 2"/>',
+  "plus": '<path d="M12 5l0 14"/> <path d="M5 12l14 0"/>',
+  "refresh": '<path d="M20 11a8.1 8.1 0 0 0 -15.5 -2m-.5 -4v4h4"/> <path d="M4 13a8.1 8.1 0 0 0 15.5 2m.5 4v-4h-4"/>',
+  "scale": '<path d="M7 20l10 0"/> <path d="M6 6l6 -1l6 1"/> <path d="M12 3l0 17"/> <path d="M9 12l-3 -6l-3 6a3 3 0 0 0 6 0"/> <path d="M21 12l-3 -6l-3 6a3 3 0 0 0 6 0"/>',
+  "search": '<path d="M10 10m-7 0a7 7 0 1 0 14 0a7 7 0 1 0 -14 0"/> <path d="M21 21l-6 -6"/>',
+  "snowflake": '<path d="M10 4l2 1l2 -1"/> <path d="M12 2v6.5l3 1.72"/> <path d="M17.928 6.268l.134 2.232l1.866 1.232"/> <path d="M20.66 7l-5.629 3.25l.01 3.458"/> <path d="M19.928 14.268l-1.866 1.232l-.134 2.232"/> <path d="M20.66 17l-5.629 -3.25l-2.99 1.738"/> <path d="M14 20l-2 -1l-2 1"/> <path d="M12 22v-6.5l-3 -1.72"/> <path d="M6.072 17.732l-.134 -2.232l-1.866 -1.232"/> <path d="M3.34 17l5.629 -3.25l-.01 -3.458"/> <path d="M4.072 9.732l1.866 -1.232l.134 -2.232"/> <path d="M3.34 7l5.629 3.25l2.99 -1.738"/>',
+  "star": '<path d="M12 17.75l-6.172 3.245l1.179 -6.873l-5 -4.867l6.9 -1l3.086 -6.253l3.086 6.253l6.9 1l-5 4.867l1.179 6.873z"/>',
+  "sun": '<path d="M12 12m-4 0a4 4 0 1 0 8 0a4 4 0 1 0 -8 0"/> <path d="M3 12h1m8 -9v1m8 8h1m-9 8v1m-6.4 -15.4l.7 .7m12.1 -.7l-.7 .7m0 11.4l.7 .7m-12.1 -.7l-.7 .7"/>',
+  "sun-high": '<path d="M14.828 14.828a4 4 0 1 0 -5.656 -5.656a4 4 0 0 0 5.656 5.656z"/> <path d="M6.343 17.657l-1.414 1.414"/> <path d="M6.343 6.343l-1.414 -1.414"/> <path d="M17.657 6.343l1.414 -1.414"/> <path d="M17.657 17.657l1.414 1.414"/> <path d="M4 12h-2"/> <path d="M12 4v-2"/> <path d="M20 12h2"/> <path d="M12 20v2"/>',
+  "swords": '<path d="M21 3v5l-11 9l-4 4l-3 -3l4 -4l9 -11z"/> <path d="M5 13l6 6"/> <path d="M14.32 17.32l3.68 3.68l3 -3l-3.365 -3.365"/> <path d="M10 5.5l-2 -2.5h-5v5l3 2.5"/>',
+  "trophy": '<path d="M8 21l8 0"/> <path d="M12 17l0 4"/> <path d="M7 4l10 0"/> <path d="M17 4v8a5 5 0 0 1 -10 0v-8"/> <path d="M5 9m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0"/> <path d="M19 9m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0"/>',
+  "user": '<path d="M8 7a4 4 0 1 0 8 0a4 4 0 0 0 -8 0"/> <path d="M6 21v-2a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v2"/>',
+  "users": '<path d="M9 7m-4 0a4 4 0 1 0 8 0a4 4 0 1 0 -8 0"/> <path d="M3 21v-2a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v2"/> <path d="M16 3.13a4 4 0 0 1 0 7.75"/> <path d="M21 21v-2a4 4 0 0 0 -3 -3.85"/>',
+  "wind": '<path d="M5 8h8.5a2.5 2.5 0 1 0 -2.34 -3.24"/> <path d="M3 12h15.5a2.5 2.5 0 1 1 -2.34 3.24"/> <path d="M4 16h5.5a2.5 2.5 0 1 1 -2.34 3.24"/>',
+};
+const ic = (name, cls = "") => `<svg class="ic ${cls}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name] || ""}</svg>`;
+
 // ---------- State ----------
 const params = new URLSearchParams(location.search);
 const store = {
@@ -676,7 +721,7 @@ function renderMatchupsPhone(el, label) {
   const chip = (m) => (m.id === cur
     ? `<button type="button" class="mb-chip on" data-mb="${m.id}">${logoImg(team(m.home.teamId), 22)}<span class="vs">vs</span>${logoImg(team(m.away.teamId), 22)}</button>`
     : `<button type="button" class="mb-chip" data-mb="${m.id}">${logoImg(team(m.home.teamId), 20)}<b>${val(m.home)}</b><span class="vs">vs</span><b>${val(m.away)}</b>${logoImg(team(m.away.teamId), 20)}</button>`);
-  const bar = `<div class="mu-bar" id="mu-bar">${muOrder().map((id) => (id === "league" ? `<button type="button" class="mb-chip lg ${cur === "league" ? "on" : ""}" data-mb="league">📅 League Scores</button>` : chip(games.find((m) => m.id === id)))).join("")}</div>`;
+  const bar = `<div class="mu-bar" id="mu-bar">${muOrder().map((id) => (id === "league" ? `<button type="button" class="mb-chip lg ${cur === "league" ? "on" : ""}" data-mb="league">${ic("calendar")} League scores</button>` : chip(games.find((m) => m.id === id)))).join("")}</div>`;
   const sel = games.find((m) => m.id === cur);
   el.innerHTML = `${bar}<div class="mu-detail" id="mu-body">${sel ? matchupDetail(sel, true) : leagueSummary()}</div>
     <p class="muted small mu-note">${label}</p>`;
@@ -1004,9 +1049,9 @@ function paintWatchCount() {
 }
 
 // The row at the top of Players and the Injury Report: Available | All players, and the Injury Report.
-const playersNav = (cur) => `<div class="pl-nav"><div class="seg">${[["avail", "Available"], ["all", "All players"]].map(([k, l]) => `<button type="button" data-plm="${k}" class="${cur === k && !state.players.watch ? "active" : ""}">${l}</button>`).join("")}</div>
-  ${(() => { const c = watchCounts(); return c ? `<div class="seg"><button type="button" data-watchf class="${state.players.watch ? "active" : ""}" title="Your watch list: available / total">👁 <b>${c.avail}/${c.total}</b></button></div>` : ""; })()}
-  ${DESK.matches ? "" : `<div class="seg inj-seg"><button type="button" data-injr>🩺 <span class="nm-full">Injury Report</span><span class="nm-short">Injuries</span></button></div>`}</div>`;
+const playersNav = (cur) => `<div class="pl-nav"><div class="seg pl-seg">${[["avail", "Available"], ["all", `<span class="nm-full">All players</span><span class="nm-short">All</span>`]].map(([k, l]) => `<button type="button" data-plm="${k}" class="${cur === k && !state.players.watch ? "active" : ""}">${l}</button>`).join("")}
+  ${(() => { const c = watchCounts(); return c ? `<button type="button" data-watchf class="${state.players.watch ? "active" : ""}" title="Your watch list: available / total">${ic("eye")} <b>${c.avail}/${c.total}</b></button>` : ""; })()}
+  ${DESK.matches ? "" : `<button type="button" data-injr class="pl-inj-btn" title="Injury Report" aria-label="Injury Report">${ic("first-aid-kit")}</button>`}</div></div>`;
 document.addEventListener("click", (e) => {
   const m = e.target.closest(".pl-nav [data-plm]"), inj = e.target.closest(".pl-nav [data-injr]");
   const wf = e.target.closest(".pl-nav [data-watchf]");
@@ -1115,7 +1160,7 @@ function playoffSchedule(side) {
     : `${o.home ? "" : "@"}${esc(o.team)}${o.rank ? ` <span class="oprk ${o.rank <= 10 ? "tough" : o.rank >= 23 ? "easy" : ""}">${ordinal(o.rank)}</span>` : ""}`;
   const grade = (a) => a == null ? `<span class="muted">–</span>` : a >= 21 ? `<span class="pos"><strong>Easy</strong></span>` : a <= 12 ? `<span class="neg"><strong>Tough</strong></span>` : "Neutral";
   return `${head}<div class="table-wrap"><table class="data pt-table po-table"><thead><tr><th class="pt-player">Player</th>${periods.map(({ wk, sp }) => `<th>Wk ${wk}${periods.filter((x) => x.wk === wk).length > 1 ? ` <span class="muted">(${sp})</span>` : ""}</th>`).join("")}<th class="num">Avg rank</th><th>Outlook</th></tr></thead>
-    <tbody>${rows.map(({ p, opps, avg, byeWk }) => `<tr><td class="pt-player"><div class="pt-name">${plinkNm(p)} <span class="muted small">${esc(p.pos)}</span></div></td>${opps.map((o) => `<td>${cell(o)}</td>`).join("")}<td class="num">${avg == null ? "–" : f1(avg)}</td><td>${byeWk ? `<span class="neg"><strong>⚠️ Bye wk ${byeWk}</strong></span>` : grade(avg)}</td></tr>`).join("")}</tbody></table></div>`;
+    <tbody>${rows.map(({ p, opps, avg, byeWk }) => `<tr><td class="pt-player"><div class="pt-name">${plinkNm(p)} <span class="muted small">${esc(p.pos)}</span></div></td>${opps.map((o) => `<td>${cell(o)}</td>`).join("")}<td class="num">${avg == null ? "–" : f1(avg)}</td><td>${byeWk ? `<span class="neg"><strong>${ic("alert-triangle")} Bye wk ${byeWk}</strong></span>` : grade(avg)}</td></tr>`).join("")}</tbody></table></div>`;
 }
 
 // ---------- Player news (Roster tab and player popup) ----------
@@ -1219,7 +1264,7 @@ function lineupCheck(side, w, editable = false) {
   }
   // Starters who won't play but have no better replacement on the roster still get a warning.
   for (const p of side.starters) {
-    if (!locked(p) && out(p) && !outs.includes(p)) items.push(`<div class="lc-item lc-warn"><span class="lc-ico">⚠️</span><span>${nm(p)} is ${why(p)}. No bench player can fill in, so check free agents.</span>${editable ? `<button type="button" class="lc-do upg-btn" data-pid="${esc(p.id)}">Find one</button>` : ""}</div>`);
+    if (!locked(p) && out(p) && !outs.includes(p)) items.push(`<div class="lc-item lc-warn"><span class="lc-ico">${ic("alert-triangle")}</span><span>${nm(p)} is ${why(p)}. No bench player can fill in, so check free agents.</span>${editable ? `<button type="button" class="lc-do upg-btn" data-pid="${esc(p.id)}">Find one</button>` : ""}</div>`);
   }
   for (const p of side.starters) {
     if (!locked(p) && !out(p) && !outs.includes(p) && /QUESTIONABLE|DOUBTFUL/.test(p.injury || "")) items.push(`<div class="lc-item lc-note"><span class="lc-ico">⏳</span><span>${nm(p)} is ${injuryInfo(p.injury)[1].toLowerCase()}. Check the status before kickoff.</span></div>`);
@@ -1409,7 +1454,7 @@ const PCOLS = {
   rz: { key: "rz", label: "RZ %", title: "Season share of the team's red-zone targets and carries, inside the opponent's 20 (last game underneath)", num: true, render: rzCell, sort: (p) => { const u = usageOf(p.id); return u && u.pos !== "QB" ? u.avg?.rz ?? u.last.rz : null; } },
   value: { key: "value", label: "Value", title: "FantasyCalc trade value", num: true, render: (p) => valueCell(p.id), sort: (p) => valueOf(p.id) },
   act: { key: "", label: "", cls: "pt-act", render: (p) => moveBtns(p) },
-  watch: { key: "", label: "👁", cls: "pt-watch", title: "Your ESPN watch list", render: (p) => watchBox(p.id) },
+  watch: { key: "", label: ic("eye"), cls: "pt-watch", title: "Your ESPN watch list", render: (p) => watchBox(p.id) },
 };
 // Draws a player table into `el`; header clicks re-sort it in place.
 function drawPlayerTable(el, keys, rows, sortState, sp, empty) {
@@ -1674,7 +1719,7 @@ function renderSeason() {
   $("heatmap").innerHTML = heatmap(season);
   // Season awards: how many of each weekly award every team has won (regular season).
   $("aw-sec").insertAdjacentHTML("beforeend", `<div class="section-head"><h2>Season awards</h2><button type="button" class="aw-key" id="aw-key">Icon key</button></div><div id="aw-table"></div>`);
-  $("aw-key").addEventListener("click", () => showModal(`<div class="pm-head"><h2 id="pl-modal-title">🏆 Award icons</h2></div>
+  $("aw-key").addEventListener("click", () => showModal(`<div class="pm-head"><h2 id="pl-modal-title">${ic("trophy")} Award icons</h2></div>
     <ul class="aw-keylist">${AWARD_ORDER.map((k) => `<li>${awardIcon(k, 22)}<span>${esc(AWARD_NAMES[k])}</span></li>`).join("")}</ul>
     <p class="muted small">Weekly awards, counted over the regular season.</p>`));
   const tally = ensureAwardTally(() => { if (state.tab === "season" && state.week) renderSeason(); });
@@ -2288,7 +2333,7 @@ function renderLive() {
       ${pinned ? "" : stickBar(`<span class="sb-team"><img src="${esc(g.away.logo)}" alt="" width="18" height="18">${esc(g.away.abbr)}</span><strong>${sbScore(g.away)}</strong><span class="sb-mid">${g.state === "in" ? esc(g.detail) : g.state === "post" ? "Final" : esc(kickoff(g))}${g.state === "in" && g.downDistance ? ` · ${esc(g.downDistance.replace(/ at .*/, ""))}` : ""}</span><strong>${sbScore(g.home)}</strong><span class="sb-team">${esc(g.home.abbr)}<img src="${esc(g.home.logo)}" alt="" width="18" height="18"></span>`)}
       <div class="collapse ${open ? "open" : ""}" ${open ? "" : "inert"}><div class="collapse-inner">
       ${pinned ? "" : `${graphic}${sit}${lastPlay}`}
-      ${g.state === "pre" ? "" : `<button type="button" class="bx-toggle ${state.boxUi[g.id]?.open ? "open" : ""}" data-bx="${esc(g.id)}" data-toggle="1" aria-expanded="${!!state.boxUi[g.id]?.open}">📊 Player stats <span class="caret">▾</span></button>`}
+      ${g.state === "pre" ? "" : `<button type="button" class="bx-toggle ${state.boxUi[g.id]?.open ? "open" : ""}" data-bx="${esc(g.id)}" data-toggle="1" aria-expanded="${!!state.boxUi[g.id]?.open}">${ic("chart-bar")} Player stats <span class="caret">▾</span></button>`}
       ${state.boxUi[g.id]?.open ? boxPanel(g, rosteredBy) : ""}
       ${g.state === "post" ? "" : wxLine(wxGame(g.home.proId, L.sp))}
       <div class="lv-players mx">${playerRows(g)}</div>
@@ -2768,7 +2813,7 @@ function rosterRail(sel, side) {
     const d = ensureNews(side.players.map((p) => p.id), () => { if (state.tab === "roster") render(); });
     const items = !d ? null : side.players.flatMap((p) => (d.players[p.id] || []).map((n) => ({ p, n })))
       .filter(({ n }) => Date.now() - Date.parse(n.published) < 7 * 864e5).sort((a, b) => Date.parse(b.n.published) - Date.parse(a.n.published));
-    news = `<div class="card rr-card rr-news-card"><div class="rr-head">📰 News <span class="muted small">last 7 days</span></div>
+    news = `<div class="card rr-card rr-news-card"><div class="rr-head">${ic("news")} News <span class="muted small">last 7 days</span></div>
       ${!items ? `<div class="loading small"><span class="spinner"></span> Loading news…</div>` : items.length ? `<div class="rr-news">${items.slice(0, 6).map(({ p, n }) => newsItem(n, `<span class="news-who">${plinkNm(p)}</span>`)).join("")}</div>${items.length > 6 ? `<button type="button" class="link-btn" data-chip="news">All news (${items.length}) ›</button>` : ""}` : `<p class="muted small">No player updates this week.</p>`}</div>`;
   }
   return mu + news;
@@ -2885,7 +2930,7 @@ function erGameLine(p) {
 // Signed-in owners get theirs automatically.
 function openPickTeam() {
   const mine = myTeamId(), owner = ownerTeam();
-  const head = `<div class="pm-head"><div><h2 id="pl-modal-title">👤 My team</h2><div class="muted small">${owner ? "You're signed in, so your team is set automatically." : "Pick your team and Live, Matchup and the Roster open on it. Saved on this device."}</div></div></div>`;
+  const head = `<div class="pm-head"><div><h2 id="pl-modal-title">${ic("user")} My team</h2><div class="muted small">${owner ? "You're signed in, so your team is set automatically." : "Pick your team and Live, Matchup and the Roster open on it. Saved on this device."}</div></div></div>`;
   if (owner) return showModal(`${head}<div class="mt-list"><div class="mt-pick on">${logoImg(team(owner), 30)}<span class="mt-main"><strong>${esc(team(owner).name)}</strong><span class="muted small">${esc(team(owner).owner)} · ${recordStr(team(owner))}</span></span><span class="pos">✓</span></div></div>`);
   const ids = Object.keys(state.base.teams).sort((a, b) => team(a).name.localeCompare(team(b).name));
   showModal(`${head}<div class="mt-list">${ids.map((id) => `<button type="button" class="mt-pick ${String(id) === String(mine) ? "on" : ""}" data-mypick="${esc(id)}">${logoImg(team(id), 30)}<span class="mt-main"><strong>${esc(team(id).name)}</strong><span class="muted small">${esc(team(id).owner)} · ${recordStr(team(id))}</span></span>${String(id) === String(mine) ? `<span class="pos">✓</span>` : ""}</button>`).join("")}</div>`);
@@ -2910,11 +2955,11 @@ function chipPopup(kind, teamId, side) {
   if (kind === "myteam") return openPickTeam();
   if (kind === "news") {
     const d = side ? ensureNews(side.players.map((p) => p.id), reopen) : null;
-    if (!d) return showModal(`${head("📰", "News")}<div class="loading small"><span class="spinner"></span> Loading news…</div>`);
+    if (!d) return showModal(`${head(ic("news"), "News")}<div class="loading small"><span class="spinner"></span> Loading news…</div>`);
     const items = side.players.flatMap((p) => (d.players[p.id] || []).map((n) => ({ p, n, isNew: unreadNews(String(p.id), d.players[p.id]).includes(n) })))
       .filter(({ n }) => Date.now() - Date.parse(n.published) < 7 * 864e5)
       .sort((a, b) => Date.parse(b.n.published) - Date.parse(a.n.published));
-    showModal(`${head("📰", "News", "last 7 days")}${items.length ? `<div class="news chip-news">${items.map(({ p, n, isNew }) => newsItem(n, `${isNew ? `<span class="badge live news-new">NEW</span>` : ""}<span class="news-who">${plinkNm(p)}${injBadge(p)}</span>`)).join("")}</div>${newsCredit()}` : `<p class="muted">No player updates in the last week.</p>`}`);
+    showModal(`${head(ic("news"), "News", "last 7 days")}${items.length ? `<div class="news chip-news">${items.map(({ p, n, isNew }) => newsItem(n, `${isNew ? `<span class="badge live news-new">NEW</span>` : ""}<span class="news-who">${plinkNm(p)}${injBadge(p)}</span>`)).join("")}</div>${newsCredit()}` : `<p class="muted">No player updates in the last week.</p>`}`);
     for (const p of side.players) markNewsRead(String(p.id), d.players[p.id]); // the red icons clear when you close this
     return;
   }
@@ -2926,7 +2971,7 @@ function chipPopup(kind, teamId, side) {
     const body = !P ? `<div class="loading small"><span class="spinner"></span> Loading from ESPN…</div>`
       : list.length ? `<div class="pd-pop" data-pdk="${kind}">${sortPending(list).map((x) => pendingRow(x, (P.teams || [Number(teamId)]).map(Number))).join("")}${kind === "claims" ? claimHint(list) : ""}</div>`
       : `<p class="muted">${kind === "claims" ? "No pending waiver claims." : "No pending trade offers."}</p>`;
-    showModal(`${head(kind === "claims" ? "📋" : "⇄", kind === "claims" ? "Claims" : "Trades", sub)}${body}
+    showModal(`${head(ic(kind === "claims" ? "clipboard-list" : "arrows-exchange"), kind === "claims" ? "Claims" : "Trades", sub)}${body}
       ${kind === "trades" ? `<button type="button" class="pg-go" id="chip-ta">Build a trade in the Trade Analyzer ›</button>` : ""}`);
     $("chip-ta")?.addEventListener("click", () => { document.querySelector("#pl-modal .modal-close").click(); switchTab("trade"); });
     if (!P) setTimeout(reopen, 1500);
@@ -2935,7 +2980,7 @@ function chipPopup(kind, teamId, side) {
   if (kind === "deadline") {
     const ts = state.base.raw.settings?.tradeSettings || {}, dl = ts.deadlineDate;
     const days = dl ? Math.ceil((dl - Date.now()) / 864e5) : null;
-    return showModal(`${head("📅", "Trade deadline")}
+    return showModal(`${head(ic("calendar"), "Trade deadline")}
       <div class="chip-big">${dl ? fmtWhen(dl) : "No deadline set"}</div>
       ${days != null ? `<p class="muted">${days > 0 ? `${days} day${days === 1 ? "" : "s"} left to make trades.` : "The trade deadline has passed."}</p>` : ""}
       <ul class="chip-facts">${ts.revisionHours ? `<li>Accepted trades wait <strong>${ts.revisionHours} hours</strong> for league review before they go through.</li>` : ""}
@@ -2944,19 +2989,19 @@ function chipPopup(kind, teamId, side) {
   if (kind === "waivers") {
     const teams = (state.base.raw.teams || []).filter((x) => x.waiverRank).sort((a, b) => a.waiverRank - b.waiverRank);
     const next = nextWaiverRun(), days = waiverDays();
-    return showModal(`${head("☰", "Waivers", waiverPlace(teamId) ? `${waiverPlace(teamId)}` : "")}
+    return showModal(`${head(ic("list-numbers"), "Waivers", waiverPlace(teamId) ? `${waiverPlace(teamId)}` : "")}
       <p class="muted small">${next ? `Next run ${fmtWhen(next)}` : "Waivers run overnight"}${days ? ` · runs ${days}` : ""}</p>
       <ol class="chip-order">${teams.map((x) => `<li class="${String(x.id) === String(teamId) ? "me" : ""}"><span class="wv-rk">${x.waiverRank}</span>${logoImg(team(x.id), 20)}<span>${esc(team(x.id).name)}</span></li>`).join("")}</ol>`);
   }
   if (kind === "awards") {
     const tally = ensureAwardTally(reopen);
-    if (!tally) return showModal(`${head("🏆", "Awards")}<div class="loading small"><span class="spinner"></span> Counting weekly awards…</div>`);
+    if (!tally) return showModal(`${head(ic("trophy"), "Awards")}<div class="loading small"><span class="spinner"></span> Counting weekly awards…</div>`);
     const mine = tally[teamId] || {};
     const won = AWARD_ORDER.filter((k) => mine[k]?.length);
     const total = sum(won, (k) => mine[k].length);
     const rank = 1 + Object.values(state.base.teams).filter((o) => o.seed < t.seed).length;
     const pfRank = 1 + Object.values(state.base.teams).filter((o) => o.pf > t.pf).length;
-    return showModal(`${head("🏆", "Awards", `${total} weekly award${total === 1 ? "" : "s"} this season`)}
+    return showModal(`${head(ic("trophy"), "Awards", `${total} weekly award${total === 1 ? "" : "s"} this season`)}
       <div class="pm-sheet"><div><span>Standing</span><strong>${ordinal(rank)}</strong></div><div><span>Record</span><strong>${recordStr(t)}</strong></div><div><span>Points for</span><strong>${f1(t.pf)}</strong><small>${ordinal(pfRank)}</small></div><div><span>Awards</span><strong>${total}</strong></div></div>
       ${won.length ? `<div class="chip-awards">${won.map((k) => `<div class="chip-award">${awardIcon(k, 26)}<div><strong>${AWARD_NAMES[k]}</strong><span class="muted small">Week${mine[k].length > 1 ? "s" : ""} ${mine[k].join(", ")}</span></div><b>×${mine[k].length}</b></div>`).join("")}</div>`
         : `<p class="muted">No weekly awards yet this season.</p>`}
@@ -3039,16 +3084,13 @@ function renderRoster() {
   const tally = state.awardTally && state.awardTally !== "loading" ? state.awardTally[sel] : null;
   const nAwards = tally ? sum(Object.values(tally), (wks) => wks.length) : null;
   const chips = [
-    chip("news", "📰", "News", anyNews ? `<i class="er-dot"></i> New` : "Latest"),
-    waiverPlace(sel) ? chip("waivers", "☰", "Waivers", waiverPlace(sel)) : "",
-    canEdit ? chip("claims", "📋", "Claims", P ? `${claims} pending` : "…") : "",
-    canEdit ? chip("trades", "⇄", "Trades", P ? `${offers} offer${offers === 1 ? "" : "s"}` : "…") : "",
-    deadline ? chip("deadline", "📅", "Trade deadline", new Date(deadline).toLocaleString(undefined, { month: "numeric", day: "numeric", hour: "numeric", minute: "2-digit" })) : "",
-    chip("myteam", "👤", "My team", myTeamId() ? esc(team(myTeamId()).abbrev || team(myTeamId()).name) : "Select"),
-    chip("awards", "🏆", "Awards", nAwards == null ? "View" : `${nAwards} award${nAwards === 1 ? "" : "s"}`),
-    // Phones: notifications and the owner sign-in live here (computers have them in the header).
-    DESK.matches ? "" : chip("alerts", "🔔", "Alerts", "Settings"),
-    DESK.matches ? "" : chip("owner", store.get("ffb.owner") === "1" ? "👤" : "🔑", "Account", store.get("ffb.owner") === "1" ? "Signed in" : "Sign in"),
+    chip("news", ic("news"), "News", anyNews ? `<i class="er-dot"></i> New` : "Latest"),
+    waiverPlace(sel) ? chip("waivers", ic("list-numbers"), "Waivers", waiverPlace(sel)) : "",
+    canEdit ? chip("claims", ic("clipboard-list"), "Claims", P ? `${claims} pending` : "…") : "",
+    canEdit ? chip("trades", ic("arrows-exchange"), "Trades", P ? `${offers} offer${offers === 1 ? "" : "s"}` : "…") : "",
+    deadline ? chip("deadline", ic("calendar"), "Trade deadline", new Date(deadline).toLocaleString(undefined, { month: "numeric", day: "numeric", hour: "numeric", minute: "2-digit" })) : "",
+    chip("myteam", ic("user"), "My team", myTeamId() ? esc(team(myTeamId()).abbrev || team(myTeamId()).name) : "Select"),
+    chip("awards", ic("trophy"), "Awards", nAwards == null ? "View" : `${nAwards} award${nAwards === 1 ? "" : "s"}`),
   ].join("");
   const opts = ids.map((id) => `<option value="${id}" ${id === String(sel) ? "selected" : ""}>${esc(team(id).name)}</option>`).join("");
   const head = `<div class="card er-head">
@@ -3203,7 +3245,7 @@ async function openChat(lid) {
   state.chatView = "list";
   const other = lid !== curLid(); // logos and matchups only exist for the league on screen
   const lgBtns = () => (LEAGUES.length > 1 ? `<div class="ct-leagues">${LEAGUES.map((l) => `<button type="button" data-chatlg="${l.id}" class="ct-lg ${l.id === lid ? "active" : ""}">${esc(l.label.replace(/\s*League\s*$/i, ""))}${state.chatCounts?.[l.id] ? `<i class="ct-unread">${state.chatCounts[l.id] > 9 ? "9+" : state.chatCounts[l.id]}</i>` : ""}</button>`).join("")}</div>` : "");
-  const head = () => `<div class="pm-head"><h2 id="pl-modal-title">💬 League chat</h2></div>${lgBtns()}`;
+  const head = () => `<div class="pm-head"><h2 id="pl-modal-title">${ic("message-circle")} League chat</h2></div>${lgBtns()}`;
   const bindLg = () => $("pl-modal-body").querySelectorAll("[data-chatlg]").forEach((b) => b.addEventListener("click", () => { if (b.dataset.chatlg !== state.chatLeague) openChat(b.dataset.chatlg); }));
   chatShell(`${head()}<div class="loading small"><span class="spinner"></span> Loading chats…</div>`);
   bindLg();
@@ -3224,14 +3266,14 @@ async function openChat(lid) {
   const vsOpp = d.topics.filter((t) => t.type !== "CHAT_ALL_MEMBERS" && t.members.length === 1 && String(t.members[0].teamId) === opp);
   const rest = d.topics.filter((t) => !league.includes(t) && !vsOpp.includes(t)).sort((a, b) => b.date - a.date);
   const row = (t, isLeague) => `<button type="button" class="ct-row" data-topic="${esc(t.id)}">
-      ${isLeague ? `<span class="ct-ico">🏈</span>` : `<span class="ct-ico">${other ? "👤" : t.members.slice(0, 2).map((m) => (m.teamId != null ? logoImg(team(m.teamId), 26) : "")).join("")}</span>`}
+      ${isLeague ? `<span class="ct-ico">${ic("message-circle")}</span>` : `<span class="ct-ico">${other ? ic("user") : t.members.slice(0, 2).map((m) => (m.teamId != null ? logoImg(team(m.teamId), 26) : "")).join("")}</span>`}
       <span class="ct-main"><strong>${esc(t.title)}</strong>${!isLeague ? `<span class="muted small">${esc(t.members.map((m) => m.team).filter(Boolean).join(", "))}</span>` : ""}</span>
       <span class="ct-meta">${t.date ? `<span class="muted small">${chatTime(t.date)}</span>` : ""}${t.unread ? `<i class="ct-unread">${t.unread}</i>` : ""}</span></button>`;
   const group = (label, list, isLeague) => (list.length ? `<div class="ct-group">${label}</div>${list.map((t) => row(t, isLeague)).join("")}` : "");
   chatShell(`${head()}
     <div class="ct-list">${group("League chat", league, true)}${group("Matchup opponent", vsOpp)}${group("All chats", rest)}
       ${!d.topics.length ? `<p class="muted">No chats yet.</p>` : ""}</div>
-    <button type="button" class="ct-new" id="ct-new" title="New chat" aria-label="New chat">✎</button>`);
+    <button type="button" class="ct-new" id="ct-new" title="New chat" aria-label="New chat">${ic("pencil")}</button>`);
   $("pl-modal-body").querySelectorAll("[data-topic]").forEach((b) => b.addEventListener("click", () => {
     const t = d.topics.find((x) => x.id === b.dataset.topic);
     openChatTopic(t, d);
@@ -3344,10 +3386,10 @@ async function openNotifications() {
   const ios = /iPhone|iPad|iPod/.test(navigator.userAgent);
   const standalone = matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
   const supported = "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
-  const head = `<div class="pm-head"><h2 id="pl-modal-title">🔔 Notifications</h2></div>`;
+  const head = `<div class="pm-head"><h2 id="pl-modal-title">${ic("bell")} Notifications</h2></div>`;
   if (state.demo) return showModal(`${head}<p class="muted">Notifications work on the real leagues, not the demo.</p>`);
   if (ios && !standalone) return showModal(`${head}<p>On iPhone, notifications only work in the home-screen app.</p>
-    <ol class="nt-steps"><li>In Safari, tap <strong>Share</strong> → <strong>Add to Home Screen</strong>.</li><li>Open the site from the new icon.</li><li>Tap the <strong>🔔 Alerts</strong> tile on the Roster tab again.</li></ol><p class="muted small">Needs iOS 16.4 or later.</p>`);
+    <ol class="nt-steps"><li>In Safari, tap <strong>Share</strong> → <strong>Add to Home Screen</strong>.</li><li>Open the site from the new icon.</li><li>Tap the <strong>bell</strong> at the top again.</li></ol><p class="muted small">Needs iOS 16.4 or later.</p>`);
   if (!supported) return showModal(`${head}<p class="muted">This browser doesn't support notifications.</p>`);
   showModal(`${head}<div class="loading small"><span class="spinner"></span> Checking…</div>`);
   const reg = await navigator.serviceWorker.ready;
@@ -3424,7 +3466,7 @@ function ensureOwner() {
 const signedInHere = () => store.get("ffb.owner") === "1";
 function updateOwnerLink() {
   const b = $("owner-btn"), on = signedInHere();
-  if (b) { b.textContent = on ? "👤 Account" : "🔑 Sign in"; b.title = on ? "Your account: other devices, sign out" : "Connect your ESPN account"; }
+  if (b) { b.innerHTML = `${ic(on ? "user" : "key")}<span class="hb-l">${on ? "Account" : "Sign in"}</span>`; b.title = on ? "Your account: other devices, sign out" : "Connect your ESPN account"; b.setAttribute("aria-label", on ? "Account" : "Sign in"); }
 }
 function openOwnerSignIn() {
   if (signedInHere()) return openAccount();
@@ -3455,7 +3497,7 @@ function openConnect() {
   const ff = /Firefox\//.test(navigator.userAgent), sf = /Safari\//.test(navigator.userAgent) && !/Chrome|Chromium|Edg\//.test(navigator.userAgent);
   let br = ff ? "firefox" : sf ? "safari" : "chrome";
   const touch = matchMedia("(pointer: coarse)").matches && !DESK.matches;
-  showModal(`<div class="pm-head"><h2 id="pl-modal-title">🔑 Connect your ESPN account</h2></div>
+  showModal(`<div class="pm-head"><h2 id="pl-modal-title">${ic("key")} Connect your ESPN account</h2></div>
     <div class="cx">
       ${touch ? `<div class="cx-code-first"><strong>On your phone?</strong> Connect on a computer first, then sign this phone in with a code.
         <form class="cx-code" id="cx-redeem"><input id="cx-code-in" autocomplete="one-time-code" autocapitalize="characters" placeholder="Code from your computer" maxlength="12"><button type="submit">Sign in</button></form><p class="cx-err" id="cx-code-err"></p></div>` : ""}
@@ -3475,8 +3517,9 @@ function openConnect() {
         <div class="cx-go"><button type="submit" class="mv-go" id="cx-btn">Connect</button><span id="cx-msg" class="small"></span></div>
       </form>
       ${touch ? "" : `<details class="cx-more"><summary>Have a code from another device?</summary><form class="cx-code" id="cx-redeem"><input id="cx-code-in" autocomplete="one-time-code" autocapitalize="characters" placeholder="8-letter code" maxlength="12"><button type="submit">Sign in</button></form><p class="cx-err" id="cx-code-err"></p></details>`}
-      <p class="cx-safe">🔒 Your ESPN sign-in is stored encrypted and only used to make changes for your own team. Other managers can't see it. Disconnect any time from Account. Signing out of ESPN on all devices also cuts the site off. It stops working when ESPN signs you out (usually after several months); then you connect again.</p>
-      <button type="button" class="linkish cx-owner" id="cx-owner">Site owner? Sign in with the passphrase</button>
+      <p class="cx-safe">${ic("lock")} Your ESPN sign-in is stored encrypted and only used to make changes for your own team. Other managers can't see it. Disconnect any time from Account. Signing out of ESPN on all devices also cuts the site off. It stops working when ESPN signs you out (usually after several months); then you connect again.</p>
+      <div class="cx-links"><a href="${esc($("espn-open")?.href || "https://fantasy.espn.com/football/")}" target="_blank" rel="noopener">${ic("external-link")} Open this league in ESPN</a>
+        <button type="button" class="linkish cx-owner" id="cx-owner">Site owner? Sign in with the passphrase</button></div>
     </div>`);
   const body = $("pl-modal-body");
   body.querySelectorAll("[data-br]").forEach((b) => b.addEventListener("click", () => {
@@ -3529,17 +3572,18 @@ async function redeemCode(code) {
 // Account: who you're signed in as, sign another device in, sign out, disconnect.
 function openAccount() {
   const o = ensureOwner(), mgr = o?.kind === "manager", t = ownerTeam();
-  showModal(`<div class="pm-head"><h2 id="pl-modal-title">👤 Your account</h2></div>
+  showModal(`<div class="pm-head"><h2 id="pl-modal-title">${ic("user")} Your account</h2></div>
     <div class="cx">
       ${o?.expired ? `<div class="banner">Your ESPN connection has run out (ESPN signed you out). Connect again to keep making changes.</div><button type="button" class="mv-go" id="ac-reconnect">Connect again</button>` : ""}
       <p>${mgr ? `Signed in as <strong>${esc(o.name || "a league manager")}</strong>` : o?.kind === "owner" ? "Signed in as the <strong>site owner</strong> (passphrase)" : "Signed in"}${t ? ` · ${teamName(t, 20)}` : ""}</p>
-      ${mgr ? `<div class="ac-block"><strong>Sign in on another device</strong><p class="small muted">Get a one-time code, then on your phone open the site, tap 🔑 Sign in, and type it (or scan the QR code with the phone's camera).</p>
+      ${mgr ? `<div class="ac-block"><strong>Sign in on another device</strong><p class="small muted">Get a one-time code, then on your phone open the site, tap the key at the top (Sign in), and type it (or scan the QR code with the phone's camera).</p>
         <button type="button" id="ac-code">Get a code</button><div id="ac-code-out"></div></div>` : ""}
       ${mgr ? "" : `<div class="ac-block"><strong>Connect your own ESPN account</strong><p class="small muted">Changes then go to ESPN as you, and you can sign your phone in with a code instead of the passphrase.</p>
         <button type="button" id="ac-connect">Connect ESPN</button></div>`}
       <div class="ac-actions"><button type="button" id="ac-out">Sign out on this device</button>
         ${mgr ? `<button type="button" class="ac-danger" id="ac-disc">Disconnect ESPN</button>` : ""}</div>
       ${mgr ? `<p class="small muted">Disconnect deletes your saved ESPN sign-in from the site and signs out every device.</p>` : ""}
+      <div class="cx-links"><a href="${esc($("espn-open")?.href || "https://fantasy.espn.com/football/")}" target="_blank" rel="noopener">${ic("external-link")} Open your team in ESPN</a></div>
     </div>`);
   $("ac-reconnect")?.addEventListener("click", openConnect);
   $("ac-connect")?.addEventListener("click", openConnect);
@@ -3737,7 +3781,7 @@ const WAIVER_FAIL = {
 };
 const failText = (s) => WAIVER_FAIL[s] || (s || "").replace(/^FAILED_?/, "").toLowerCase().replace(/^./, (x) => x.toUpperCase()) || "Not processed";
 async function openWaiverRun(at) {
-  const title = `<div class="pm-head"><h2 id="pl-modal-title">📋 Waiver results</h2></div>`;
+  const title = `<div class="pm-head"><h2 id="pl-modal-title">${ic("list-numbers")} Waiver results</h2></div>`;
   showModal(`${title}<div class="loading small"><span class="spinner"></span> Loading from ESPN…</div>`);
   let d;
   try {
@@ -3758,7 +3802,7 @@ async function openWaiverRun(at) {
       <span class="wr-st">${won ? `<span class="pos">✓ Won</span>` : `<span class="neg">✗ ${esc(failText(c.status))}</span>`}</span></div>`;
   }).join("");
   const won = d.claims.filter((c) => c.status === "EXECUTED").length;
-  showModal(`<div class="pm-head"><div><h2 id="pl-modal-title">📋 Waiver results</h2><div class="muted small">${d.at ? fmtWhen(d.at) : ""}${d.claims.length ? ` · ${won} won${d.owner ? ` · ${d.claims.length - won} missed` : ""}` : ""}</div></div></div>
+  showModal(`<div class="pm-head"><div><h2 id="pl-modal-title">${ic("list-numbers")} Waiver results</h2><div class="muted small">${d.at ? fmtWhen(d.at) : ""}${d.claims.length ? ` · ${won} won${d.owner ? ` · ${d.claims.length - won} missed` : ""}` : ""}</div></div></div>
     ${d.claims.length ? `<p class="muted small">In the order ESPN processed them.</p><div class="wr-list">${rows}</div>` : `<p class="muted">No processed claims found for that run.</p>`}
     ${d.hidden ? `<p class="muted small">${d.hidden} claim${d.hidden === 1 ? "" : "s"} that didn't go through ${d.hidden === 1 ? "is" : "are"} hidden. Sign in to see yours.</p>` : ""}`);
 }
@@ -3877,7 +3921,7 @@ function paintPickBar(note) {
     bar.addEventListener("click", (e) => { if (e.target.closest("[data-pick-cancel]")) endPick(); });
     document.body.appendChild(bar);
   }
-  bar.innerHTML = `<span class="cb-ico">⚖</span><span class="cb-text"><strong>Compare with ${esc(c.name)}</strong><span class="cb-sub">${esc(note || [c.pos, c.team].filter(Boolean).join(" · ") + " · tap any player to compare")}</span></span><button type="button" class="cb-x" data-pick-cancel aria-label="Cancel comparing">×</button>`;
+  bar.innerHTML = `<span class="cb-ico">${ic("scale")}</span><span class="cb-text"><strong>Compare with ${esc(c.name)}</strong><span class="cb-sub">${esc(note || [c.pos, c.team].filter(Boolean).join(" · ") + " · tap any player to compare")}</span></span><button type="button" class="cb-x" data-pick-cancel aria-label="Cancel comparing">×</button>`;
 }
 async function finishPick(pickId) {
   const c = state.cmpPick;
@@ -3895,9 +3939,9 @@ const cmpWeek = () => ensureCurrentRosters() || state.weekCache?.[state.base.cur
 function openComparePicker(baseId) {
   const wk = cmpWeek(), me = cmpMe(), side = wk?.sides?.find((x) => String(x.teamId) === me);
   const name = state.playerCache?.[baseId]?.data?.player?.name || "this player";
-  const head = `<div class="pm-head"><div><h2 id="cmp-title">⚖ Compare ${esc(name)}</h2><div class="muted small">Pick a player from your roster, or</div></div></div>
-    <button type="button" class="cmp-other" data-cmp-other="${esc(baseId)}">🔍 Compare other <span class="muted small">pick any player from another screen</span></button>`;
-  if (!side) return showCmp(`${head}<p class="muted">Star your team (☆ on the Roster tab) or sign in as owner so I know which roster is yours.</p>`);
+  const head = `<div class="pm-head"><div><h2 id="cmp-title">${ic("scale")} Compare ${esc(name)}</h2><div class="muted small">Pick a player from your roster, or</div></div></div>
+    <button type="button" class="cmp-other" data-cmp-other="${esc(baseId)}">${ic("search")} Compare other <span class="muted small">pick any player from another screen</span></button>`;
+  if (!side) return showCmp(`${head}<p class="muted">Star your team (☆ on the Roster tab) or sign in so the site knows which roster is yours.</p>`);
   const row = (p) => `<button type="button" class="cmp-pick" data-cmp-pick="${esc(p.id)}"><span class="sp ro">${p.slotId === BENCH ? "BE" : esc(SLOT[p.slotId] || p.slot)}</span>${headshot(p, 32)}
       <span class="cp-main"><strong>${esc(p.name)}</strong><span class="muted small">${esc(p.pos)} · ${esc(PRO[p.proId] || "")}${injBadge(p)}</span></span>
       <span class="cp-nums"><b>${f1(p.proj)}</b><small>${p.seasonAvg != null ? `${f1(p.seasonAvg)} ppg` : "proj"}</small></span></button>`;
@@ -3962,7 +4006,7 @@ async function openCompare(ids) {
   ids = [...new Set(ids.map(String))].slice(0, 3);
   if (wideStage() && ids.length === 2) return openStage(ids);
   state.cmpIds = ids;
-  showCmp(`<div class="pm-head"><h2 id="cmp-title">⚖ Compare players</h2></div><div class="loading small"><span class="spinner"></span> Loading their seasons…</div>`);
+  showCmp(`<div class="pm-head"><h2 id="cmp-title">${ic("scale")} Compare players</h2></div><div class="loading small"><span class="spinner"></span> Loading their seasons…</div>`);
   ensureValues(); ensureUsage();
   const cache = (state.playerCache ||= {});
   await Promise.all(ids.map(async (id) => {
@@ -4087,7 +4131,7 @@ function renderCompare(ids, target) {
       const me2 = wk?.sides?.find((sd) => String(sd.teamId) === me)?.players.find((p) => String(p.id) === m.id);
       return `<div class="cmp-v"><div class="cmp-vh">${esc(m.name)} <span class="muted small">is on your team</span></div><p class="small">${me2 ? (me2.starter ? `Starting at ${esc(SLOT[me2.slotId] || me2.slot)}.` : me2.slotId === IR ? "On your IR." : "On your bench.") : ""}</p></div>`;
     }
-    if (!f) return `<div class="cmp-v"><div class="cmp-vh">${esc(m.name)}</div><p class="muted small">Star your team (☆ on the Roster tab) or sign in as owner to see how he'd fit your lineup.</p></div>`;
+    if (!f) return `<div class="cmp-v"><div class="cmp-vh">${esc(m.name)}</div><p class="muted small">Star your team (☆ on the Roster tab) or sign in to see how he'd fit your lineup.</p></div>`;
     const [label, cls] = grade(f.gain), x = m;
     const lines = [];
     lines.push(f.slot != null && f.displaced ? `Would start at <strong>${esc(SLOT[f.slot])}</strong> over ${plinkNm(f.displaced, false)} (${f1(f.displaced.proj)} proj): <strong class="${cls}">+${f1(f.gain)} pts a week</strong>.`
@@ -4114,7 +4158,7 @@ function renderCompare(ids, target) {
     ? `${esc(best[0].m.name)} is the better fit for your lineup (+${f1(best[0].f.gain)} vs +${f1(best[1].f.gain)} pts a week).`
     : best.length > 1 ? `They'd help your lineup about the same (+${f1(best[0].f.gain)} and +${f1(best[1].f.gain)} pts a week).`
     : `${esc(best[0].m.name)}: ${grade(best[0].f.gain)[0].toLowerCase()} for your lineup (+${f1(best[0].f.gain)} pts a week).`;
-  put(`<div class="pm-head"><div><h2 id="cmp-title">⚖ Compare players</h2>${bottom ? `<div class="cmp-bottom">${bottom}</div>` : ""}<button type="button" class="cmp-other sm" data-cmp-other="${esc(ids[0])}">Compare other</button></div></div>
+  put(`<div class="pm-head"><div><h2 id="cmp-title">${ic("scale")} Compare players</h2>${bottom ? `<div class="cmp-bottom">${bottom}</div>` : ""}<button type="button" class="cmp-other sm" data-cmp-other="${esc(ids[0])}">Compare other</button></div></div>
     <h3 class="pm-sub">Fit with your team</h3><div class="cmp-vs cols-${cols}">${verdicts}</div>
     <h3 class="pm-sub">Season</h3><div class="table-wrap"><table class="cmp-table"><thead>${head}</thead><tbody>${season}</tbody></table></div>
     <h3 class="pm-sub">Week by week</h3><div class="table-wrap">${weekly}</div>
@@ -4142,7 +4186,7 @@ function renderCompare(ids, target) {
 // this week (byes, injuries), whether he'd start for them, and how their group at that spot compares
 // with the rest of the league. An estimate, not a promise.
 const claimOddsBtn = (p) => (faData()?.players?.find((x) => String(x.id) === String(p.id))?.status === "W"
-  ? `<button type="button" class="odds-btn" data-wvodds="${esc(p.id)}">📊 Claim odds</button>` : "");
+  ? `<button type="button" class="odds-btn" data-wvodds="${esc(p.id)}">${ic("chart-bar")} Claim odds</button>` : "");
 document.addEventListener("click", (e) => { const b = e.target.closest("[data-wvodds]"); if (b) openClaimOdds(b.dataset.wvodds); });
 function claimOdds(p) {
   const pos = p.pos || POS[p.posId] || "";
@@ -4184,7 +4228,7 @@ function openClaimOdds(id) {
   state.oddsFor = String(id);
   const p = faData()?.players?.find((x) => String(x.id) === String(id));
   const pos = p ? p.pos || POS[p.posId] || "" : "";
-  const head = `<div class="ct-head"><button type="button" class="ct-back" id="odds-back" aria-label="Back to the player">‹</button><div><h2 id="pl-modal-title">📊 Claim odds</h2>
+  const head = `<div class="ct-head"><button type="button" class="ct-back" id="odds-back" aria-label="Back to the player">‹</button><div><h2 id="pl-modal-title">${ic("chart-bar")} Claim odds</h2>
     ${p ? `<div class="muted small">${esc(p.name)} · ${esc(pos)} · proj ${f1(p.proj)}${p.waiverDate ? ` · clears ${fmtWhen(p.waiverDate)}` : ""}</div>` : ""}</div></div>`;
   const back = () => $("odds-back")?.addEventListener("click", () => { state.oddsFor = null; openPlayer(id); });
   if (!p) { showModal(`${head}<p class="muted">He isn't on waivers anymore.</p>`); back(); return; }
@@ -4559,7 +4603,7 @@ function ensureWeather(sp = state.week?.sp) {
 }
 const wxGame = (proId, sp = state.week?.sp) => { const d = state.weather?.[sp]; return d && d !== "loading" ? d.byPro?.[proId] || null : null; };
 
-const wxIcon = (code) => (code >= 95 ? "⛈️" : (code >= 71 && code <= 77) || code >= 85 ? "🌨️" : code >= 51 ? "🌧️" : code >= 45 ? "🌫️" : code === 3 ? "☁️" : code >= 1 ? "⛅" : "☀️");
+const wxIcon = (code) => ic(code >= 95 ? "cloud-storm" : (code >= 71 && code <= 77) || code >= 85 ? "snowflake" : code >= 51 ? "cloud-rain" : code >= 45 ? "cloud-fog" : code >= 2 ? "cloud" : code >= 1 ? "sun-high" : "sun");
 const deg = (n) => `${Math.round(n)}°`;
 // Is the roof (fixed or a closed retractable one) keeping the weather out?
 const wxIndoors = (g) => g.roof === "dome" || /closed/.test(g.roofCall?.call || "");
@@ -4576,20 +4620,20 @@ function wxTip(g) {
 function wxChip(proId, liveState, compact = false) {
   const g = wxGame(proId);
   if (!g || g.state === "post" || liveState === "post") return "";
-  if (wxIndoors(g)) return `<span class="wx wx-in" data-tip="${wxTip(g)}">🏟️</span>`;
+  if (wxIndoors(g)) return `<span class="wx wx-in" data-tip="${wxTip(g)}">${ic("building-stadium")}</span>`;
   const f = g.forecast;
   if (!f) return "";
-  if (compact) return `<span class="wx ${f.precipProb >= 50 ? "wx-wet" : ""}" data-tip="${wxTip(g)}">${wxIcon(f.code)}${f.windMph >= 15 ? "💨" : ""}</span>`;
-  return `<span class="wx ${f.precipProb >= 50 ? "wx-wet" : ""}" data-tip="${wxTip(g)}">${wxIcon(f.code)} ${f.precipProb}%${f.windMph >= 15 ? " 💨" : ""}</span>`;
+  if (compact) return `<span class="wx ${f.precipProb >= 50 ? "wx-wet" : ""}" data-tip="${wxTip(g)}">${wxIcon(f.code)}${f.windMph >= 15 ? ic("wind") : ""}</span>`;
+  return `<span class="wx ${f.precipProb >= 50 ? "wx-wet" : ""}" data-tip="${wxTip(g)}">${wxIcon(f.code)} ${f.precipProb}%${f.windMph >= 15 ? ` ${ic("wind")}` : ""}</span>`;
 }
 // One-line summary for a game card on the Live games tab.
 function wxLine(g) {
   if (!g || g.state === "post") return "";
   const f = g.forecast;
-  if (g.roof === "dome") return `<div class="g-wx" data-tip="${wxTip(g)}">🏟️ <strong>Indoors</strong> <span class="muted">· ${esc(g.venue)}</span></div>`;
+  if (g.roof === "dome") return `<div class="g-wx" data-tip="${wxTip(g)}">${ic("building-stadium")} <strong>Indoors</strong> <span class="muted">· ${esc(g.venue)}</span></div>`;
   const roof = g.roof === "retractable"
     ? `<span class="wx-roof ${wxIndoors(g) ? "closed" : ""}">Retractable roof${g.roofCall?.call ? `: ${esc(g.roofCall.call)}` : ""}</span>` : "";
-  if (wxIndoors(g)) return `<div class="g-wx" data-tip="${wxTip(g)}">🏟️ ${roof} <span class="muted">· ${esc(g.roofCall?.why || "")}</span></div>`;
+  if (wxIndoors(g)) return `<div class="g-wx" data-tip="${wxTip(g)}">${ic("building-stadium")} ${roof} <span class="muted">· ${esc(g.roofCall?.why || "")}</span></div>`;
   if (!f) return `<div class="g-wx muted">${roof || "Outdoors"} · forecast closer to kickoff</div>`;
   return `<div class="g-wx" data-tip="${wxTip(g)}">${wxIcon(f.code)} <strong>${esc(f.desc)} ${deg(f.tempF)}</strong>
     <span class="${f.precipProb >= 50 ? "wx-wet" : ""}">· ${f.precipProb}% precip</span> · wind ${Math.round(f.windMph)} mph${f.gustMph >= 25 ? ` (gusts ${Math.round(f.gustMph)})` : ""}${roof ? ` · ${roof}` : ""}</div>`;
@@ -4637,7 +4681,7 @@ const depthOut = (x) => /out|reserve|suspen|doubtful|pup|physically/i.test(x?.[2
 
 // The Injury Report, as a popup over the Players tab.
 function openInjuryReport() {
-  showModal(`<div class="pm-head"><h2 id="pl-modal-title">🩺 Injury Report</h2></div><div class="inj-pop"></div>`);
+  showModal(`<div class="pm-head"><h2 id="pl-modal-title">${ic("first-aid-kit")} Injury Report</h2></div><div class="inj-pop"></div>`);
   $("pl-modal").querySelector(".modal-card").classList.add("pm-full");
   const el = $("pl-modal-body").querySelector(".inj-pop");
   const draw = () => { if (el.isConnected) renderInjuries(el, draw); };
@@ -5835,7 +5879,7 @@ function renderPlayerModal(d, focusSp, ctx) {
       ${headshot({ id: p.id, name: p.name, posId: p.posId, proId: p.proId }, 64)}
       <div><h2 id="pl-modal-title">${esc(p.name)}${injBadge({ injury: p.injury })}</h2>
         <div class="muted small">${pos}${p.proId ? ` · ${esc(PRO[p.proId] || "")}` : ""}${p.bye ? ` · Bye wk ${p.bye}` : ""}</div>
-        <div class="pm-owner">${owner}</div><div class="pm-acts">${moveBtns({ id: p.id, name: p.name, posId: p.posId, proId: p.proId }, true) + claimOddsBtn(p) + watchBox(p.id, " 👁")}<button type="button" class="cmp-btn" data-compare>⚖ Compare</button></div></div>
+        <div class="pm-owner">${owner}</div><div class="pm-acts">${moveBtns({ id: p.id, name: p.name, posId: p.posId, proId: p.proId }, true) + claimOddsBtn(p) + watchBox(p.id, ` ${ic("eye")}`)}<button type="button" class="cmp-btn" data-compare>${ic("scale")} Compare</button></div></div>
     </div>
     <div class="pm-tabs-wrap"><div class="pm-tabs" role="tablist">${tabs.map(([k, label]) => `<button type="button" role="tab" data-pmtab="${k}" aria-selected="${k === tab}" class="${k === tab ? "active" : ""}">${label}</button>`).join("")}</div>
       <button type="button" class="pm-more" aria-label="More tabs" hidden>»</button></div>
