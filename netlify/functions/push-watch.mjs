@@ -35,7 +35,8 @@ const short = (name = "") => { const p = name.split(" "); return /D\/ST$/.test(n
 const keepLast = (arr, n = 400) => arr.slice(-n);
 
 async function getJson(url, headers = {}) {
-  const res = await fetch(url, { headers: { accept: "application/json", "user-agent": "Mozilla/5.0 (fantasy-dashboard)", ...headers } });
+  // ESPN's public NFL API refuses Netlify requests that claim to be a browser, so say who's asking.
+  const res = await fetch(url, { headers: { accept: "application/json", "user-agent": "brownleague.netlify.app (private fantasy league site)", ...headers } });
   if (!res.ok) throw new Error(`${url} returned ${res.status}`);
   return res.json();
 }
@@ -323,10 +324,10 @@ export default async () => {
   if (schedMem && minute % step(schedMem) !== 0) return;
   const s = store();
   // NFL schedule: refreshed every 15 minutes, or every minute while a game is on or about to start.
-  let sched = await s.get("sched", { type: "json" }).catch(() => null);
+  let sched = await s.get("sched", { type: "json" }).catch(() => null), schedErr = null;
   const near = (x) => x?.games?.some((g) => g.state === "in" || (g.state === "pre" && now >= g.date - 3 * 60e3 && now <= g.date + 6 * 3600e3));
   if (!sched || now - sched.at > 15 * 60e3 || near(sched)) {
-    try { sched = await loadSchedule(); await s.setJSON("sched", sched); } catch { /* keep the old copy */ }
+    try { sched = await loadSchedule(); await s.setJSON("sched", sched); } catch (e) { schedErr = e.message; /* keep the old copy */ }
   }
   schedMem = sched;
   if (minute % step(sched) !== 0) return;
@@ -334,7 +335,8 @@ export default async () => {
   const lineupTime = ct.day === "Sun" && ct.hour === 10 && ct.minute >= 30 && ct.minute < 45;
   // Around games: news every 5 minutes, the rest every 10. Otherwise everything on each (10- or 30-minute) run.
   const doInjuries = !busy || minute % 10 === 0, doNews = !busy || minute % 5 === 0, doTx = !busy || minute % 10 === 0;
-  await s.setJSON("beat", { at: now, live }).catch(() => {}); // proof the schedule is running
+  // Proof the schedule is running, and how fresh its copy of the NFL schedule is.
+  await s.setJSON("beat", { at: now, live, schedAt: sched?.at || null, schedErr }).catch(() => {});
   if (!live && !doInjuries && !doNews && !doTx && !lineupTime) return;
 
   const subs = await allSubs();

@@ -20,8 +20,11 @@ function json(status, body, extraHeaders = {}) {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", ...extraHeaders } });
 }
 
+// ESPN's public NFL API (scoreboard, play-by-play) refuses requests from Netlify's servers that claim to be a
+// browser ("Mozilla/5.0 …"), so those say plainly who's asking; the fantasy API is fine either way.
+const SITE_UA = "brownleague.netlify.app (private fantasy league site)";
 async function getJson(url, { fantasy = false, headers = {} } = {}) {
-  const h = { accept: "application/json", "user-agent": "Mozilla/5.0 (fantasy-dashboard)", ...headers };
+  const h = { accept: "application/json", "user-agent": fantasy ? "Mozilla/5.0 (fantasy-dashboard)" : SITE_UA, ...headers };
   if (fantasy && process.env.ESPN_S2 && process.env.SWID) h.cookie = `espn_s2=${process.env.ESPN_S2}; SWID=${process.env.SWID}`;
   const res = await fetch(url, { headers: h });
   if (!res.ok) throw new Error(`${url} returned ${res.status}`);
@@ -189,8 +192,9 @@ export default async (req) => {
       "cache-control": `public, max-age=${anyLive ? 15 : 60}`,
       "netlify-cdn-cache-control": `public, max-age=${anyLive ? 20 : 120}`,
     });
-  } catch {
-    return json(502, { error: "upstream", message: "Couldn't load live game data from ESPN." });
+  } catch (err) {
+    console.log(JSON.stringify({ event: "live_error", message: err?.message || String(err) }));
+    return json(502, { error: "upstream", message: "Couldn't load live game data from ESPN.", detail: String(err?.message || "").replace(/https?:\/\/\S+/g, "").trim() });
   }
 };
 

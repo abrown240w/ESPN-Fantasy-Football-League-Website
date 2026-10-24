@@ -1,9 +1,12 @@
-// Weekly snap counts and targets for offensive skill players, from nflverse
+// Weekly snap counts, targets and red-zone usage for offensive skill players, from nflverse
 // (https://github.com/nflverse/nflverse-data, CC BY 4.0: pages that show this data credit nflverse).
 // nflverse publishes season files on GitHub, usually refreshed the day after games. This joins
 // the snap counts (Pro Football Reference IDs) and weekly stats (NFL GSIS IDs) to ESPN player IDs
-// using nflverse's player list. Netlify's shared CDN cache keeps the result for a few hours, so
-// GitHub is only called a few times a day however many people visit.
+// using nflverse's player list. Red-zone usage (plays snapped inside the opponent's 20, two-point tries
+// left out) is counted from nflverse's play-by-play. Netlify's shared CDN cache keeps the result for a
+// few hours, so GitHub is only called a few times a day however many people visit.
+
+import { gunzipSync } from "node:zlib";
 
 const RELEASES = "https://github.com/nflverse/nflverse-data/releases/download";
 const SKILL = new Set(["QB", "RB", "FB", "WR", "TE"]);
@@ -45,32 +48,34 @@ function* rows(text, cols) {
   }
 }
 
-async function getText(url, allow404 = false) {
+async function getText(url, allow404 = false, gz = false) {
   const res = await fetch(url, { headers: { "user-agent": "brownleague.netlify.app (private fantasy league site)" } });
   if (allow404 && res.status === 404) return null;
   if (!res.ok) throw new Error(`${url} returned ${res.status}`);
-  return res.text();
+  return gz ? gunzipSync(Buffer.from(await res.arrayBuffer())).toString("utf8") : res.text();
 }
 
 export default async (req) => {
   const season = new URL(req.url).searchParams.get("season") || String(defaultSeason());
   if (!/^\d{4}$/.test(season)) return json(400, { error: "bad_request", message: "Invalid season." });
 
-  let snapsCsv, statsCsv, playersCsv;
+  let snapsCsv, statsCsv, playersCsv, pbpCsv;
   try {
-    [snapsCsv, statsCsv, playersCsv] = await Promise.all([
+    [snapsCsv, statsCsv, playersCsv, pbpCsv] = await Promise.all([
       getText(`${RELEASES}/snap_counts/snap_counts_${season}.csv`, true),
       getText(`${RELEASES}/stats_player/stats_player_week_${season}.csv`, true),
       getText(`${RELEASES}/players/players.csv`),
+      // Red zone is extra: if the play-by-play can't be read, everything else still loads.
+      getText(`${RELEASES}/pbp/play_by_play_${season}.csv.gz`, true, true).catch(() => null),
     ]);
   } catch {
     return json(502, { error: "upstream", message: "Couldn't load snap counts from nflverse." }, { "cache-control": "no-store" });
   }
 
   const fixTeam = (t) => TEAM_FIX[t] || t;
-  const teams = {};   // team -> week -> [offensiveSnaps, targets, rushingAttempts]
+  const teams = {};   // team -> week -> [offensiveSnaps, targets, rushingAttempts, redZoneTargets, redZoneCarries]
   const byKey = {};   // "pfr:ID" / "gsis:ID" -> player record
-  const teamWeek = (t, wk) => ((teams[t] ||= {})[wk] ||= [0, 0, 0]);
+  const teamWeek = (t, wk) => ((teams[t] ||= {})[wk] ||= [0, 0, 0, 0, 0]);
 
   // Snap counts (regular season, offense).
   const snapRows = [];
@@ -97,8 +102,26 @@ export default async (req) => {
     }
   }
 
+  // Red zone, from the play-by-play: each player's targets, carries, touches inside the 10, TDs and (QBs)
+  // pass attempts on plays snapped at the opponent's 20 or closer. Team totals give each player's share.
+  const rz = new Map(); // gsis -> week -> [targets, carries, inside10, tds, passAttempts, team]
+  if (pbpCsv) {
+    const cols = ["season_type", "week", "posteam", "yardline_100", "play_type", "two_point_attempt", "pass_attempt", "receiver_player_id", "rusher_player_id", "passer_player_id", "td_player_id"];
+    const bump = (id, wk, t, i) => { if (!id) return; const w = ((rz.get(id) || rz.set(id, {}).get(id))[wk] ||= [0, 0, 0, 0, 0, t]); w[i]++; return w; };
+    for (const [type, wk, team, yl, kind, two, passAtt, rec, rush, passer, td] of rows(pbpCsv, cols)) {
+      if (type !== "REG" || two === "1" || (kind !== "pass" && kind !== "run")) continue;
+      const y = Number(yl);
+      if (!(y > 0 && y <= 20)) continue;
+      const t = fixTeam(team), tw = teamWeek(t, wk), in10 = y <= 10;
+      if (kind === "pass" && passAtt === "1") bump(passer, wk, t, 4);
+      if (rec) { tw[3]++; const w = bump(rec, wk, t, 0); if (in10) w[2]++; }
+      if (rush) { tw[4]++; const w = bump(rush, wk, t, 1); if (in10) w[2]++; }
+      if (td && (td === rec || td === rush)) bump(td, wk, t, 3);
+    }
+  }
+
   // nflverse player list: link PFR and GSIS IDs to each other and to ESPN.
-  const needPfr = new Set(snapRows.map((r) => r.pfr)), needGsis = new Set(tgtRows.map((r) => r.gsis));
+  const needPfr = new Set(snapRows.map((r) => r.pfr)), needGsis = new Set([...tgtRows.map((r) => r.gsis), ...rz.keys()]);
   const pfrTo = new Map(), gsisTo = new Map();
   for (const [gsis, pfr, espn, name] of rows(playersCsv, ["gsis_id", "pfr_id", "espn_id", "display_name"])) {
     if (!needPfr.has(pfr) && !needGsis.has(gsis)) continue;
@@ -120,9 +143,12 @@ export default async (req) => {
     const pl = playerFor(link?.pfr ? `p${link.pfr}` : `g${r.gsis}`, r.name, r.pos, link);
     const w = (pl.w[r.wk] ||= [0, 0, 0, r.t, 0]);
     w[2] = r.n; w[4] = r.c;
+    const z = rz.get(r.gsis)?.[r.wk];
+    if (z) w[5] = z.slice(0, 5); // [rz targets, rz carries, inside-10 touches, rz TDs, rz pass attempts]
   }
 
-  // players: [id (ESPN ID, or a text key when there's no ESPN match), name, position, { week: [snaps, snap%, targets, team, carries] }]
+  // players: [id (ESPN ID, or a text key when there's no ESPN match), name, position,
+  //           { week: [snaps, snap%, targets, team, carries, rz?: [targets, carries, inside10, tds, passAttempts]] }]
   const players = Object.values(byKey).map((p) => [p.id, p.name, p.pos, p.w]);
   const weeks = [...new Set(Object.values(teams).flatMap((t) => Object.keys(t)))].map(Number).sort((a, b) => a - b);
   return json(200, { season: Number(season), updated: Date.now(), weeks, teams, players }, {

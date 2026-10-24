@@ -463,7 +463,7 @@
     for (const id of Object.keys(PRO_IDS)) {
       const t = abbr(Number(id));
       teams[t] = {};
-      for (const wk of weeks) if (Number(id) % 13 !== wk) teams[t][wk] = [58 + Math.round(noise(Number(id), wk) * 18), 0, 0];
+      for (const wk of weeks) if (Number(id) % 13 !== wk) teams[t][wk] = [58 + Math.round(noise(Number(id), wk) * 18), 0, 0, 0, 0];
     }
     const players = people.map((p) => {
       const t = abbr(p.proId), w = {};
@@ -481,12 +481,15 @@
         const att = p.pos === "RB" ? Math.round((pct / 100) * 20 * (0.6 + n)) : p.pos === "QB" ? Math.round(n * 6) : 0;
         tw[1] += tgt;
         tw[2] += att;
-        w[wk] = [Math.round((tw[0] * pct) / 100), pct, tgt, t, att];
+        // Red zone: roughly one in six targets and one in five carries happen inside the 20.
+        const rzT = Math.round(tgt * (0.1 + n * 0.15)), rzC = Math.round(att * (0.12 + n * 0.18));
+        tw[3] += rzT; tw[4] += rzC;
+        w[wk] = [Math.round((tw[0] * pct) / 100), pct, tgt, t, att, [rzT, rzC, Math.round((rzT + rzC) * 0.5), n > 0.8 && rzT + rzC ? 1 : 0, p.pos === "QB" ? Math.round(n * 7) : 0]];
       }
       return [p.id, p.name, p.pos, w];
     });
     // Unrostered teammates soak up the rest of each team's targets and carries.
-    for (const t of Object.keys(teams)) for (const wk of weeks) if (teams[t][wk]) { teams[t][wk][1] += 18 + Math.round(noise(t.length * 7 + t.charCodeAt(0), wk) * 10); teams[t][wk][2] += 3 + Math.round(noise(t.charCodeAt(0), wk) * 5); }
+    for (const t of Object.keys(teams)) for (const wk of weeks) if (teams[t][wk]) { teams[t][wk][1] += 18 + Math.round(noise(t.length * 7 + t.charCodeAt(0), wk) * 10); teams[t][wk][2] += 3 + Math.round(noise(t.charCodeAt(0), wk) * 5); teams[t][wk][3] += 2; teams[t][wk][4] += 1; }
     return { season: SEASON, updated: Date.now(), weeks, teams, players };
   }
   const PRO_IDS = Object.fromEntries([...Array(30).keys()].map((i) => [i + 1, 1]).concat([[33, 1], [34, 1]]));

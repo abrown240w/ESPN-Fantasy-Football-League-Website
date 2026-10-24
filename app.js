@@ -938,7 +938,7 @@ function renderPlayers() {
     const rows = pool.filter((p) => (f.pos === "ALL" || p.pos === f.pos) && (!f.nfl || f.nfl === "ALL" || PRO[p.proId] === f.nfl) && (!q || p.name.toLowerCase().includes(q))
       && (inj === "all" || (inj === "injured") === hurt(p)));
     if (inj === "healthy" && f.sort.key.startsWith("inj_")) f.sort = { key: "proj", dir: -1 };
-    drawPlayerTable($("pl-list"), ["player", ...(actTeam() ? ["act"] : []), ...(W ? ["watch"] : []), "pos", "opp", "proj", "pts", "ppg", "seasonPts", "own", "snap", "tgt", "rush", "pprRank", "posRank", "value", ...(inj === "healthy" ? [] : injCols)], rows, f.sort, w.sp,
+    drawPlayerTable($("pl-list"), ["player", ...(actTeam() ? ["act"] : []), ...(W ? ["watch"] : []), "pos", "opp", "proj", "pts", "ppg", "seasonPts", "own", "snap", "tgt", "rush", "rz", "pprRank", "posRank", "value", ...(inj === "healthy" ? [] : injCols)], rows, f.sort, w.sp,
       desk && inj !== "all" && !D ? "Loading the injury report…" : "No players match those filters.");
   };
   $("pl-q").addEventListener("input", (e) => { f.q = e.target.value; draw(); });
@@ -1406,6 +1406,7 @@ const PCOLS = {
   snap: { key: "snap", label: "Snap %", title: "Season share of the team's offensive snaps (last game underneath)", num: true, render: snapCell, sort: (p) => { const u = usageOf(p.id); return u ? u.avg?.pct ?? u.last.pct : null; } },
   tgt: { key: "tgt", label: "Tgt %", title: "Season share of the team's targets (last game underneath)", num: true, render: tgtCell, sort: (p) => { const u = usageOf(p.id); return u && u.pos !== "QB" ? u.avg?.share ?? u.last.share : null; } },
   rush: { key: "rush", label: "Rush %", title: "Season share of the team's carries (last game underneath)", num: true, render: rushCell, sort: (p) => { const u = usageOf(p.id); return u ? u.avg?.rush ?? u.last.rush : null; } },
+  rz: { key: "rz", label: "RZ %", title: "Season share of the team's red-zone targets and carries, inside the opponent's 20 (last game underneath)", num: true, render: rzCell, sort: (p) => { const u = usageOf(p.id); return u && u.pos !== "QB" ? u.avg?.rz ?? u.last.rz : null; } },
   value: { key: "value", label: "Value", title: "FantasyCalc trade value", num: true, render: (p) => valueCell(p.id), sort: (p) => valueOf(p.id) },
   act: { key: "", label: "", cls: "pt-act", render: (p) => moveBtns(p) },
   watch: { key: "", label: "👁", cls: "pt-watch", title: "Your ESPN watch list", render: (p) => watchBox(p.id) },
@@ -2703,11 +2704,11 @@ function upgradesFor(p, fa) {
 function erDeskCells(p) {
   const dash = `<span class="muted">–</span>`;
   const c = (val, sub = "", cls = "") => `<div class="erc ${cls}">${val}${sub ? `<small>${sub}</small>` : ""}</div>`;
-  const u = usageOf(p.id), r = p.opp?.rank, v = valueOf(p.id);
+  const u = usageOf(p.id), v = valueOf(p.id);
   const last = (k) => (u ? `last ${pctTxt(u.last[k])}` : "");
   return [
     c(p.played ? ptsLink(p.id, state.week.sp, f2(p.actual)) : dash, f1(p.proj)),
-    c(r ? `<span class="rk ${rkCls(r)}">${ordinal(r)}</span>` : dash, "", "erc-g"),
+    c(p.pprRank ? `${esc(p.pos)}${Math.round(p.pprRank)}` : dash, "", "erc-g"),
     c(p.posRank ? `${esc(p.pos)}${p.posRank}` : dash),
     c(p.seasonAvg != null ? f1(p.seasonAvg) : dash),
     c(p.seasonPts != null ? f1(p.seasonPts) : dash),
@@ -2717,15 +2718,17 @@ function erDeskCells(p) {
     c(u ? pctTxt(u.avg?.pct ?? u.last.pct) : dash, last("pct"), "erc-g"),
     c(u && u.pos !== "QB" ? pctTxt(u.avg?.share ?? u.last.share) : dash, u && u.pos !== "QB" ? last("share") : ""),
     c(u ? pctTxt(u.avg?.rush ?? u.last.rush) : dash, last("rush")),
+    c(u && u.pos !== "QB" ? `<span data-tip="${rzTip(u)}">${pctTxt(u.avg?.rz ?? u.last.rz)}</span>` : dash, u && u.pos !== "QB" ? last("rz") : ""),
     c(v != null ? fmtVal(v) : dash, "", "erc-g erc-x"),
   ].join("");
 }
 function erDeskHeadCells() {
   const h = (l, tip, cls = "") => `<div class="erc ${cls}" title="${tip}">${l}</div>`;
-  return [h("Score", "Points this week over the projection"), h("Opp", "Opponent's rank against the position (1st = toughest)", "erc-g"), h("Pos rk", "Season rank at the position"),
+  return [h("Score", "Points this week over the projection"), h("PPR rk", "ESPN experts' average PPR rank this week, at the position", "erc-g"), h("Pos rk", "Season rank at the position"),
     h("PPG", "Fantasy points per game this season"), h("Tot", "Total fantasy points this season"), h("Last", "Last week's points"),
     h("%Rost", "Percent of leagues that roster him", "erc-g"), h("%Start", "Percent of leagues that start him"),
     h("Snap", "Season share of snaps (last game underneath)", "erc-g"), h("Tgt", "Season share of team targets"), h("Rush", "Season share of team carries"),
+    h("RZ", "Season share of the team's red-zone targets and carries (inside the 20)"),
     h("Value", "FantasyCalc trade value", "erc-g erc-x")].join("");
 }
 // The Starters total row: this week's score and projection, and the lineup's PPG, season and last-week points,
@@ -2736,7 +2739,7 @@ function erTotalCells(list) {
   const tot = (k) => (list.some((p) => p[k] != null) ? f1(sum(list, (p) => p[k] || 0)) : dash);
   const score = c(list.some((p) => p.played) ? f2(sum(list, (p) => p.actual || 0)) : dash, f1(sum(list, (p) => p.proj || 0)));
   if (DESK.matches) {
-    const cells = Array.from({ length: 12 }, () => null), cls = ["", "erc-g", "", "", "", "", "erc-g", "", "erc-g", "", "", "erc-g erc-x"];
+    const cells = Array.from({ length: 13 }, () => null), cls = ["", "erc-g", "", "", "", "", "erc-g", "", "erc-g", "", "", "", "erc-g erc-x"];
     cells[0] = score; cells[3] = c(tot("seasonAvg")); cells[4] = c(tot("seasonPts")); cells[5] = c(tot("lastPts"));
     return cells.map((x, i) => x || c("", "", cls[i])).join("");
   }
@@ -2755,7 +2758,7 @@ function rosterRail(sel, side) {
     const st = w.status, val = (sd) => (st === "upcoming" ? f1(sd.proj) : f2(sd.score));
     const tds = (sd) => sum(sd.starters, (p) => p.tds || 0);
     const line = (sd) => `<div class="rr-team ${String(sd.teamId) === String(sel) ? "me" : ""}">${logoImg(team(sd.teamId), 28)}<span class="rr-name">${esc(team(sd.teamId).name)}</span><strong>${val(sd)}</strong></div>`;
-    mu = `<div class="card rr-card"><div class="rr-head">Week ${w.week} matchup ${statusBadge(st)}</div>${line(m.home)}${line(m.away)}
+    mu = `<div class="card rr-card"><div class="rr-head">Week ${w.week} matchup ${statusBadge(st)}</div><div class="rr-vs">${line(m.home)}${line(m.away)}</div>
       <div class="rr-wp"><span>${pct(m.wp)}</span><span class="mt-wp"><i style="width:${m.wp * 100}%"></i></span><span>${pct(1 - m.wp)}</span></div>
       <div class="rr-sub muted small">${tds(m.home)} TD – ${tds(m.away)} TD</div>
       <button type="button" class="pg-go" data-rr-mu="${m.id}">Open the matchup ›</button></div>`;
@@ -2834,7 +2837,8 @@ function erCols(p, v = erView()) {
   if (v === "usage") {
     const u = usageOf(p.id);
     const avg = (k) => pctTxt(u.avg?.[k] ?? u.last[k]), last = (k) => `last ${pctTxt(u.last[k])}`;
-    return [c(u ? avg("pct") : dash, u ? last("pct") : ""), c(u && u.pos !== "QB" ? avg("share") : dash, u && u.pos !== "QB" ? last("share") : ""), c(u ? avg("rush") : dash, u ? last("rush") : "")];
+    return [c(u ? avg("pct") : dash, u ? last("pct") : ""), c(u && u.pos !== "QB" ? avg("share") : dash, u && u.pos !== "QB" ? last("share") : ""), c(u ? avg("rush") : dash, u ? last("rush") : ""),
+      c(u && u.pos !== "QB" ? avg("rz") : dash, u && u.pos !== "QB" ? last("rz") : "")];
   }
   if (v === "schedule") {
     const nfl = state.week?.nfl, sched = nfl?.sched?.[p.proId], out = [c(nfl?.byes?.[p.proId] || dash)];
@@ -2849,7 +2853,7 @@ function erCols(p, v = erView()) {
   if (v === "rankings") {
     const ex = p.expertRanks || [];
     return [c(p.pprRank ? `${esc(p.pos)}${Math.round(p.pprRank)}` : dash), c(ex.length ? `${Math.min(...ex)}–${Math.max(...ex)}` : dash, ex.length ? `${ex.length} experts` : ""),
-      c(p.posRank ? `${esc(p.pos)}${p.posRank}` : dash), c(valueOf(p.id) ? fmtVal(valueOf(p.id)) : dash)];
+      c(valueOf(p.id) ? fmtVal(valueOf(p.id)) : dash)];
   }
   // Matchup stats: points (or a dash) over the projection.
   return [c(p.played ? ptsLink(p.id, state.week.sp, f2(p.actual)) : dash, f1(p.proj))];
@@ -2858,9 +2862,9 @@ function erHeads(v = erView()) {
   const h = (l, tip = "") => `<div class="erc" ${tip ? `title="${tip}"` : ""}>${l}</div>`;
   if (v === "scoring") return [h("Pos rk", "Season rank at the position"), h("Avg", "Points per game this season"), h("Pts", "Season points"), h("Last", "Last week"), h("Proj", "This week's projection")];
   if (v === "research") return [h("Opp rk", "Opponent's rank vs. the position (1st = toughest)"), h("%Rost"), h("%Start"), h("+/-", "Change in % rostered")];
-  if (v === "usage") return [h("Snap", "Season average share of snaps, last game underneath"), h("Tgt", "Season share of team targets, last game underneath"), h("Rush", "Season share of team carries, last game underneath")];
+  if (v === "usage") return [h("Snap", "Season average share of snaps, last game underneath"), h("Tgt", "Season share of team targets, last game underneath"), h("Rush", "Season share of team carries, last game underneath"), h("RZ", "Season share of the team's red-zone targets and carries (inside the 20), last game underneath")];
   if (v === "schedule") return [h("Bye"), ...Array.from({ length: state.base.weeks - state.week.week + 1 }, (_, i) => h(`Wk ${state.week.week + i}`))];
-  if (v === "rankings") return [h("Avg", "ESPN experts' average PPR rank this week"), h("Range", "Best to worst expert rank"), h("Pos rk", "Season rank at the position"), h("Value", "FantasyCalc trade value")];
+  if (v === "rankings") return [h("Avg", "ESPN experts' average PPR rank this week"), h("Range", "Best to worst expert rank"), h("Value", "FantasyCalc trade value")];
   return [h("Score", "Points this week over the projection")];
 }
 // "Sun 12:00 PM @ATL (19th)", or the live clock / final score, plus a small weather icon.
@@ -3531,11 +3535,14 @@ function openAccount() {
       <p>${mgr ? `Signed in as <strong>${esc(o.name || "a league manager")}</strong>` : o?.kind === "owner" ? "Signed in as the <strong>site owner</strong> (passphrase)" : "Signed in"}${t ? ` · ${teamName(t, 20)}` : ""}</p>
       ${mgr ? `<div class="ac-block"><strong>Sign in on another device</strong><p class="small muted">Get a one-time code, then on your phone open the site, tap 🔑 Sign in, and type it (or scan the QR code with the phone's camera).</p>
         <button type="button" id="ac-code">Get a code</button><div id="ac-code-out"></div></div>` : ""}
+      ${mgr ? "" : `<div class="ac-block"><strong>Connect your own ESPN account</strong><p class="small muted">Changes then go to ESPN as you, and you can sign your phone in with a code instead of the passphrase.</p>
+        <button type="button" id="ac-connect">Connect ESPN</button></div>`}
       <div class="ac-actions"><button type="button" id="ac-out">Sign out on this device</button>
         ${mgr ? `<button type="button" class="ac-danger" id="ac-disc">Disconnect ESPN</button>` : ""}</div>
       ${mgr ? `<p class="small muted">Disconnect deletes your saved ESPN sign-in from the site and signs out every device.</p>` : ""}
     </div>`);
   $("ac-reconnect")?.addEventListener("click", openConnect);
+  $("ac-connect")?.addEventListener("click", openConnect);
   $("ac-out").addEventListener("click", () => signOutHere(false));
   $("ac-disc")?.addEventListener("click", () => { if (confirm("Disconnect your ESPN account from this site? Every device you signed in will be signed out.")) signOutHere(true); });
   $("ac-code")?.addEventListener("click", async (e) => {
@@ -3990,6 +3997,7 @@ function cmpModel(id, wk) {
     last3: pts.length ? sum(pts.slice(-3)) / Math.min(3, pts.length) : null,
     proj: row.proj ?? null, seasonProj: d?.seasonProj ?? row.seasonProj ?? null,
     snap: u ? u.avg?.pct ?? u.last.pct : null, tgt: u && u.pos !== "QB" ? u.avg?.share ?? u.last.share : null, rush: u ? u.avg?.rush ?? u.last.rush : null,
+    rz: u && u.pos !== "QB" ? u.avg?.rz ?? u.last.rz : null,
     posRank: row.posRank ?? null, pprRank: row.pprRank ?? null, own: row.own ?? null, start: row.start ?? null, value: valueOf(Number(id)),
     injury: row.injury || pl.injury || "", bye: pl.bye ?? null, next,
   };
@@ -4043,7 +4051,7 @@ function renderCompare(ids, target) {
     ["Season pts", (m) => m.total, "hi", f1], ["Games", (m) => m.gp, null, String], ["PPG", (m) => m.ppg, "hi", f1],
     ["Best week", (m) => m.best, "hi", f1], ["Floor", (m) => m.floor, "hi", f1], ["Last 3 avg", (m) => m.last3, "hi", f1],
     ["Proj this week", (m) => m.proj, "hi", f1], ["Season proj", (m) => m.seasonProj, "hi", f1],
-    ["Snap %", (m) => m.snap, "hi", pct0], ["Target %", (m) => m.tgt, "hi", pct0], ["Rush %", (m) => m.rush, "hi", pct0],
+    ["Snap %", (m) => m.snap, "hi", pct0], ["Target %", (m) => m.tgt, "hi", pct0], ["Rush %", (m) => m.rush, "hi", pct0], ["Red zone %", (m) => m.rz, "hi", pct0],
     ["Pos rank", (m) => m.posRank, "lo", (v) => `#${Math.round(v)}`], ["PPR rank", (m) => m.pprRank, "lo", (v) => `#${Math.round(v)}`],
     ["Rostered", (m) => m.own, "hi", pct0], ["Started", (m) => m.start, "hi", pct0], ["Trade value", (m) => m.value, "hi", fmtVal],
     ["Bye", (m) => m.bye, null, (v) => `Wk ${v}`],
@@ -4456,16 +4464,24 @@ function usageCalc(pl, sp) {
   const team = pl.w[wks.at(-1)][3];
   const lastWk = Math.max(wks.at(-1), ...Object.keys(T[team] || {}).map(Number).filter((w) => w <= sp));
   const teamOf = (wk, t) => T[t]?.[wk] || [0, 0];
+  // Red zone (plays snapped inside the opponent's 20): his targets + carries vs. the team's.
+  const rzOf = (wk) => pl.w[wk]?.[5] || [0, 0, 0, 0, 0];
+  const teamRz = (wk, t) => (teamOf(wk, t)[3] || 0) + (teamOf(wk, t)[4] || 0);
   const e = pl.w[lastWk];
+  const lastRz = rzOf(lastWk), lastTeamRz = teamRz(lastWk, e?.[3] || team);
   const last = e ? { wk: lastWk, snaps: e[0], pct: e[1], tgt: e[2], teamSnaps: teamOf(lastWk, e[3])[0], share: teamOf(lastWk, e[3])[1] ? (e[2] / teamOf(lastWk, e[3])[1]) * 100 : null,
-      car: e[4] || 0, rush: teamOf(lastWk, e[3])[2] ? ((e[4] || 0) / teamOf(lastWk, e[3])[2]) * 100 : null }
-    : { wk: lastWk, snaps: 0, pct: 0, tgt: 0, teamSnaps: teamOf(lastWk, team)[0], share: 0, car: 0, rush: 0, out: true };
+      car: e[4] || 0, rush: teamOf(lastWk, e[3])[2] ? ((e[4] || 0) / teamOf(lastWk, e[3])[2]) * 100 : null,
+      rzN: lastRz[0] + lastRz[1], rzTeam: lastTeamRz, rz: lastTeamRz ? ((lastRz[0] + lastRz[1]) / lastTeamRz) * 100 : null, rzTd: lastRz[3] }
+    : { wk: lastWk, snaps: 0, pct: 0, tgt: 0, teamSnaps: teamOf(lastWk, team)[0], share: 0, car: 0, rush: 0, rzN: 0, rzTeam: lastTeamRz, rz: 0, rzTd: 0, out: true };
   const avgOf = (list) => {
     if (!list.length) return null;
     const tgt = sum(list, (w) => pl.w[w][2]), teamTgt = sum(list, (w) => teamOf(w, pl.w[w][3])[1]);
     const car = sum(list, (w) => pl.w[w][4] || 0), teamCar = sum(list, (w) => teamOf(w, pl.w[w][3])[2] || 0);
+    const rz = (i) => sum(list, (w) => rzOf(w)[i]), rzTeam = sum(list, (w) => teamRz(w, pl.w[w][3]));
+    const rzN = rz(0) + rz(1);
     return { pct: sum(list, (w) => pl.w[w][1]) / list.length, share: teamTgt ? (tgt / teamTgt) * 100 : null, tgt: tgt / list.length,
-      rush: teamCar ? (car / teamCar) * 100 : null, car: car / list.length, games: list.length };
+      rush: teamCar ? (car / teamCar) * 100 : null, car: car / list.length, games: list.length,
+      rz: rzTeam ? (rzN / rzTeam) * 100 : null, rzN, rzTeam, rzTgt: rz(0), rzCar: rz(1), rz10: rz(2), rzTd: rz(3), rzPass: rz(4) };
   };
   const played = wks.filter((w) => pl.w[w][0] > 0 || pl.w[w][2] > 0);
   return { pos: pl.pos, team, last, avg: avgOf(played), prior: avgOf(played.filter((w) => w < lastWk)) };
@@ -4485,6 +4501,13 @@ function tgtCell(p) {
   const u = usageOf(p.id);
   if (!u || u.pos === "QB") return DASH;
   return `<span data-tip="${usageTip(u)}">${pctTxt(u.avg?.share ?? u.last.share)}${usageTrend(u.last.share ?? 0, u.prior?.share)}</span><div class="pt-sub">last ${pctTxt(u.last.share)}</div>`;
+}
+// Red zone: share of the team's targets + carries snapped inside the opponent's 20 (QBs: not shown).
+const rzTip = (u) => { const a = u.avg; return esc(`<b>Red zone (inside the 20)</b>${a ? `Season: ${a.rzTgt} target${a.rzTgt === 1 ? "" : "s"}, ${a.rzCar} carr${a.rzCar === 1 ? "y" : "ies"} (${pctTxt(a.rz)} of the team's ${a.rzTeam}), ${a.rz10} inside the 10, ${a.rzTd} TD${a.rzTd === 1 ? "" : "s"}<br>` : ""}Week ${u.last.wk}: ${u.last.rzN} of ${u.last.rzTeam}${u.last.rzTd ? `, ${u.last.rzTd} TD` : ""}`); };
+function rzCell(p) {
+  const u = usageOf(p.id);
+  if (!u || u.pos === "QB") return DASH;
+  return `<span data-tip="${rzTip(u)}">${pctTxt(u.avg?.rz ?? u.last.rz)}${usageTrend(u.last.rz ?? 0, u.prior?.rz)}</span><div class="pt-sub">last ${pctTxt(u.last.rz)}</div>`;
 }
 function rushCell(p) {
   const u = usageOf(p.id);
@@ -4726,13 +4749,17 @@ function renderInjuries(el = $("view-injuries"), redraw = () => renderInjuries()
 
 // ---------- Team usage tab ----------
 // Every QB/RB/WR/TE on one NFL team, week by week, in one of three views:
-// share of offensive snaps, share of the team's targets, or share of the team's rushing attempts.
-// Week entries are [snaps, snap%, targets, team, carries]; team weeks are [snaps, targets, carries].
+// share of offensive snaps, share of the team's targets, share of the team's rushing attempts, or share
+// of its red-zone targets + carries (plays inside the opponent's 20).
+// Week entries are [snaps, snap%, targets, team, carries, rz?: [targets, carries, inside10, tds, passAtt]];
+// team weeks are [snaps, targets, carries, rzTargets, rzCarries]. count/team are an index or a function.
 const UT_MODES = {
   snap: { label: "Snap share", count: 0, team: 0, unit: "snaps", what: "offensive snaps", full: 100, pos: ["QB", "RB", "WR", "TE"] },
   tgt: { label: "Target share", count: 2, team: 1, unit: "tgt", what: "targets", full: 35, pos: ["RB", "WR", "TE"] },
   rush: { label: "Rushing share", count: 4, team: 2, unit: "att", what: "rushing attempts", full: 70, pos: ["QB", "RB", "WR", "TE"] },
+  rz: { label: "Red zone", count: (e) => (e[5]?.[0] || 0) + (e[5]?.[1] || 0), team: (t) => (t[3] || 0) + (t[4] || 0), unit: "rz", what: "red-zone targets and carries", full: 50, pos: ["QB", "RB", "WR", "TE"] },
 };
+const utGet = (row, k) => (typeof k === "function" ? k(row) : row[k]);
 function renderUsage(el = $("view-usage"), redraw = () => renderUsage()) {
   ensureValues(); // trade values (used by the player popup) fill in when they arrive
   const U = ensureUsage(), w = state.week, f = state.players;
@@ -4751,15 +4778,15 @@ function renderUsage(el = $("view-usage"), redraw = () => renderUsage()) {
   if (fa && !fa.error) for (const p of fa.players) if (!owners.has(String(p.id))) owners.set(String(p.id), { status: p.status, waiverDate: p.waiverDate });
   const ownerOf = (id) => { const o = owners.get(String(id)); return o ? ownerCell(o) : `<span class="muted">${typeof id === "number" ? "Free agent" : "–"}</span>`; };
 
-  const teamTot = (wk) => tw[wk]?.[M.team] || 0;
+  const teamTot = (wk) => (tw[wk] ? utGet(tw[wk], M.team) || 0 : 0);
   const seasonTot = sum(played, teamTot);
   const entry = (p, wk) => (p.w[wk]?.[3] === T ? p.w[wk] : null);
-  const count = (p, wk) => entry(p, wk)?.[M.count] || 0;
+  const count = (p, wk) => { const e = entry(p, wk); return e ? utGet(e, M.count) || 0 : 0; };
   // Share for one week: snap % comes straight from the data; the others are count / team total.
   const share = (p, wk) => {
     const e = entry(p, wk);
     if (!e) return 0;
-    return snapMode ? e[1] : teamTot(wk) ? (e[M.count] / teamTot(wk)) * 100 : 0;
+    return snapMode ? e[1] : teamTot(wk) ? (utGet(e, M.count) / teamTot(wk)) * 100 : 0;
   };
   const players = U.list.map((p) => {
     const games = played.filter((wk) => entry(p, wk));
@@ -4790,7 +4817,8 @@ function renderUsage(el = $("view-usage"), redraw = () => renderUsage()) {
         const e = entry(p, wk);
         if (!e) return `<td class="num ut-dnp" title="Didn't play">0%</td>`;
         const v = share(p, wk);
-        return `<td class="num" ${heat(v)} title="${e[M.count]} of ${teamTot(wk)} team ${M.what}">${pctTxt(v)}<div class="pt-sub">${e[M.count]} ${M.unit}</div></td>`;
+        const n = utGet(e, M.count) || 0;
+        return `<td class="num" ${heat(v)} title="${n} of ${teamTot(wk)} team ${M.what}">${pctTxt(v)}<div class="pt-sub">${n} ${M.unit}</div></td>`;
       }).join("");
       const name = typeof p.id === "number" ? plinkNm({ id: p.id, name: p.name }) : `<span class="nm-full">${esc(p.name)}</span><span class="nm-short">${esc(shortName(p.name))}</span>`;
       const acts = typeof p.id === "number" ? moveBtns({ id: p.id, name: p.name, posId: posIdOf(p.pos), proId: proIdOf(T) }) : "";
@@ -5622,7 +5650,9 @@ function renderPlayerModal(d, focusSp, ctx) {
   // One week's usage: share of the team's snaps, targets and rushing attempts.
   const usage = (sp) => {
     const e = ul?.w[sp], tm = e ? U.teams[e[3]]?.[sp] : null;
-    return e ? { snap: e[1], snaps: e[0], tgt: tm?.[1] ? (e[2] / tm[1]) * 100 : null, tgts: e[2], rush: tm?.[2] ? ((e[4] || 0) / tm[2]) * 100 : null, car: e[4] || 0 } : null;
+    const rz = e?.[5] || [0, 0, 0, 0, 0], tRz = (tm?.[3] || 0) + (tm?.[4] || 0);
+    return e ? { snap: e[1], snaps: e[0], tgt: tm?.[1] ? (e[2] / tm[1]) * 100 : null, tgts: e[2], rush: tm?.[2] ? ((e[4] || 0) / tm[2]) * 100 : null, car: e[4] || 0,
+      rz: tRz ? ((rz[0] + rz[1]) / tRz) * 100 : null, rzN: rz[0] + rz[1] } : null;
   };
   const uCell = (v, n, unit) => (v == null ? `<td class="num muted">–</td>` : `<td class="num">${Math.round(v)}%<div class="pt-sub">${n} ${unit}</div></td>`);
   // Game log views: Passing / Rushing / Receiving / Usage (QB, RB, WR, TE). Starts on the one that fits him.
@@ -5630,7 +5660,7 @@ function renderPlayerModal(d, focusSp, ctx) {
   if (S.glFor !== String(p.id)) { S.glFor = String(p.id); S.glMode = { 1: "pass", 2: "rush", 3: "rec", 4: "rec" }[p.posId] || "pass"; }
   const mode = hasViews ? S.glMode : "game";
   const STAT = { pass: [3, 4], rush: [24, 25], rec: [42, 43] };
-  const ncols = mode === "use" ? 5 : mode === "game" ? 3 : mode === "rec" ? 8 : 6;
+  const ncols = mode === "use" ? 6 : mode === "game" ? 3 : mode === "rec" ? 8 : 6;
   const sv = (w, id) => Math.round(w.stats?.[id] || 0);
   // Opponent, with its rank against his position (red = tough, green = easy).
   const oppCell = (opp, home, sub = "") => {
@@ -5653,7 +5683,7 @@ function renderPlayerModal(d, focusSp, ctx) {
     let cells;
     if (mode === "use") {
       const u = ul ? usage(sp) : null;
-      cells = !u ? `<td class="num muted">–</td>`.repeat(3) : `${uCell(u.snap, u.snaps, "snp")}${uCell(u.tgt, u.tgts, "tgt")}${uCell(u.rush, u.car, "att")}`;
+      cells = !u ? `<td class="num muted">–</td>`.repeat(4) : `${uCell(u.snap, u.snaps, "snp")}${uCell(u.tgt, u.tgts, "tgt")}${uCell(u.rush, u.car, "att")}${uCell(u.rz, u.rzN, "rz")}`;
     } else if (mode === "game") {
       cells = pts;
     } else {
@@ -5664,7 +5694,7 @@ function renderPlayerModal(d, focusSp, ctx) {
     return `<tr class="gl-row ${open ? "open" : ""}" data-sp="${sp}"><td class="gl-wk">${sp}</td>${oppCell(w.opp, w.home, line)}${cells}</tr>
       ${mode === "use" ? "" : `<tr class="gl-bd" id="gl-bd-${sp}" ${open ? "" : "hidden"}><td colspan="${ncols}">${breakdownHtml(w, p.posId)}</td></tr>`}`;
   }).join("");
-  const heads = mode === "use" ? `<th class="num" title="Share of the team's offensive snaps">Snap%</th><th class="num" title="Share of the team's targets">Tgt%</th><th class="num" title="Share of the team's rushing attempts">Rush%</th>`
+  const heads = mode === "use" ? `<th class="num" title="Share of the team's offensive snaps">Snap%</th><th class="num" title="Share of the team's targets">Tgt%</th><th class="num" title="Share of the team's rushing attempts">Rush%</th><th class="num" title="Share of the team's red-zone targets and carries (inside the 20)">RZ%</th>`
     : mode === "game" ? `<th class="num">FPTS</th>`
     : `${mode === "rec" ? `<th class="num" title="Targets">Tgt</th><th class="num" title="Receptions">Rec</th>` : ""}<th class="num" title="${{ pass: "Passing", rush: "Rushing", rec: "Receiving" }[mode]} yards">Yds</th><th class="num" title="${{ pass: "Passing", rush: "Rushing", rec: "Receiving" }[mode]} touchdowns">TD</th><th class="num" title="Interceptions thrown / fumbles lost">I/F</th><th class="num" title="Fantasy points (tap to see how they were scored)">FPTS</th>`;
   const logTable = (sps) => `<table class="data gamelog gl-compact gl-${mode}"><thead><tr><th class="gl-wk">Wk</th><th>Opp</th>${heads}</tr></thead><tbody>${logRows(sps)}</tbody></table>`;

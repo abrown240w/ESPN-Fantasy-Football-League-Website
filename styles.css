@@ -2106,3 +2106,23 @@ body.cmp-picking .modal-card.pm-full { height: calc(100dvh - 100px) !important; 
 .ac-qr:empty { display: none; }
 .ac-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .ac-danger { color: #b3261e; border-color: #d93025; }
+
+/* Computers: matchup cards show the two teams side by side (home left, away right) */
+@media (min-width: 1000px) {
+  .mu-cards .lg-card:not(.bye) { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); padding: 10px 12px; }
+  .mu-cards .lg-card:not(.bye) .lg-row { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-areas: "logo pts" "id id"; align-items: center; gap: 6px 8px; padding: 0 10px 0 0; }
+  .mu-cards .lg-card:not(.bye) .lg-row + .lg-row { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "pts logo" "id id"; padding: 0 0 0 10px; border-left: 1px solid var(--grid); text-align: right; }
+  .mu-cards .lg-card:not(.bye) .lg-row > :first-child { grid-area: logo; width: 32px !important; height: 32px !important; }
+  .mu-cards .lg-card:not(.bye) .lg-id { grid-area: id; }
+  .mu-cards .lg-card:not(.bye) .lg-pts { grid-area: pts; }
+  .mu-cards .lg-card:not(.bye) .lg-row + .lg-row .lg-pts { text-align: left; }
+  .mu-cards .lg-card:not(.bye) .lg-id strong { font-size: .88rem; }
+  .mu-cards .lg-card:not(.bye) .lg-id span { font-size: .72rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .rr-vs { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); margin: 4px 0 2px; }
+  .rr-vs .rr-team { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-areas: "logo pts" "name name"; align-items: center; gap: 4px 8px; padding: 2px 10px 4px 0; }
+  .rr-vs .rr-team + .rr-team { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "pts logo" "name name"; padding: 2px 0 4px 10px; border-left: 1px solid var(--grid); text-align: right; }
+  .rr-vs .rr-team > :first-child { grid-area: logo; }
+  .rr-vs .rr-name { grid-area: name; font-size: .86rem; }
+  .rr-vs .rr-team strong { grid-area: pts; text-align: right; font-size: 1.3rem; }
+  .rr-vs .rr-team + .rr-team strong { text-align: left; }
+}
