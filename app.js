@@ -972,7 +972,7 @@ function renderPlayers() {
       <select id="pl-nfl" aria-label="NFL team"><option value="ALL">All teams</option>${Object.keys(NFL_NAMES).sort((a, b) => NFL_NAMES[a].localeCompare(NFL_NAMES[b])).map((t) => `<option value="${t}" ${f.nfl === t ? "selected" : ""}>${esc(NFL_NAMES[t].split(" ").pop())}</option>`).join("")}</select></div>
     ${playersNav(f.mode)}
     <div class="filters pl-filters">
-      ${posSeg("pl-pos", f.pos)}
+      ${posSeg("pl-pos", f.pos, true)}
       ${desk ? `<div class="seg" id="pl-inj" role="group" aria-label="Injuries">${[["all", "All"], ["injured", "Injured"], ["healthy", "Healthy"]].map(([k, l]) => `<button type="button" data-i="${k}" class="${f.inj === k ? "active" : ""}">${l}</button>`).join("")}</div>` : ""}
     </div>
     ${me ? `<label class="pl-mine ${f.mode === "all" ? "off" : ""}"><input type="checkbox" id="pl-mine" ${f.mine ? "checked" : ""} ${f.mode === "all" ? "disabled" : ""}> Include my team</label>` : ""}</div>
@@ -980,7 +980,7 @@ function renderPlayers() {
   const draw = () => {
     const q = f.q.toLowerCase();
     const inj = desk ? f.inj : "all";
-    const rows = pool.filter((p) => (f.pos === "ALL" || p.pos === f.pos) && (!f.nfl || f.nfl === "ALL" || PRO[p.proId] === f.nfl) && (!q || p.name.toLowerCase().includes(q))
+    const rows = pool.filter((p) => posMatch(p.pos, f.pos) && (!f.nfl || f.nfl === "ALL" || PRO[p.proId] === f.nfl) && (!q || p.name.toLowerCase().includes(q))
       && (inj === "all" || (inj === "injured") === hurt(p)));
     if (inj === "healthy" && f.sort.key.startsWith("inj_")) f.sort = { key: "proj", dir: -1 };
     drawPlayerTable($("pl-list"), ["player", ...(actTeam() ? ["act"] : []), ...(W ? ["watch"] : []), "pos", "opp", "proj", "pts", "ppg", "seasonPts", "own", "snap", "tgt", "rush", "rz", "pprRank", "posRank", "value", ...(inj === "healthy" ? [] : injCols)], rows, f.sort, w.sp,
@@ -1465,7 +1465,9 @@ function drawPlayerTable(el, keys, rows, sortState, sp, empty) {
 }
 
 // Position filter as a row of buttons (same feel as the injury report).
-const posSeg = (id, current) => `<div class="seg pos-seg" id="${id}" role="group" aria-label="Position">${["ALL", ...POS_ORDER].map((p) => `<button type="button" data-p="${esc(p)}" class="${current === p ? "active" : ""}">${p === "ALL" ? "All" : esc(p)}</button>`).join("")}</div>`;
+const FLEX_POS = ["RB", "WR", "TE"];
+const posMatch = (pos, want) => want === "ALL" || pos === want || (want === "FLEX" && FLEX_POS.includes(pos));
+const posSeg = (id, current, flex = false) => `<div class="seg pos-seg" id="${id}" role="group" aria-label="Position">${["ALL", ...POS_ORDER.flatMap((p) => (flex && p === "TE" ? [p, "FLEX"] : [p]))].map((p) => `<button type="button" data-p="${esc(p)}" class="${current === p ? "active" : ""}">${p === "ALL" ? "All" : esc(p)}</button>`).join("")}</div>`;
 function bindPosSeg(id, set, draw) {
   $(id).querySelectorAll("button").forEach((b) => b.addEventListener("click", () => {
     set(b.dataset.p);
@@ -5139,7 +5141,9 @@ function renderTradeAnalyzer() {
         <button type="button" class="mock-rm" data-rm="${name}" data-id="${p.id}" aria-label="Remove ${esc(p.name)}">×</button></div>`).join("");
     const add = ids.length >= 3 ? "" : `<select data-side="${name}" aria-label="Add player"><option value="">${ids.length ? "+ Add player" : "Choose a player"}</option>
       ${list.filter((p) => !ids.includes(String(p.id))).map((p) => `<option value="${p.id}">${esc(p.name)} (${p.pos}) · ${fmtVal(p.value)}</option>`).join("")}</select>`;
-    if (!DESK.matches) return chips + add;
+    // Phones: the running total of what this side sends, under its players.
+    const total = sum(ids.map((id) => list.find((p) => String(p.id) === id)).filter(Boolean), (p) => p.value);
+    if (!DESK.matches) return chips + (ids.length ? `<div class="mock-total">Total value <strong>${fmtVal(total)}</strong></div>` : "") + add;
     // Computers: the team's whole roster (starters, bench, IR) with a tap to add or remove each player.
     const order = (x) => (x.slotId === IR ? 3 : x.slotId === BENCH ? 2 : 1) * 100 + (POS_ORDER.indexOf(x.pos) + 1) * 10 - Math.min(9, x.value / 1000);
     const full = ids.length >= 3;
@@ -5147,7 +5151,8 @@ function renderTradeAnalyzer() {
         <span class="mock-ck">${on ? "✓" : "+"}</span><span class="mock-pl-slot">${esc(x.slotId === IR ? "IR" : x.slotId === BENCH ? "BE" : SLOT[x.slotId] || x.pos)}</span>
         <span class="mock-pl-nm">${esc(x.name)}<small>${esc(x.pos)}${x.nfl ? ` · ${esc(x.nfl)}` : ""}${injBadge(x)}</small></span><span class="mock-pl-val">${x.value ? fmtVal(x.value) : "–"}</span></button>`; };
     const sorted = [...list].sort((a, b) => order(a) - order(b));
-    return `${chips}<div class="mock-roster">${sorted.map(row).join("")}</div>${full ? `<p class="small muted">Up to 3 players per side.</p>` : ""}`;
+    // Computers: the picked players show in the trade window above, so the card is just the roster.
+    return `<div class="mock-roster">${sorted.map(row).join("")}</div>${full ? `<p class="small muted">Up to 3 players per side.</p>` : ""}`;
   };
   const sendA = ta.give.map((id) => playersA.find((p) => String(p.id) === String(id))).filter(Boolean);
   const sendB = ta.get.map((id) => playersB.find((p) => String(p.id) === String(id))).filter(Boolean);
@@ -5182,9 +5187,15 @@ function renderTradeAnalyzer() {
   // Computers: the mock trade and trade ideas on the left; your team and free agents in a column on the right.
   const desk = DESK.matches;
   const meSel = `<label class="small muted ta-me">My team <select id="ta-my">${teamOpts(ta.my)}</select></label>`;
-  // Computers: the grade sits above the two full rosters, so it updates in view as players are picked.
+  // Computers: a trade window above the two full rosters: what each side sends, with running totals, and
+  // the grade underneath once both sides have someone. It updates in view as players are picked.
+  const sideBox = (tid, list, k) => `<div class="tw-side"><div class="tw-head">${logoImg(team(tid), 22)}<strong>${esc(team(tid).name)}</strong><span class="muted small">sends</span></div>
+      ${list.length ? list.map((p) => `<div class="tw-pl"><span class="tw-nm">${esc(p.name)} <span class="muted small">${esc(p.pos)}${p.nfl ? ` · ${esc(p.nfl)}` : ""}</span></span><span class="tw-v">${fmtVal(p.value)}</span><button type="button" class="mock-rm" data-rm="${k}" data-id="${p.id}" aria-label="Remove ${esc(p.name)}">×</button></div>`).join("")
+        : `<p class="muted small tw-empty">Pick players from ${esc(team(tid).name)}'s roster below.</p>`}
+      <div class="tw-total"><span>Total value</span><strong>${fmtVal(sum(list, (p) => p.value))}</strong></div></div>`;
+  const tradeWindow = `<div class="tw">${sideBox(A, sendA, "give")}<div class="tw-x" aria-hidden="true">⇄</div>${sideBox(B, sendB, "get")}</div>`;
   const mockSec = `<div class="section-head" id="mock-trade"><h2>Mock trade</h2><span class="muted small">Any two teams · up to 3 players per side</span></div>
-    ${desk ? `<div class="card ta-result">${result}</div>` : ""}
+    ${desk ? `<div class="card ta-result">${tradeWindow}${sendA.length && sendB.length ? result : ""}</div>` : ""}
     <div class="mock">
       <div class="card"><div class="mock-head">${logoImg(team(A), 22)}<select id="ta-a" aria-label="First team">${teamOpts(A)}</select></div><div class="mock-sends">sends</div>${pick(playersA, ta.give, "give")}</div>
       ${desk ? `<div class="mock-x" aria-hidden="true">⇄</div>` : ""}
@@ -5704,7 +5715,7 @@ function renderPlayerModal(d, focusSp, ctx) {
   if (S.glFor !== String(p.id)) { S.glFor = String(p.id); S.glMode = { 1: "pass", 2: "rush", 3: "rec", 4: "rec" }[p.posId] || "pass"; }
   const mode = hasViews ? S.glMode : "game";
   const STAT = { pass: [3, 4], rush: [24, 25], rec: [42, 43] };
-  const ncols = mode === "use" ? 6 : mode === "game" ? 3 : mode === "rec" ? 8 : 6;
+  const ncols = mode === "use" ? 6 : mode === "game" ? 3 : mode === "rec" ? 8 : mode === "rush" ? 7 : 6;
   const sv = (w, id) => Math.round(w.stats?.[id] || 0);
   // Opponent, with its rank against his position (red = tough, green = easy).
   const oppCell = (opp, home, sub = "") => {
@@ -5732,7 +5743,7 @@ function renderPlayerModal(d, focusSp, ctx) {
       cells = pts;
     } else {
       const [yd, td] = STAT[mode];
-      cells = `${mode === "rec" ? `<td class="num">${sv(w, 58)}</td><td class="num">${sv(w, 53)}</td>` : ""}<td class="num">${sv(w, yd)}</td><td class="num">${sv(w, td)}</td><td class="num">${sv(w, 20)}/${sv(w, 72)}</td>${pts}`;
+      cells = `${mode === "rec" ? `<td class="num">${sv(w, 58)}</td><td class="num">${sv(w, 53)}</td>` : mode === "rush" ? `<td class="num">${sv(w, 23)}</td>` : ""}<td class="num">${sv(w, yd)}</td><td class="num">${sv(w, td)}</td><td class="num">${sv(w, 20)}/${sv(w, 72)}</td>${pts}`;
     }
     const line = mode === "game" ? esc(compactLine(p.posId, w.stats) || gameLine(p.posId, w.stats)) : "";
     return `<tr class="gl-row ${open ? "open" : ""}" data-sp="${sp}"><td class="gl-wk">${sp}</td>${oppCell(w.opp, w.home, line)}${cells}</tr>
@@ -5740,7 +5751,7 @@ function renderPlayerModal(d, focusSp, ctx) {
   }).join("");
   const heads = mode === "use" ? `<th class="num" title="Share of the team's offensive snaps">Snap%</th><th class="num" title="Share of the team's targets">Tgt%</th><th class="num" title="Share of the team's rushing attempts">Rush%</th><th class="num" title="Share of the team's red-zone targets and carries (inside the 20)">RZ%</th>`
     : mode === "game" ? `<th class="num">FPTS</th>`
-    : `${mode === "rec" ? `<th class="num" title="Targets">Tgt</th><th class="num" title="Receptions">Rec</th>` : ""}<th class="num" title="${{ pass: "Passing", rush: "Rushing", rec: "Receiving" }[mode]} yards">Yds</th><th class="num" title="${{ pass: "Passing", rush: "Rushing", rec: "Receiving" }[mode]} touchdowns">TD</th><th class="num" title="Interceptions thrown / fumbles lost">I/F</th><th class="num" title="Fantasy points (tap to see how they were scored)">FPTS</th>`;
+    : `${mode === "rec" ? `<th class="num" title="Targets">Tgt</th><th class="num" title="Receptions">Rec</th>` : mode === "rush" ? `<th class="num" title="Rushing attempts">Att</th>` : ""}<th class="num" title="${{ pass: "Passing", rush: "Rushing", rec: "Receiving" }[mode]} yards">Yds</th><th class="num" title="${{ pass: "Passing", rush: "Rushing", rec: "Receiving" }[mode]} touchdowns">TD</th><th class="num" title="Interceptions thrown / fumbles lost">I/F</th><th class="num" title="Fantasy points (tap to see how they were scored)">FPTS</th>`;
   const logTable = (sps) => `<table class="data gamelog gl-compact gl-${mode}"><thead><tr><th class="gl-wk">Wk</th><th>Opp</th>${heads}</tr></thead><tbody>${logRows(sps)}</tbody></table>`;
   const glModes = hasViews ? `<div class="seg gl-modes">${[["pass", "Passing"], ["rush", "Rushing"], ["rec", "Receiving"], ["use", "Usage"]].map(([k, l]) => `<button type="button" data-glm="${k}" class="${mode === k ? "active" : ""}">${l}</button>`).join("")}</div>` : "";
 

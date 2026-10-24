@@ -55,8 +55,8 @@
 
   function statsFor(posId, pts) {
     const p = Math.max(pts, 0);
-    if (posId === 1) return { 3: Math.round(p * 13), 4: Math.round(p / 9), 20: rand() < 0.4 ? 1 : 0, 24: Math.round(rand() * 25) };
-    if (posId === 2) return { 24: Math.round(p * 5), 25: Math.round(p / 12), 53: Math.round(rand() * 5), 42: Math.round(p * 1.5), 58: Math.round(rand() * 6) };
+    if (posId === 1) { const yd = Math.round(rand() * 25); return { 3: Math.round(p * 13), 4: Math.round(p / 9), 20: rand() < 0.4 ? 1 : 0, 24: yd, 23: Math.max(yd ? 1 : 0, Math.round(yd / 5)) }; }
+    if (posId === 2) { const yd = Math.round(p * 5); return { 24: yd, 23: Math.max(1, Math.round(yd / 4.3)), 25: Math.round(p / 12), 53: Math.round(rand() * 5), 42: Math.round(p * 1.5), 58: Math.round(rand() * 6) }; }
     if (posId === 3 || posId === 4) return { 53: Math.round(p / 3), 42: Math.round(p * 6), 43: Math.round(p / 14), 58: Math.round(p / 2) + 2 };
     return {};
   }
