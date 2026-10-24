@@ -2313,11 +2313,8 @@ main .table-wrap:has(> .pt-table), body.has-chatbar main .table-wrap:has(> .pt-t
   .topbar .week-nav select { flex: 0 1 auto; min-width: 58px; max-width: 120px; text-overflow: ellipsis; }
 }
 
-/* The league dropdown's arrow sits just outside the pill */
+/* The league dropdown's arrow sits just outside the pill, and is part of the dropdown (tap it to switch) */
 .topbar .league-select { background-image: none !important; padding-right: 14px; }
-.topbar .brand-row:has(> .league-select:not([hidden]))::after {
-  content: ""; flex: none; width: 13px; height: 9px; margin-left: 2px; pointer-events: none;
-  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='13' height='9'%3E%3Cpath d='M1.5 1.5l5 5 5-5' fill='none' stroke='%23ffffff' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat center; }
 .topbar .brand-row { gap: 6px; }
 @media (max-width: 999px) { .topbar .league-select { padding-right: 11px; } .topbar .brand-row { flex-wrap: nowrap; } }
 
@@ -2403,3 +2400,32 @@ main .table-wrap:has(> .pt-table), body.has-chatbar main .table-wrap:has(> .pt-t
   .mu-split:not(.lv-split) { grid-template-columns: minmax(280px, 340px) minmax(0, 900px) minmax(250px, 310px); }
   .mu-feed { grid-column: 3; grid-row: 1; }
 }
+
+/* League pill in the logo's lettering (heavy grotesque, tight), with the arrow inside the tappable area:
+   the dropdown spans pill + arrow; the pill outline is drawn around the name only. */
+.topbar .league-select, .topbar #league-name { font-family: "Archivo Black", "Arial Black", "Helvetica Neue", system-ui, sans-serif; font-weight: 400; letter-spacing: -.02em; }
+.topbar .lg-pick { --arrow: 19px; --pill-b: 2.5px; position: relative; display: inline-flex; min-width: 0; max-width: 100%; }
+.topbar .lg-pick:has(> select[hidden]) { display: none; }
+.topbar .lg-pick .league-select { position: relative; z-index: 1; border-color: transparent; background: none !important; padding-right: calc(14px + var(--arrow)); }
+.topbar .lg-pick .league-select:hover { background: none; }
+.topbar .lg-pick::before { content: ""; position: absolute; top: 0; bottom: 0; left: 0; right: var(--arrow); border: var(--pill-b) solid #fff; border-radius: 999px; pointer-events: none; }
+.topbar .lg-pick:hover::before { background: rgba(255,255,255,.1); }
+.topbar .lg-pick::after { content: ""; position: absolute; right: 1px; top: 50%; width: 13px; height: 9px; margin-top: -4px; pointer-events: none;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='13' height='9'%3E%3Cpath d='M1.5 1.5l5 5 5-5' fill='none' stroke='%23ffffff' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat center; }
+@media (max-width: 999px) {
+  .topbar .lg-pick { --arrow: 17px; --pill-b: 2px; }
+  .topbar .lg-pick .league-select { padding-right: calc(11px + var(--arrow)); }
+}
+
+/* Scoring detail: one line per kind of scoring */
+.breakdown td { white-space: nowrap; }
+.breakdown .bd-what { width: 100%; max-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.breakdown .bd-n { color: var(--ink-2); padding-right: 14px; }
+.breakdown .bd-pts { font-weight: 600; }
+.breakdown .neg { color: #b91c1c; }
+
+/* Sign in: pick your team, then connect ESPN */
+.cx-mine { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 12px 14px; border-radius: 12px; background: var(--surface-2); margin-bottom: 14px; }
+.cx-mine label { display: grid; gap: 2px; min-width: 0; flex: 1 1 220px; }
+.cx-mine select { font: inherit; font-weight: 600; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--ink); min-width: 180px; }
+.cx-h { font-size: 1rem; margin: 0 0 6px; }

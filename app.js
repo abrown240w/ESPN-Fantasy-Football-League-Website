@@ -16,6 +16,7 @@ const LEAGUES = [
   { id: "489824289", label: "Brown League" },
   { id: "253026401", label: "Church League" },
   { id: "1001176763", label: "Luxa League" },
+  { id: "1107108600", label: "Singles" },
 ];
 
 // ---------- Icons ----------
@@ -3355,7 +3356,6 @@ function renderRoster() {
     canEdit ? chip("claims", ic("clipboard-list"), "Claims", P ? `${claims} pending` : "…") : "",
     canEdit ? chip("trades", ic("arrows-exchange"), "Trades", P ? `${offers} offer${offers === 1 ? "" : "s"}` : "…") : "",
     deadline ? chip("deadline", ic("calendar"), "Trade deadline", new Date(deadline).toLocaleString(undefined, { month: "numeric", day: "numeric", hour: "numeric", minute: "2-digit" })) : "",
-    chip("myteam", ic("user"), "My team", myTeamId() ? esc(team(myTeamId()).abbrev || team(myTeamId()).name) : "Select"),
     chip("awards", ic("trophy"), "Awards", nAwards == null ? "View" : `${nAwards} award${nAwards === 1 ? "" : "s"}`),
   ].join("");
   const opts = ids.map((id) => `<option value="${id}" ${id === String(sel) ? "selected" : ""}>${esc(team(id).name)}</option>`).join("");
@@ -3764,7 +3764,11 @@ function openConnect() {
   const ff = /Firefox\//.test(navigator.userAgent), sf = /Safari\//.test(navigator.userAgent) && !/Chrome|Chromium|Edg\//.test(navigator.userAgent);
   let br = ff ? "firefox" : sf ? "safari" : "chrome";
   const touch = matchMedia("(pointer: coarse)").matches && !DESK.matches;
-  showModal(`<div class="pm-head"><h2 id="pl-modal-title">${ic("key")} Connect your ESPN account</h2></div>
+  const mine = myTeamId(), ids = Object.keys(state.base.teams).sort((a, b) => team(a).name.localeCompare(team(b).name));
+  showModal(`<div class="pm-head"><h2 id="pl-modal-title">${ic("key")} Sign in</h2></div>
+    <div class="cx-mine"><label for="cx-team"><strong>My team</strong><span class="muted small">No sign-in needed. Live, Matchup and Roster open on it. Saved on this device.</span></label>
+      <select id="cx-team"><option value="">Select my team</option>${ids.map((id) => `<option value="${esc(id)}" ${String(id) === String(mine) ? "selected" : ""}>${esc(team(id).name)}</option>`).join("")}</select></div>
+    <h3 class="cx-h">Connect your ESPN account</h3>
     <div class="cx">
       ${touch ? `<div class="cx-code-first"><strong>On your phone?</strong> Connect on a computer first, then sign this phone in with a code.
         <form class="cx-code" id="cx-redeem"><input id="cx-code-in" autocomplete="one-time-code" autocapitalize="characters" placeholder="Code from your computer" maxlength="12"><button type="submit">Sign in</button></form><p class="cx-err" id="cx-code-err"></p></div>` : ""}
@@ -3795,6 +3799,7 @@ function openConnect() {
     $("cx-s2").innerHTML = CONNECT_STEPS[br][0]; $("cx-s3").innerHTML = CONNECT_STEPS[br][1];
   }));
   $("cx-owner").addEventListener("click", openPassphrase);
+  $("cx-team").addEventListener("change", (e) => { if (e.target.value) chooseMyTeam(e.target.value); });
   $("cx-s2v").addEventListener("input", () => { $("cx-e1").textContent = ""; });
   $("cx-swv").addEventListener("input", () => { $("cx-e2").textContent = ""; });
   $("cx-form").addEventListener("submit", async (e) => {
@@ -5681,35 +5686,33 @@ const YA_TIERS = { 128: "under 100", 129: "100–199", 130: "200–299", 131: "3
 const plink = (id, name) => `<button type="button" class="pl-link" data-pid="${esc(id)}">${esc(name)}</button>`;
 const ptsLink = (id, sp, html) => `<button type="button" class="pts-link" data-pid="${esc(id)}" data-sp="${esc(sp)}" title="How these points were scored">${html}</button>`;
 const fmtNum = (n) => (Number.isInteger(n) ? String(n) : (Math.round(n * 10) / 10).toString());
-const fmtEach = (n) => String(Math.round(n * 1000) / 1000); // e.g. 0.04 points per passing yard
-// "1 passing TD", not "1 passing TDs".
-const singular = (label) => label.replace(/\b(TDs|yards|receptions|interceptions|fumbles|goals|points|kicks|recoveries|safeties|sacks|returns|conversions|times)\b/,
-  (w) => ({ recoveries: "recovery", safeties: "safety" }[w] || w.slice(0, -1)));
 
-// Each line of how a week's points were earned, from ESPN's per-stat points (appliedStats).
+// How a week's points were earned, one line per kind of scoring (what, how many, points), from ESPN's
+// per-stat points (appliedStats). Biggest first.
+const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 function scoringLines(w, posId) {
-  const lines = Object.entries(w.applied).map(([id, pts]) => {
+  const lines = Object.entries(w.applied).filter(([, pts]) => pts).map(([id, pts]) => {
     const n = Number(id), count = Number(w.stats[id] ?? 0);
-    let label;
-    if (PA_TIERS[n]) label = `Points allowed: ${fmtNum(Number(w.stats[120] ?? 0))} (${PA_TIERS[n]} tier)`;
-    else if (YA_TIERS[n]) label = `Yards allowed: ${fmtNum(Number(w.stats[127] ?? 0))} (${YA_TIERS[n]} tier)`;
-    else if (n === 117) label = `Kickoff return yards: ${fmtNum(Number(w.stats[114] ?? 0))} <span class="muted">(1 pt per 25)</span>`;
-    else if (n === 119) label = `Punt return yards: ${fmtNum(Number(w.stats[115] ?? 0))} <span class="muted">(1 pt per 25)</span>`;
-    else if (STAT_TIERS[n]) label = STAT_TIERS[n];
-    else if (STAT_NAMES[n]) {
-      const each = count ? Math.round((pts / count) * 100) / 100 : null;
-      label = `${fmtNum(count)} ${count === 1 ? singular(STAT_NAMES[n]) : STAT_NAMES[n]}${each != null && count !== 1 ? ` <span class="muted">× ${fmtEach(each)}</span>` : ""}`;
-    } else label = `Other ${posId === 16 ? "D/ST " : ""}scoring <span class="muted">(ESPN stat ${n}${count ? `, ${fmtNum(count)}` : ""})</span>`;
-    return { label, pts };
+    let what, num = count ? fmtNum(count) : "";
+    if (PA_TIERS[n]) { what = "Points allowed"; num = fmtNum(Number(w.stats[120] ?? 0)); }
+    else if (YA_TIERS[n]) { what = "Yards allowed"; num = fmtNum(Number(w.stats[127] ?? 0)); }
+    else if (n === 117) { what = "Kick return yards"; num = fmtNum(Number(w.stats[114] ?? 0)); }
+    else if (n === 119) { what = "Punt return yards"; num = fmtNum(Number(w.stats[115] ?? 0)); }
+    else if (STAT_TIERS[n]) { what = STAT_TIERS[n].replace(" game bonus", " bonus"); num = ""; }
+    else if (n === 64) what = "Sacked";
+    else if (STAT_NAMES[n]) what = cap(STAT_NAMES[n]);
+    else what = `Other${posId === 16 ? " D/ST" : ""} scoring`;
+    return { what, num, pts };
   });
   return lines.sort((a, b) => Math.abs(b.pts) - Math.abs(a.pts));
 }
 
 function breakdownHtml(w, posId) {
   const lines = scoringLines(w, posId);
-  if (!lines.length) return `<p class="muted small">No scoring plays${w.pts ? "" : " yet"}.</p>`;
-  return `<table class="breakdown"><tbody>${lines.map((l) => `<tr><td>${l.label}</td><td class="num ${l.pts < 0 ? "neg" : ""}">${l.pts > 0 ? "+" : l.pts < 0 ? "−" : ""}${f2(Math.abs(l.pts))}</td></tr>`).join("")}
-    <tr class="total"><td>Total</td><td class="num">${f2(w.pts)}</td></tr></tbody></table>`;
+  if (!lines.length) return `<p class="muted small">No scoring${w.pts ? "" : " yet"}.</p>`;
+  const sign = (n) => `${n > 0 ? "+" : n < 0 ? "−" : ""}${f2(Math.abs(n))}`;
+  return `<table class="breakdown"><tbody>${lines.map((l) => `<tr><td class="bd-what">${esc(l.what)}</td><td class="num bd-n">${l.num}</td><td class="num bd-pts ${l.pts < 0 ? "neg" : ""}">${sign(l.pts)}</td></tr>`).join("")}
+    <tr class="total"><td>Total</td><td></td><td class="num">${f2(w.pts)}</td></tr></tbody></table>`;
 }
 
 function gameLine(posId, s) {
@@ -5771,7 +5774,7 @@ function initPlayerModal() {
   const pts = document.createElement("div");
   pts.id = "pts-modal";
   pts.hidden = true;
-  pts.innerHTML = `<div class="pts-card" role="dialog" aria-labelledby="pts-title"><button type="button" class="modal-close pts-x" aria-label="Close">×</button><div id="pts-body"></div><i class="pts-arrow"></i></div>`;
+  pts.innerHTML = `<div class="pts-card" role="dialog" aria-label="Scoring"><button type="button" class="modal-close pts-x" aria-label="Close">×</button><div id="pts-body"></div><i class="pts-arrow"></i></div>`;
   document.body.appendChild(pts);
   pts.addEventListener("click", (e) => {
     const full = e.target.closest("[data-pts-card]");
@@ -5867,13 +5870,10 @@ async function openPtsPop(id, sp, anchor) {
   }
   if (pop.hidden || ptsAnchor !== (anchor || null)) return;
   const d = cache[id].data, p = d.player, w = d.weeks.find((x) => x.sp === sp);
-  body.innerHTML = `<div class="pm-head">${headshot({ id: p.id, name: p.name, posId: p.posId, proId: p.proId }, 44)}<div><h2 id="pts-title">${esc(p.name)}</h2>
-      <div class="muted small">${esc(POS[p.posId] || "")} · ${esc(PRO[p.proId] || "")} · Week ${sp}${w?.opp ? ` · ${w.home ? "vs" : "@"} ${esc(PRO[w.opp] || "")}` : ""}</div></div></div>
-    ${w ? `<div class="pts-line">${esc(compactLine(p.posId, w.stats) || gameLine(p.posId, w.stats))}</div>${breakdownHtml(w, p.posId)}` : (() => {
+  body.innerHTML = `${w ? `<div class="pts-line">${esc(compactLine(p.posId, w.stats) || gameLine(p.posId, w.stats))}</div>${breakdownHtml(w, p.posId)}` : (() => {
         const row = cmpRow(id, cmpWeek()), live = row && sp === state.week?.sp && row.played;
-        return `${live && row.short ? `<div class="pts-line">${esc(row.short)}</div>` : ""}<p class="muted small">${live ? `${f2(row.actual)} points so far. ESPN hasn't posted the scoring detail yet; it fills in as the game goes.` : `No scoring for week ${sp}.`}</p>`;
-      })()}
-    <button type="button" class="pg-go" data-pts-card="${esc(id)}" data-sp="${sp}">Open player card ›</button>`;
+        return `${live && row.short ? `<div class="pts-line">${esc(row.short)}</div>` : ""}<p class="muted small">${live ? `${f2(row.actual)} points so far.` : `No scoring for week ${sp}.`}</p>`;
+      })()}`;
   placePts(); // taller now: it grows upward from the score
 }
 // Open the shared popup with arbitrary content (e.g. the Roster tab's upgrade list).
@@ -5994,7 +5994,7 @@ function renderPlayerModal(d, focusSp, ctx) {
       const g = state.week?.nfl?.sched?.[p.proId]?.[sp];
       const bye = p.bye === sp || (state.week?.nfl?.sched?.[p.proId] && !g);
       const future = sp > state.base.current || (sp === state.base.current && !bySp[sp]);
-      const why = bye ? "" : future ? (sp === state.base.current ? "This week" : "Upcoming") : "Did not play";
+      const why = bye || future ? "" : "Did not play";
       return `<tr class="gl-row gl-none ${future ? "gl-future" : ""}"><td class="gl-wk">${sp}</td>${bye ? `<td class="gl-game"><strong>BYE</strong></td>` : oppCell(g?.[0], g?.[1], why)}
         ${`<td class="num muted">–</td>`.repeat(ncols - 2)}</tr>`;
     }
