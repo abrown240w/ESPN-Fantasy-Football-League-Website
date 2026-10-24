@@ -15,7 +15,7 @@ const POS_ORDER = ["QB", "RB", "WR", "TE", "K", "D/ST"];
 const LEAGUES = [
   { id: "489824289", label: "Brown League" },
   { id: "253026401", label: "Church League" },
-  { id: "1001176763", label: "Work League" },
+  { id: "1001176763", label: "Luxa League" },
 ];
 
 // ---------- Icons ----------
@@ -643,6 +643,7 @@ const groupOf = (t) => TAB_GROUP[t] || t;
 const homeOf = (t) => (t === "league" ? "season" : t);
 const LEAGUE_SUBS = [["season", "Standings"], ["managers", "Weekly"], ["transactions", "Moves"], ["trade", "Trades"], ["history", "History"]];
 function showView(name) {
+  setTimeout(updateFloatHeads, 0);
   for (const v of ["roster", "matchups", "live", "players", "usage", "injuries", "trade", "transactions", "managers", "season", "history"]) $(`view-${v}`).hidden = v !== name;
   // Computers have League's sub-tabs in the main row instead of a League tab.
   const desk = DESK.matches;
@@ -833,10 +834,52 @@ function updateStickies() {
 addEventListener("scroll", updateStickies, { passive: true });
 addEventListener("resize", updateStickies);
 
+// ---------- Long tables scroll with the page ----------
+// Player tables are no longer a box you scroll inside: the page scrolls, and while a table's header row
+// is out of view a copy of it floats under the top bar (lined up with the columns, following sideways
+// scrolling, and clickable to sort). Wide tables still scroll sideways on their own.
+const floatHeads = new Map(); // table frame -> { el, thead, sig, src, dst }
+let floatRaf = 0;
+function updateFloatHeads() {
+  cancelAnimationFrame(floatRaf);
+  floatRaf = requestAnimationFrame(() => {
+    const topH = document.querySelector(".topbar")?.getBoundingClientRect().height || 0;
+    const wraps = [...document.querySelectorAll("main .view:not([hidden]) .table-wrap")].filter((w) => w.querySelector(":scope > table.pt-table > thead"));
+    for (const [w, f] of floatHeads) if (!wraps.includes(w) || !w.isConnected) { f.el.remove(); floatHeads.delete(w); }
+    for (const w of wraps) {
+      const table = w.querySelector(":scope > table"), thead = table.tHead, r = w.getBoundingClientRect(), hh = thead.getBoundingClientRect().height;
+      let f = floatHeads.get(w);
+      if (!(r.top < topH && r.bottom > topH + hh + 12)) { if (f) f.el.hidden = true; continue; }
+      const sig = `${table.offsetWidth}:${w.clientWidth}:${thead.textContent}`;
+      if (!f || f.thead !== thead || f.sig !== sig) {
+        f?.el.remove();
+        const el = document.createElement("div");
+        el.className = "float-head";
+        const t = table.cloneNode(false), h = thead.cloneNode(true);
+        t.style.width = `${table.offsetWidth}px`;
+        t.style.tableLayout = "fixed";
+        t.appendChild(h);
+        el.appendChild(t);
+        document.body.appendChild(el);
+        const src = [...thead.querySelectorAll("th")], dst = [...h.querySelectorAll("th")];
+        dst.forEach((th, i) => { th.style.width = `${src[i].getBoundingClientRect().width}px`; th.style.top = "auto"; });
+        el.addEventListener("click", (e) => { const th = e.target.closest("th"); if (th) src[dst.indexOf(th)]?.click(); });
+        f = { el, thead, sig };
+        floatHeads.set(w, f);
+      }
+      f.el.hidden = false;
+      Object.assign(f.el.style, { top: `${topH}px`, left: `${r.left + w.clientLeft}px`, width: `${w.clientWidth}px` });
+      f.el.scrollLeft = w.scrollLeft;
+    }
+  });
+}
+addEventListener("scroll", updateFloatHeads, { passive: true, capture: true }); // capture: tables' own sideways scrolling too
+addEventListener("resize", updateFloatHeads);
+
 // Computers (1000px and wider): player cards and chat dock on the right, sidebars on Players and League,
 // a side rail on Roster and Live. Phones keep their own layout. Redraw when crossing the line.
 const DESK = matchMedia("(min-width: 1000px)");
-DESK.addEventListener?.("change", () => { if (state.week) render(); });
+DESK.addEventListener?.("change", () => { if (state.week) render(); if (state.base) renderLeagueSelect(); });
 // Three columns on Live (games | the game | your players) need 1300px; below that it's two.
 const WIDE = matchMedia("(min-width: 1300px)");
 WIDE.addEventListener?.("change", () => { if (state.week && state.tab === "live") render(); });
@@ -1212,7 +1255,7 @@ function markNewsRead(pid, items = []) {
 }
 // Small red newspaper next to a name on the Roster tab: opens the player card.
 const newsDot = (p) => `<button type="button" class="pl-link news-dot" data-pid="${esc(p.id)}" title="Unread news" aria-label="Unread news for ${esc(p.name)}"><svg viewBox="0 0 20 20" width="15" height="15" aria-hidden="true"><path fill="currentColor" d="M3 4h11v11a2 2 0 0 0 2 2H5a2 2 0 0 1-2-2V4zm12 3h2v8a1 1 0 0 1-2 0V7zM5 6v3h4V6H5zm5 0v1h3V6h-3zm0 2v1h3V8h-3zm-5 3v1h8v-1H5zm0 2v1h8v-1H5z"/></svg></button>`;
-const newsCredit = () => `<p class="fc-credit small muted">Player news from ESPN / RotoWire.</p>`;
+const newsCredit = () => `<p class="fc-credit small muted">Data: ESPN · RotoWire</p>`;
 // Roster tab: the most recent updates (last 4 days) for everyone on the roster.
 function rosterNews(side) {
   if (!side) return "";
@@ -3468,6 +3511,7 @@ function ensureOwner() {
 const signedInHere = () => store.get("ffb.owner") === "1";
 function updateOwnerLink() {
   const b = $("owner-btn"), on = signedInHere();
+  if ($("ft-acct")) $("ft-acct").textContent = on ? "Account" : "Sign in";
   if (b) { b.innerHTML = `${ic(on ? "user" : "key")}<span class="hb-l">${on ? "Account" : "Sign in"}</span>`; b.title = on ? "Your account: other devices, sign out" : "Connect your ESPN account"; b.setAttribute("aria-label", on ? "Account" : "Sign in"); }
 }
 function openOwnerSignIn() {
@@ -4414,7 +4458,7 @@ function updateEspnLink() {
 
 // ---------- Trade values (FantasyCalc) ----------
 // FantasyCalc's terms require a visible credit and link wherever their values appear.
-const fcCredit = () => `<p class="fc-credit small muted">Trade values from <a href="https://fantasycalc.com" target="_blank" rel="noopener">FantasyCalc.com</a> · redraft values, updated daily${state.values?.updated ? ` (last ${new Date(state.values.updated).toLocaleDateString(undefined, { month: "short", day: "numeric" })})` : ""}.</p>`;
+const fcCredit = () => `<p class="fc-credit small muted">Data: <a href="https://fantasycalc.com" target="_blank" rel="noopener">FantasyCalc</a></p>`;
 const fmtVal = (n) => (n == null ? "–" : Math.round(n).toLocaleString());
 const valDelta = (d) => `<span class="${clsSign(d)}">(${d > 0 ? "+" : d < 0 ? "−" : ""}${fmtVal(Math.abs(d))})</span>`;
 
@@ -4459,7 +4503,7 @@ function valueCell(id) {
 
 // ---------- Snap counts & target share (nflverse) ----------
 // nflverse's license (CC BY 4.0) asks for credit wherever the data appears.
-const nvCredit = () => `<p class="fc-credit small muted">Snap counts and targets from <a href="https://github.com/nflverse/nflverse-data" target="_blank" rel="noopener">nflverse</a> (CC BY 4.0) · updated the day after games.</p>`;
+const nvCredit = () => `<p class="fc-credit small muted">Data: <a href="https://github.com/nflverse/nflverse-data" target="_blank" rel="noopener">nflverse</a> (CC BY 4.0)</p>`;
 const NFL_NAMES = { ARI: "Arizona Cardinals", ATL: "Atlanta Falcons", BAL: "Baltimore Ravens", BUF: "Buffalo Bills", CAR: "Carolina Panthers", CHI: "Chicago Bears", CIN: "Cincinnati Bengals", CLE: "Cleveland Browns", DAL: "Dallas Cowboys", DEN: "Denver Broncos", DET: "Detroit Lions", GB: "Green Bay Packers", HOU: "Houston Texans", IND: "Indianapolis Colts", JAX: "Jacksonville Jaguars", KC: "Kansas City Chiefs", LV: "Las Vegas Raiders", LAC: "Los Angeles Chargers", LAR: "Los Angeles Rams", MIA: "Miami Dolphins", MIN: "Minnesota Vikings", NE: "New England Patriots", NO: "New Orleans Saints", NYG: "New York Giants", NYJ: "New York Jets", PHI: "Philadelphia Eagles", PIT: "Pittsburgh Steelers", SF: "San Francisco 49ers", SEA: "Seattle Seahawks", TB: "Tampa Bay Buccaneers", TEN: "Tennessee Titans", WSH: "Washington Commanders" };
 
 async function fetchUsage() {
@@ -4570,7 +4614,7 @@ function usageBrief(id) {
 
 // ---------- Game-day weather (Open-Meteo) ----------
 // Open-Meteo's license (CC BY 4.0) asks for credit wherever the forecast appears.
-const wxCredit = () => `<p class="fc-credit small muted">Weather from <a href="https://open-meteo.com" target="_blank" rel="noopener">Open-Meteo.com</a> (CC BY 4.0) · kickoff-window forecast, updated hourly. Retractable-roof calls are a guess; teams decide on game day.</p>`;
+const wxCredit = () => `<p class="fc-credit small muted">Data: <a href="https://open-meteo.com" target="_blank" rel="noopener">Open-Meteo</a> (CC BY 4.0)</p>`;
 
 async function fetchWeather(sp) {
   if (state.demo) return window.DemoLeague.weather(sp);
@@ -4778,7 +4822,7 @@ function renderInjuries(el = $("view-injuries"), redraw = () => renderInjuries()
       <div class="seg">${btn("roster", "all", "All")}${btn("roster", "available", "Available")}${btn("roster", "rostered", "On rosters")}</div>
     </div>
     <div id="inj-table"></div>
-    <p class="fc-credit small muted">Injuries, return dates and depth charts from ESPN, updated hourly. Weeks out and snaps from <a href="https://github.com/nflverse/nflverse-data" target="_blank" rel="noopener">nflverse</a> (CC BY 4.0). Typical recovery times are rough guides.</p>`;
+    <p class="fc-credit small muted">Data: ESPN · <a href="https://github.com/nflverse/nflverse-data" target="_blank" rel="noopener">nflverse</a> (CC BY 4.0)</p>`;
   const draw = () => {
     const box = el.querySelector("#inj-table");
     if (!rows.length) { box.innerHTML = `<p class="muted">No players match those filters.</p>`; return; }
@@ -5975,7 +6019,7 @@ function depthTable(dep, p) {
   };
   const rows = spots.filter(([k]) => dep?.[k]?.length).map(([k, label]) => `<tr><th>${label}</th>${[0, 1, 2].map((i) => cell(dep[k][i])).join("")}</tr>`).join("");
   return rows ? `<table class="dc-table"><thead><tr><th></th><th>Starter</th><th>2nd</th><th>3rd</th></tr></thead><tbody>${rows}</tbody></table>
-    <p class="fc-credit small muted">Depth chart from ESPN.</p>` : `<p class="muted small">No depth chart from ESPN for this team.</p>`;
+    <p class="fc-credit small muted">Data: ESPN</p>` : `<p class="muted small">No depth chart from ESPN for this team.</p>`;
 }
 
 // ---------- Tooltip ----------
@@ -6047,7 +6091,9 @@ function keepState(el, draw) {
 
 function render() {
   if (!state.week) return;
-  if (!$("owner-btn").dataset.wired) { $("owner-btn").dataset.wired = "1"; $("owner-btn").addEventListener("click", openOwnerSignIn); $("notify-btn")?.addEventListener("click", openNotifications); $("chat-open")?.addEventListener("click", openChat); placeChatBtn(); DESK.addEventListener?.("change", placeChatBtn); }
+  if (!$("owner-btn").dataset.wired) { $("owner-btn").dataset.wired = "1"; $("owner-btn").addEventListener("click", openOwnerSignIn); $("notify-btn")?.addEventListener("click", openNotifications); $("chat-open")?.addEventListener("click", openChat); placeChatBtn();
+    $("ft-alerts")?.addEventListener("click", openNotifications); $("ft-acct")?.addEventListener("click", openOwnerSignIn);
+    document.querySelectorAll("[data-ftlg]").forEach((a) => a.addEventListener("click", (e) => { e.preventDefault(); if (a.dataset.ftlg !== String(state.leagueId || LEAGUES[0].id)) switchLeague(a.dataset.ftlg, ""); scrollTo(0, 0); })); DESK.addEventListener?.("change", placeChatBtn); }
   ensureOwner();
   updateOwnerLink();
   if (!state.live && !state.liveBoot && state.tab !== "live") { state.liveBoot = true; refreshLive().finally(() => { state.liveBoot = false; }); }
@@ -6127,11 +6173,24 @@ function renderLeagueSelect() {
   const sel = $("league-select");
   const current = state.leagueId || LEAGUES[0].id;
   const known = LEAGUES.some((l) => l.id === current);
-  sel.innerHTML = LEAGUES.map((l) => `<option value="${l.id}" ${l.id === current ? "selected" : ""}>${esc(l.label)}</option>`).join("")
+  // Phones: one word in the pill, like the logo ("Brown"); computers have room for "Brown League".
+  const name = (l) => (DESK.matches ? l.label : l.label.replace(/\s*League\s*$/i, ""));
+  sel.innerHTML = LEAGUES.map((l) => `<option value="${l.id}" ${l.id === current ? "selected" : ""}>${esc(name(l))}</option>`).join("")
     + (known ? "" : `<option value="${esc(current)}" selected>League ${esc(current)}</option>`);
   sel.hidden = state.demo;
   $("league-name").hidden = !state.demo; // the dropdown doubles as the title
+  requestAnimationFrame(fitLeagueSelect);
 }
+// A dropdown is as wide as its longest option; size the pill to the league that's showing.
+function fitLeagueSelect() {
+  const sel = $("league-select");
+  if (!sel || sel.hidden) return;
+  const cs = getComputedStyle(sel), c = (fitLeagueSelect.ctx ||= document.createElement("canvas").getContext("2d"));
+  c.font = `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+  const w = c.measureText(sel.options[sel.selectedIndex]?.text || "").width;
+  sel.style.width = `${Math.ceil(w + parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight) + 2 * parseFloat(cs.borderLeftWidth) + 4)}px`;
+}
+document.fonts?.ready.then(() => fitLeagueSelect());
 
 let pendingWeek = parseInt(params.get("week")) || null;
 let pendingWaivers = params.has("waivers") ? Number(params.get("waivers")) || 0 : null;
@@ -6171,7 +6230,7 @@ function renderHeader() {
   const short = matchMedia("(max-width: 640px)").matches;
   $("week-select").innerHTML = Array.from({ length: b.weeks }, (_, i) => i + 1)
     .map((w) => `<option value="${w}">${short
-      ? `Wk ${w}${w > b.regWeeks ? " (PO)" : ""}${w === b.current ? " · now" : ""}`
+      ? `Wk ${w}${w > b.regWeeks ? " (PO)" : ""}${w === b.current && innerWidth > 360 ? " · now" : ""}`
       : `Week ${w}${w > b.regWeeks ? " (playoffs)" : ""}${w === b.current ? " · current" : ""}`}</option>`).join("");
   if (wk) $("week-select").value = wk;
   $("week-nav").hidden = false;

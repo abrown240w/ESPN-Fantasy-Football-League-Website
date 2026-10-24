@@ -2253,3 +2253,72 @@ table.data thead th { box-shadow: inset 0 -1px 0 var(--grid); }
 .gamelog tbody tr.gl-row:nth-child(even of .gl-row) > td { background: var(--zebra); }
 .gamelog tbody tr.gl-bd > td { background: transparent; }
 .gamelog tbody tr.gl-row:nth-child(even of .gl-row) + tr.gl-bd > td { background: var(--zebra); }
+
+/* League name in the logo's style: white, heavy, rounded, inside a white pill outline */
+.topbar .league-select, .topbar #league-name {
+  display: inline-block; max-width: 100%; border: 2.5px solid #fff; border-radius: 999px; padding: 3px 32px 4px 14px;
+  font-family: "Arial Rounded MT Bold", "Helvetica Rounded", "Nunito", system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-weight: 800; letter-spacing: -.01em; font-size: 1.2rem; line-height: 1.2; color: #fff; background-position: right 12px center; }
+.topbar #league-name { padding-right: 14px; }
+.topbar .league-select:hover { background-color: rgba(255,255,255,.1); }
+.topbar .league-select:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+@media (max-width: 999px) {
+  .topbar .league-select, .topbar #league-name { font-size: 1rem; padding: 2px 28px 3px 11px; border-width: 2px; background-position: right 10px center; }
+  .topbar #league-name { padding-right: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+}
+
+/* Wide computers: one slim red bar, links in the bar itself */
+@media (min-width: 1360px) {
+  .topbar { display: flex; align-items: stretch; gap: 26px; min-height: 60px;
+    padding-left: max(clamp(16px, 2.5vw, 40px), calc((100vw - 1680px) / 2 + 40px)); padding-right: max(clamp(16px, 2.5vw, 40px), calc((100vw - 1680px) / 2 + 40px)); }
+  .topbar-inner { display: contents; }
+  .topbar .brand { order: 1; align-self: center; flex: none; }
+  .topbar #league-meta { display: none; }
+  #tabs { order: 2; max-width: none; margin: 0; padding: 0; gap: 20px; align-self: stretch; }
+  #tabs button { flex: none; padding: 0 1px; border-bottom-width: 3px; font-size: .95rem; font-weight: 500; }
+  #tabs button.active { font-weight: 700; }
+  .topbar .week-nav { order: 3; margin-left: auto; align-self: center; }
+  .topbar #prev-week, .topbar #next-week { display: none; }
+  .topbar .league-select, .topbar #league-name { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}
+/* Until there's plenty of room, Alerts and Sign in are round icon buttons */
+@media (min-width: 1000px) and (max-width: 1599px) {
+  .topbar .hdr-btn { width: 34px; height: 34px; padding: 0; justify-content: center; border-radius: 50%; }
+  .topbar .hdr-btn .hb-l { display: none; }
+}
+
+/* Site footer */
+.site-footer { background: var(--surface); border-top: 1px solid var(--border); margin-top: 24px; color: var(--muted); font-size: .88rem; }
+.site-footer .ft { display: flex; flex-wrap: wrap; gap: 18px 56px; padding-top: 22px; padding-bottom: 26px; }
+.site-footer b { display: block; color: var(--ink); margin-bottom: 6px; }
+.site-footer a, .site-footer .linkish { display: block; color: var(--accent-ink); text-decoration: none; padding: 2px 0; font-weight: 500; }
+.site-footer a:hover, .site-footer .linkish:hover { text-decoration: underline; }
+.site-footer .ft-data { max-width: 520px; line-height: 1.5; }
+@media (max-width: 999px) { .site-footer { margin-top: 16px; } .site-footer .ft { gap: 16px 32px; padding-top: 16px; padding-bottom: 18px; } }
+
+/* Long tables scroll with the page (no inner scroll box); a floating copy of the header row sticks under the bar */
+main .table-wrap:has(> .pt-table), body.has-chatbar main .table-wrap:has(> .pt-table) { max-height: none; overflow-x: auto; overflow-y: hidden; }
+.float-head { position: fixed; z-index: 9; overflow: hidden; background: var(--surface); box-shadow: 0 3px 8px rgba(16,24,40,.12); }
+.float-head table { margin: 0; }
+.float-head thead th { position: static; cursor: pointer; }
+.float-head thead th.pt-player { position: sticky; left: 0; }
+
+/* The site footer is for computers only (phones have the tab bar) */
+@media (max-width: 999px) { .site-footer { display: none; } }
+
+/* Phones: the league pill never shrinks; the week picker gives up room first */
+@media (max-width: 999px) {
+  .topbar .brand { flex: none; min-width: 0; }
+  .topbar .week-nav { flex: 0 1 auto; min-width: 0; }
+  .topbar .week-nav select { flex: 0 1 auto; min-width: 58px; max-width: 120px; text-overflow: ellipsis; }
+}
+
+/* The league dropdown's arrow sits just outside the pill */
+.topbar .league-select { background-image: none !important; padding-right: 14px; }
+.topbar .brand-row:has(> .league-select:not([hidden]))::after {
+  content: ""; flex: none; width: 13px; height: 9px; margin-left: 2px; pointer-events: none;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='13' height='9'%3E%3Cpath d='M1.5 1.5l5 5 5-5' fill='none' stroke='%23ffffff' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat center; }
+.topbar .brand-row { gap: 6px; }
+@media (max-width: 999px) { .topbar .league-select { padding-right: 11px; } .topbar .brand-row { flex-wrap: nowrap; } }
+
+@media (max-width: 999px) { .topbar #league-name { max-width: 46vw; } }
