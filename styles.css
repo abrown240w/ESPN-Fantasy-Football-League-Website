@@ -2452,3 +2452,10 @@ main .table-wrap:has(> .pt-table), body.has-chatbar main .table-wrap:has(> .pt-t
   .mu-cards .lg-wp { display: flex; grid-column: 1 / -1; align-items: center; gap: 8px; margin-top: 8px; font-size: .72rem; font-weight: 700; color: var(--ink-2); font-variant-numeric: tabular-nums; }
   .mu-cards .lg-wp .mt-wp { height: 4px; }
 }
+
+/* Scoring popup: no close button (tap outside); kept on screen, centered with no pointer when there's no room by the score */
+.pts-card.mid { transform-origin: 50% 50%; box-shadow: 0 10px 40px rgba(0,0,0,.35); }
+.pts-card.mid .pts-arrow { display: none; }
+.pts-card .breakdown { margin: 0; }
+.gl-pts.pts-active { border-color: var(--accent); background: var(--surface-2); }
+

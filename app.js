@@ -5918,12 +5918,12 @@ function initPlayerModal() {
   const pts = document.createElement("div");
   pts.id = "pts-modal";
   pts.hidden = true;
-  pts.innerHTML = `<div class="pts-card" role="dialog" aria-label="Scoring"><button type="button" class="modal-close pts-x" aria-label="Close">×</button><div id="pts-body"></div><i class="pts-arrow"></i></div>`;
+  pts.innerHTML = `<div class="pts-card" role="dialog" aria-label="Scoring"><div id="pts-body"></div><i class="pts-arrow"></i></div>`;
   document.body.appendChild(pts);
   pts.addEventListener("click", (e) => {
     const full = e.target.closest("[data-pts-card]");
     if (full) { closePts(); openPlayer(full.dataset.ptsCard, Number(full.dataset.sp)); return; }
-    if (!e.target.closest(".pts-card") || e.target.closest(".pts-x")) closePts();
+    if (!e.target.closest(".pts-card")) closePts(); // a tap anywhere outside the box closes it
   });
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !pts.hidden) { closePts(); e.stopImmediatePropagation(); } }, true);
   // The comparison popup sits on top of the card(s).
@@ -5980,19 +5980,28 @@ function closePts() {
   window.removeEventListener("resize", closePts);
 }
 function placePts() {
-  const card = $("pts-modal").querySelector(".pts-card"), a = ptsAnchor;
+  const card = $("pts-modal").querySelector(".pts-card"), body = $("pts-body"), a = ptsAnchor;
   if (!a || !a.isConnected) return closePts();
-  const r = a.getBoundingClientRect(), vw = innerWidth, vh = innerHeight, m = 8, gap = 10;
-  const w = Math.min(340, vw - 2 * m), cx = r.left + r.width / 2, left = Math.max(m, Math.min(cx - w / 2, vw - w - m));
-  const above = r.top - gap - m, below = vh - r.bottom - gap - m, up = above >= 160 || above >= below;
+  // The visible screen (on phones the browser bars and zoom change it), with a margin all round.
+  const vv = window.visualViewport, vw = vv?.width || innerWidth, vh = vv?.height || innerHeight, ox = vv?.offsetLeft || 0, oy = vv?.offsetTop || 0;
+  const r = a.getBoundingClientRect(), m = 8, gap = 10;
+  if (r.bottom < oy || r.top > oy + vh) return closePts(); // the score scrolled out of view
+  const w = Math.min(340, vw - 2 * m), cx = r.left + r.width / 2, left = Math.max(ox + m, Math.min(cx - w / 2, ox + vw - w - m));
   card.style.width = `${w}px`;
   card.style.left = `${left}px`;
   card.style.setProperty("--ax", `${Math.max(20, Math.min(cx - left, w - 20))}px`);
-  card.classList.toggle("below", !up);
-  const room = Math.max(120, up ? above : below);
-  card.style.top = up ? "auto" : `${r.bottom + gap}px`;
-  card.style.bottom = up ? `${vh - r.top + gap}px` : "auto";
-  $("pts-body").style.maxHeight = `${room - 4}px`;
+  // Measure the box at full height, then fit it above the score, else below, else in the middle of the screen.
+  body.style.maxHeight = "none";
+  const chrome = card.offsetHeight - body.offsetHeight, full = card.offsetHeight;
+  const above = r.top - oy - gap - m, below = oy + vh - r.bottom - gap - m;
+  const where = full <= above ? "up" : full <= below ? "down" : Math.max(above, below) >= 220 ? (above >= below ? "up" : "down") : "mid";
+  const room = where === "up" ? above : where === "down" ? below : vh - 2 * m;
+  body.style.maxHeight = `${Math.max(60, room - chrome)}px`;
+  card.classList.toggle("below", where === "down");
+  card.classList.toggle("mid", where === "mid");
+  const h = card.offsetHeight;
+  card.style.bottom = "auto";
+  card.style.top = `${where === "up" ? r.top - gap - h : where === "down" ? r.bottom + gap : oy + (vh - h) / 2}px`;
 }
 async function openPtsPop(id, sp, anchor) {
   const pop = $("pts-modal"), body = $("pts-body");
@@ -6014,10 +6023,10 @@ async function openPtsPop(id, sp, anchor) {
   }
   if (pop.hidden || ptsAnchor !== (anchor || null)) return;
   const d = cache[id].data, p = d.player, w = d.weeks.find((x) => x.sp === sp);
-  body.innerHTML = `${w ? `<div class="pts-line">${esc(compactLine(p.posId, w.stats) || gameLine(p.posId, w.stats))}</div>${breakdownHtml(w, p.posId)}` : (() => {
-        const row = cmpRow(id, cmpWeek()), live = row && sp === state.week?.sp && row.played;
-        return `${live && row.short ? `<div class="pts-line">${esc(row.short)}</div>` : ""}<p class="muted small">${live ? `${f2(row.actual)} points so far.` : `No scoring for week ${sp}.`}</p>`;
-      })()}`;
+  body.innerHTML = w ? breakdownHtml(w, p.posId) : (() => {
+    const row = cmpRow(id, cmpWeek()), live = row && sp === state.week?.sp && row.played;
+    return `<p class="muted small">${live ? `${f2(row.actual)} points so far.` : `No scoring for week ${sp}.`}</p>`;
+  })();
   placePts(); // taller now: it grows upward from the score
 }
 // Open the shared popup with arbitrary content (e.g. the Roster tab's upgrade list).
@@ -6143,7 +6152,7 @@ function renderPlayerModal(d, focusSp, ctx) {
         ${`<td class="num muted">–</td>`.repeat(ncols - 2)}</tr>`;
     }
     const open = focusSp === sp;
-    const pts = `<td class="num gl-ptd"><button type="button" class="gl-pts" aria-expanded="${open}" aria-controls="gl-bd-${sp}">${f1(w.pts)}<span class="caret">▾</span></button></td>`;
+    const pts = `<td class="num gl-ptd"><button type="button" class="gl-pts pts-link" data-pid="${esc(p.id)}" data-sp="${sp}" title="How these points were scored">${f1(w.pts)}</button></td>`;
     let cells;
     if (mode === "use") {
       const u = ul ? usage(sp) : null;
@@ -6155,8 +6164,7 @@ function renderPlayerModal(d, focusSp, ctx) {
       cells = `${mode === "rec" ? `<td class="num">${sv(w, 58)}</td><td class="num">${sv(w, 53)}</td>` : mode === "rush" ? `<td class="num">${sv(w, 23)}</td>` : ""}<td class="num">${sv(w, yd)}</td><td class="num">${sv(w, td)}</td><td class="num">${sv(w, 20)}/${sv(w, 72)}</td>${pts}`;
     }
     const line = mode === "game" ? esc(compactLine(p.posId, w.stats) || gameLine(p.posId, w.stats)) : "";
-    return `<tr class="gl-row ${open ? "open" : ""}" data-sp="${sp}"><td class="gl-wk">${sp}</td>${oppCell(w.opp, w.home, line)}${cells}</tr>
-      ${mode === "use" ? "" : `<tr class="gl-bd" id="gl-bd-${sp}" ${open ? "" : "hidden"}><td colspan="${ncols}">${breakdownHtml(w, p.posId)}</td></tr>`}`;
+    return `<tr class="gl-row ${open ? "open" : ""}" data-sp="${sp}"><td class="gl-wk">${sp}</td>${oppCell(w.opp, w.home, line)}${cells}</tr>`;
   }).join("");
   const heads = mode === "use" ? `<th class="num" title="Share of the team's offensive snaps">Snap%</th><th class="num" title="Share of the team's targets">Tgt%</th><th class="num" title="Share of the team's rushing attempts">Rush%</th><th class="num" title="Share of the team's red-zone targets and carries (inside the 20)">RZ%</th>`
     : mode === "game" ? `<th class="num">FPTS</th>`
@@ -6353,13 +6361,7 @@ function renderPlayerModal(d, focusSp, ctx) {
   body.querySelector("[data-compare]")?.addEventListener("click", () => startCompare(String(p.id)));
   body.querySelectorAll("[data-glm]").forEach((b) => b.addEventListener("click", () => { S.glMode = b.dataset.glm; renderPlayerModal(d, focusSp, ctx); }));
   body.querySelectorAll("[data-txmore]").forEach((b) => b.addEventListener("click", () => { const box = body.querySelector(".tx-more"); box.hidden = !box.hidden; b.textContent = box.hidden ? b.dataset.txmore : "Show less ▴"; }));
-  body.querySelectorAll(".gl-pts").forEach((b) => b.addEventListener("click", () => {
-    const row = b.closest("tr"), bd = row.nextElementSibling;
-    bd.hidden = !bd.hidden;
-    row.classList.toggle("open", !bd.hidden);
-    b.setAttribute("aria-expanded", String(!bd.hidden));
-  }));
-  if (tab === "log" && focusSp && bySp[focusSp]) body.querySelector(`.pm-pane #gl-bd-${focusSp}`)?.scrollIntoView({ block: "center" });
+  if (tab === "log" && focusSp && bySp[focusSp]) body.querySelector(`.pm-pane tr.gl-row[data-sp="${focusSp}"]`)?.scrollIntoView({ block: "center" });
 }
 
 // ---------- Depth charts (player popup) ----------
