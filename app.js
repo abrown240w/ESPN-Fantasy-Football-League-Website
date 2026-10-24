@@ -684,6 +684,11 @@ function renderMatchups() {
     </div>
     <p class="muted small show-phone mu-note">${label}</p>`;
   fitNames(el);
+  $("mu-feed")?.addEventListener("click", (e) => {
+    if (!e.target.closest("#mf-more")) return;
+    state.feedMax = (state.feedMax || 60) + 60;
+    $("mu-feed").innerHTML = scoringFeed(w.matchups.find((x) => x.id === state.openMatchup));
+  });
   el.querySelectorAll(".mini-tile[data-mu], .lg-card[data-mb]").forEach((c) => c.addEventListener("click", () => {
     const m = w.matchups.find((x) => x.id === +(c.dataset.mu || c.dataset.mb));
     if (!m?.away || state.openMatchup === m.id) return;
@@ -691,6 +696,7 @@ function renderMatchups() {
     el.querySelectorAll(".mini-tile[data-mu], .lg-card[data-mb]").forEach((b) => b.classList.toggle("selected", b === c));
     const pane = $("mu-pane");
     pane.innerHTML = matchupDetail(m, true);
+    state.feedMax = 0;
     $("mu-feed").innerHTML = scoringFeed(m);
     pane.scrollTop = 0;
     pane.classList.remove("swap");
@@ -927,64 +933,209 @@ function onFieldLine(m) {
 
 // withHead = false when the breakdown opens under its matchup card, which already shows the teams,
 // scores and win chance.
-// Computers, Matchup tab: every score this week by a starter in the selected matchup (touchdowns, the
-// passes that threw them, field goals and extra points, D/ST returns and safeties), newest first.
-const feedName = (s) => ` ${String(s).toLowerCase().replace(/\b(jr|sr|ii|iii|iv|v)\b\.?/g, "").replace(/[^a-z ]/g, "").replace(/\s+/g, " ").trim()} `;
+// ---------- Play-by-play fantasy points ----------
+// Each play of a game turned into fantasy points for the starters in it, under the league's scoring:
+// the yards and catch on a 6-yard reception, the sack a QB takes, a missed extra point, a D/ST sack, and
+// the D/ST tier changes when the other team scores or gains yards. Read from ESPN's play text
+// ("(Shotgun) D.Maye pass short right to R.Stevenson to CHI 31 for 19 yards (J.Johnson).").
+const PA_TIER_IDS = [[0, 89], [6, 90], [13, 91], [17, 92], [21, 121], [27, 122], [34, 123], [45, 124], [Infinity, 125]];
+const YA_TIER_IDS = [[99, 128], [199, 129], [299, 130], [349, 131], [399, 132], [449, 133], [499, 134], [549, 135], [Infinity, 136]];
+const YD_BONUS = { pass: [[400, 18], [300, 17]], rush: [[200, 38], [100, 37]], rec: [[200, 57], [100, 56]] };
+const reEsc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+// "Amon-Ra St. Brown" -> matches "A.St. Brown"; "A.J. Brown" -> "A.Brown"; "Kenneth Walker III" -> "K.Walker".
+// When a teammate shares the initial and last name (Bijan and Brian Robinson), ESPN writes one of them
+// with more letters ("Bi.Robinson"): `mates` are the names on the player's team that game, `text` all its plays.
+function playName(name, mates = [], text = "") {
+  const key = (n) => { const ps = String(n).replace(/\s+(Jr\.?|Sr\.?|II|III|IV|V)$/i, "").trim().split(/\s+/); return ps.length < 2 ? null : { first: ps[0], last: ps.slice(1).join(" ") }; };
+  const me = key(name);
+  if (!me) return null;
+  const last = reEsc(me.last).replace(/\\\.\s*/g, "\\.\\s?");
+  const exact = (pre) => `(?<![A-Za-z.])${reEsc(pre)}\\.\\s?${last}(?![A-Za-z])`;
+  const twin = mates.some((n) => { const k = key(n); return k && n !== name && k.last === me.last && k.first[0] === me.first[0]; });
+  if (!twin) return `(?<![A-Za-z.])${reEsc(me.first[0])}[A-Za-z']*\\.(?:[A-Z]\\.)?\\s?${last}(?![A-Za-z])`;
+  for (let k = me.first.length; k >= 2; k--) if (new RegExp(exact(me.first.slice(0, k))).test(text)) return exact(me.first.slice(0, k));
+  return exact(me.first[0]);
+}
+function playPoints(box, starters, items) {
+  const T = box?.teams || {}, home = T.home?.proId, away = T.away?.proId;
+  if (!box?.plays?.length || home == null) return [];
+  const byId = new Map(items.map((i) => [i.statId, i]));
+  const val = (id, p) => { const it = byId.get(id); return it ? Number(it.pointsOverrides?.[p.posId === 16 ? 16 : p.slotId] ?? it.points) || 0 : 0; };
+  // Play text spells a few teams its own way ("HST 35", "RECOVERED by CLV-").
+  const TXT = { HOU: "HST", CLE: "CLV", BAL: "BLT", LAR: "LA", ARI: "ARZ", WSH: "WAS" };
+  const abbr = { [home]: TXT[T.home.abbr] || T.home.abbr, [away]: TXT[T.away.abbr] || T.away.abbr };
+  const fgId = (d) => (d >= 60 && byId.has(201) ? 201 : d >= 50 ? (byId.has(198) ? 198 : 74) : d >= 40 ? 77 : 80);
+  const tierOf = (tiers, n) => tiers.find(([max]) => n <= max)[1];
+  const bonusOf = (tiers, n) => tiers.find(([at]) => n >= at)?.[1] ?? null;
+  const yds = (s) => { const m = s.match(/for (-?\d+) yards?|for no gain/); return m ? Number(m[1] || 0) : 0; };
+  const allText = box.plays.map((x) => x.text).join("\n");
+  const mates = (proId) => (box.players?.[proId === home ? "home" : "away"] || []).flatMap((c) => c.rows.map((r) => r.name));
+  const who = starters.filter(({ p }) => p.proId === home || p.proId === away)
+    .map((s) => ({ ...s, re: s.p.posId === 16 ? null : playName(s.p.name, mates(s.p.proId), allText), run: { pass: 0, rush: 0, rec: 0, kr: 0, pr: 0, pa: 0, ya: 0 } }));
+  const out = [];
+  for (const pl of box.plays) {
+    // Drop formation notes, "L.Newman reported in as eligible." and "Direct snap to R.Harvey." from the front.
+    const lead = (s) => s.trim().replace(/^((\([^)]*\)|\S+ reported in as eligible\.|Direct snap to \S+?\.(?=\s))\s*)+/, "");
+    let t = lead(pl.text);
+    const rev = t.lastIndexOf("REVERSED.");
+    if (rev >= 0) t = lead(t.slice(rev + 9));
+    const noPlay = /No Play/i.test(t);
+    const [main, two = ""] = t.split(/TWO-POINT CONVERSION ATTEMPT\.?/i);
+    const twoOk = /ATTEMPT SUCCEEDS/i.test(two);
+    const kick = /^\S+ (kicks|punts)\b/.test(main) ? (/^\S+ punts/.test(main) ? "punt" : "kick") : null;
+    const hasBall = kick ? (pl.off === home ? away : home) : pl.off; // who runs the play (receives a kick)
+    const turnAt = main.search(/INTERCEPTED|FUMBLES/), tdAt = main.search(/TOUCHDOWN/);
+    const lostTo = main.match(/FUMBLES[^]*?recovered by ([A-Z]{2,3})-/i)?.[1];
+    const fumLost = /FUMBLES/.test(main) && lostTo && lostTo !== abbr[hasBall];
+    const turnover = /INTERCEPTED/.test(main) || fumLost;
+    const offTD = tdAt >= 0 && (turnAt < 0 || tdAt < turnAt || !turnover);
+    const defTD = tdAt >= 0 && turnover && tdAt > turnAt;
+    const scrimmage = !kick && !/^\S+ (\d+ yard field goal|extra point)/i.test(main);
+    // A holding call on the offense during the play: the yards only count up to the spot of the foul.
+    // A botched snap the offense falls on and then runs a play from: score the play that followed.
+    const act = main.match(/FUMBLES, (?:and recovers|recovered by ([A-Z]{2,3})-\S+) at [^.]*?\d+\.\s+(\S+ (?:pass|sacked|scrambles|left|right|up|to)\b.*)$/);
+    const play = act && (!act[1] || act[1] === abbr[hasBall]) ? act[2] : main;
+    const playYds = (() => {
+      const y = yds(play), own = abbr[hasBall];
+      const pen = play.match(/PENALTY on ([A-Z]{2,3})-.*?enforced at (?:([A-Z]{2,3}) )?(\d+)/);
+      const end = play.match(/(?:to|at) (?:([A-Z]{2,3}) )?(\d+) for (-?\d+) yards?/);
+      if (!pen || pen[1] !== own || !end) return y;
+      const pos = (tm, n) => (!tm || tm === own ? Number(n) : 100 - Number(n)); // yards from the offense's goal line
+      const e = pos(end[1], end[2]), f = pos(pen[2], pen[3]);
+      return f < e ? f - (e - Number(end[3])) : y;
+    })();
+    const gained = [];
+    for (const s of who) {
+      const { p, re, run } = s, adds = [], what = [];
+      let pts = 0;
+      const add = (id, n = 1) => { pts += val(id, p) * n; };
+      const bonus = (k, before, after) => { const a = bonusOf(YD_BONUS[k], before), b = bonusOf(YD_BONUS[k], after); if (a !== b) { pts += (b ? val(b, p) : 0) - (a ? val(a, p) : 0); what.push(b ? `${YD_BONUS[k].find(([, id]) => id === b)[0]}-yd bonus` : "Yardage bonus lost"); } };
+      if (p.posId === 16) {
+        // D/ST: plays against the other team's offense, its own kick returns, and the tiers.
+        const D = p.proId, opp = D === home ? away : home;
+        if (!run.started) {
+          // ESPN starts a D/ST at its best tiers (no points, no yards allowed) and takes points away as they're given up.
+          run.started = true;
+          const b = val(tierOf(PA_TIER_IDS, 0), p) + val(tierOf(YA_TIER_IDS, 0), p);
+          if (b) { pts += b; what.push("Kickoff: no points or yards allowed yet"); }
+        }
+        if (!noPlay) {
+          if (hasBall === opp && !kick) {
+            if (/ sacked /.test(main)) { add(99); what.push("Sack"); }
+            if (/INTERCEPTED/.test(main)) { add(95); what.push("Interception"); if (defTD) { add(103); what.push("Return TD"); } }
+            if (/SAFETY/.test(main)) { add(98); what.push("Safety"); }
+          }
+          if (hasBall === opp) {
+            if (/FUMBLES \((?!Aborted)/.test(main)) { add(106); what.push("Forced fumble"); }
+            if (fumLost && lostTo === abbr[D]) { add(96); what.push("Fumble recovery"); if (defTD) { add(104); what.push("Return TD"); } }
+          }
+          if (pl.off === opp && /BLOCKED/i.test(main)) { add(97); what.push("Blocked kick"); if (tdAt >= 0) { add(93); what.push("Return TD"); } }
+          if (kick && hasBall === D && !/BLOCKED/i.test(main)) {
+            const k = kick === "punt" ? "pr" : "kr", y = playYds, per = (n) => Math.floor(n / 25);
+            const before = run[k]; run[k] += y;
+            const steps = per(run[k]) - per(before);
+            if (steps) { add(kick === "punt" ? 119 : 117, steps); what.push(`${kick === "punt" ? "Punt" : "Kick"} return yards: ${run[k]}`); }
+            if (tdAt >= 0 && !fumLost) { add(kick === "punt" ? 102 : 101); what.push(`${kick === "punt" ? "Punt" : "Kick"} return TD`); }
+          }
+          // Yards allowed: the other team's runs, completions and sacks (as ESPN's total yards counts them).
+          if (hasBall === opp && scrimmage && !/incomplete|INTERCEPTED|spiked/.test(main) && /for (-?\d+ yards?|no gain)/.test(main)) {
+            const a = tierOf(YA_TIER_IDS, run.ya); run.ya += playYds;
+            const b = tierOf(YA_TIER_IDS, run.ya);
+            if (a !== b) { pts += val(b, p) - val(a, p); what.push(`Yards allowed: ${run.ya}`); }
+          }
+        }
+        const allowed = D === home ? pl.away : pl.home;
+        if (allowed != null && allowed !== run.pa) {
+          const a = tierOf(PA_TIER_IDS, run.pa), b = tierOf(PA_TIER_IDS, allowed);
+          run.pa = allowed;
+          if (a !== b) { pts += val(b, p) - val(a, p); what.push(`Points allowed: ${allowed}`); }
+        }
+      } else if (re && !noPlay) {
+        const N = re, has = (x) => new RegExp(x).test(play);
+        // Yards after a lateral count for the passer, and as receiving yards for whoever took the lateral.
+        const lat = play.match(/Lateral to (\S+) .*?for (-?\d+) yards?/i), latY = lat ? Number(lat[2]) : 0;
+        const y = playYds;
+        if (has(`^${N} pass`) && !/spiked/.test(main)) {
+          if (/INTERCEPTED/.test(main)) { add(20); what.push("Interception thrown"); }
+          else if (!/incomplete/.test(main) && / to /.test(main)) {
+            add(3, y + latY); const b = run.pass; run.pass += y + latY; bonus("pass", b, run.pass);
+            if (offTD) { add(4); if (y >= 40) add(15); if (y >= 50) add(16); }
+            what.unshift(`${offTD ? "TD pass" : "Completion"}, ${y} yds`);
+          }
+        }
+        if (has(`pass [^.]*?to ${N}`) && !/incomplete|INTERCEPTED/.test(main)) {
+          add(53); add(42, y); const b = run.rec; run.rec += y; bonus("rec", b, run.rec);
+          if (offTD) { add(43); if (y >= 40) add(45); if (y >= 50) add(46); }
+          what.unshift(`${offTD ? "TD catch" : "Catch"}, ${y} yds`);
+        }
+        if (lat && new RegExp(N).test(lat[1]) && !/incomplete|INTERCEPTED/.test(play)) { add(42, latY); const b = run.rec; run.rec += latY; bonus("rec", b, run.rec); what.push(`Lateral, ${latY} yds`); }
+        if (scrimmage && has(`^${N} (?!pass|sacked|spiked)`)) {
+          add(24, y); const b = run.rush; run.rush += y; bonus("rush", b, run.rush);
+          if (offTD) { add(25); if (y >= 40) add(35); if (y >= 50) add(36); }
+          what.unshift(`${offTD ? "TD run" : /kneels/.test(main) ? "Kneel" : "Run"}, ${y} yds`);
+        }
+        if (has(`^${N} sacked`)) { add(64); what.push("Sacked"); }
+        // The ball carrier fumbles ("...for 5 yards (C.Schwesinger). FUMBLES (C.Schwesinger), RECOVERED by CLV-T.Campbell"),
+        // or someone named does ("J.Majors FUMBLES at PHI 43").
+        const carrier = (has(`pass [^.]*?to ${N}`) && !/incomplete|INTERCEPTED/.test(main)) || (scrimmage && has(`^${N} (?!pass|spiked)`));
+        if (has(`${N} FUMBLES`) || (carrier && /[).] FUMBLES/.test(main))) { add(68); if (fumLost) { add(72); what.push("Fumble lost"); } }
+        const fg = main.match(new RegExp(`${N} (\\d+) yard field goal is (GOOD|No Good|BLOCKED)`, "i"));
+        if (fg) { const d = Number(fg[1]); if (/GOOD/i.test(fg[2]) && !/no good/i.test(fg[2])) { add(fgId(d)); what.push(`${d}-yd field goal`); } else { add(85); what.push(`Missed ${d}-yd field goal`); } }
+        const xp = main.match(new RegExp(`${N} extra point is (GOOD|No Good|BLOCKED|Aborted)`, "i"));
+        if (xp) { if (/^good$/i.test(xp[1])) { add(86); what.push("Extra point"); } else { add(88); what.push("Missed extra point"); } }
+        if (kick && hasBall === p.proId && tdAt >= 0 && has(`\\. ${N} `)) { add(kick === "punt" ? 102 : 101); what.push("Return TD"); }
+        if (twoOk) {
+          if (new RegExp(`^\\s*${N} pass`).test(two)) { add(19); what.push("Two-point pass"); }
+          else if (new RegExp(`to ${N}`).test(two)) { add(44); what.push("Two-point catch"); }
+          else if (new RegExp(`^\\s*${N} `).test(two)) { add(26); what.push("Two-point run"); }
+        }
+      }
+      if (Math.abs(pts) >= 0.005) gained.push({ p, t: s.t, pts, what: what.join(" · ") });
+    }
+    if (gained.length) out.push({ pl, who: gained });
+  }
+  return out;
+}
+
+// Computers, Matchup tab: every play that changed a starter's points in the selected matchup (both
+// teams, D/ST included), newest first.
 function scoringFeed(m) {
   if (!m?.away) return "";
-  const gs = ensureGameStatus()?.byPro || {}, sides = [[m.home, team(m.home.teamId)], [m.away, team(m.away.teamId)]];
+  const gs = ensureGameStatus()?.byPro || {}, items = state.base.raw.settings?.scoringSettings?.scoringItems || [];
   const games = new Map(); // game id -> { g, starters: [{ p, t }] }
-  for (const [s, t] of sides) for (const p of s.starters) {
+  for (const s of [m.home, m.away]) for (const p of s.starters) {
     const g = gs[p.proId];
     if (!g || g.state === "pre") continue;
     if (!games.has(g.id)) games.set(g.id, { g, starters: [] });
-    games.get(g.id).starters.push({ p, t });
+    games.get(g.id).starters.push({ p, t: team(s.teamId) });
   }
   const head = `<h3>Scoring feed</h3>`;
   if (!games.size) return `${head}<p class="muted small">No starters have played yet this week.</p>`;
-  const plays = [];
+  const rows = [];
   let loading = false;
   for (const { g, starters } of games.values()) {
     ensureBox(g, () => { if (state.tab === "matchups" && state.openMatchup === m.id && $("mu-feed")) $("mu-feed").innerHTML = scoringFeed(m); });
     const d = state.boxes?.[g.id];
     if (!d || d === "loading") { loading = true; continue; }
-    (d.scoring || []).forEach((pl, i) => {
-      const txt = feedName(pl.text);
-      for (const { p, t } of starters) {
-        if (p.proId !== pl.proId) continue;
-        let role = "";
-        if (p.posId === 16) role = pl.type === "SF" || /interception|fumble|return|blocked|safety/i.test(pl.kind) ? "D/ST score" : "";
-        else {
-          const nm = feedName(p.name);
-          if (!txt.includes(nm)) continue;
-          role = txt.startsWith(nm) ? (pl.type === "FG" ? "Field goal" : "Touchdown") : txt.includes(` from${nm}`) || txt.includes(` pass${nm}`) ? "TD pass" : txt.includes(`${nm}kick `) ? "Extra point" : "Two-point try";
-        }
-        if (!role) continue;
-        const [mm, ss] = (pl.clock || "0:00").split(":").map(Number);
-        // Roughly when it happened: kickoff plus game time (a quarter takes about 45 real minutes).
-        const at = Date.parse(g.date) + ((pl.period - 1) * 15 + (15 - (mm || 0) - (ss || 0) / 60)) * 3 * 60e3;
-        plays.push({ pl, p, t, role, at, i, g });
-      }
+    // Opponent and score from this player's side, as on the game line ("@DAL 21-17").
+    const side = (proId) => (d.teams?.home?.proId === proId ? "home" : "away");
+    playPoints(d, starters, items).forEach((x, i) => {
+      const [mm, ss] = (x.pl.clock || "0:00").split(":").map(Number);
+      const at = Date.parse(x.pl.wall) || Date.parse(g.date) + ((x.pl.period - 1) * 15 + (15 - (mm || 0) - (ss || 0) / 60)) * 3 * 60e3;
+      rows.push({ ...x, at, i, d, side });
     });
   }
-  // One entry per play, listing every starter in it (a QB and his receiver can both be starting).
-  const byPlay = new Map();
-  for (const x of plays) {
-    const k = `${x.g.id}:${x.pl.id || x.i}`;
-    if (!byPlay.has(k)) byPlay.set(k, { ...x, who: [] });
-    byPlay.get(k).who.push(x);
-  }
-  const items = [...byPlay.values()].sort((a, b) => b.at - a.at || b.i - a.i);
-  if (!plays.length) return `${head}${loading ? `<div class="loading small"><span class="spinner"></span> Loading scoring plays…</div>` : `<p class="muted small">No scores by these starters yet.</p>`}`;
-  const q = (n) => (n > 4 ? "OT" : `Q${n}`);
-  const kind = (pl) => (pl.type === "FG" ? "Field goal" : pl.type === "SF" ? "Safety" : pl.type === "TD" ? "Touchdown" : pl.kind || "Score");
-  return `${head}<div class="mf-list">${items.map(({ pl, g, who }) => {
-    const score = pl.away != null && pl.home != null ? ` ${g.home ? `${pl.home}-${pl.away}` : `${pl.away}-${pl.home}`}` : "";
+  rows.sort((a, b) => b.at - a.at || b.i - a.i);
+  if (!rows.length) return `${head}${loading ? `<div class="loading small"><span class="spinner"></span> Loading plays…</div>` : `<p class="muted small">No points scored by these starters yet.</p>`}`;
+  const max = state.feedMax || 60;
+  const q = (n) => (n > 4 ? "OT" : `Q${n}`), pts = (n) => `<span class="mf-pts ${n < 0 ? "neg" : "pos"}">${n < 0 ? "−" : "+"}${f2(Math.abs(n))}</span>`;
+  return `${head}<div class="mf-list">${rows.slice(0, max).map(({ pl, who, d }) => {
+    const A = d.teams.away, H = d.teams.home;
     return `<div class="mf-item ${who.some((x) => myRow(x.t.id)) ? "my-row" : ""}">
-      <div class="mf-top"><span class="mf-role ${pl.type === "TD" ? "td" : ""}">${esc(kind(pl))}</span><span class="mf-when muted">${q(pl.period)} ${esc(pl.clock)} · ${esc(pl.team)} ${g.home ? "vs" : "@"} ${esc(g.oppAbbr || "")}${score}</span></div>
-      ${who.map(({ p, t, role }) => `<div class="mf-who">${logoImg(t, 18)}${plinkNm(p)}<span class="mf-tag">${esc(role)}</span></div>`).join("")}
+      <div class="mf-top muted">${q(pl.period)} ${esc(pl.clock)} · ${esc(A.abbr)} ${pl.away ?? ""} @ ${esc(H.abbr)} ${pl.home ?? ""}</div>
+      ${who.map(({ p, t, pts: n, what }) => `<div class="mf-who">${logoImg(t, 18)}${plinkNm(p)}${pts(n)}</div><div class="mf-what">${esc(what)}</div>`).join("")}
       <div class="mf-text small muted">${esc(pl.text)}</div></div>`;
-  }).join("")}</div>`;
+  }).join("")}</div>${rows.length > max ? `<button type="button" class="linkish mf-more" id="mf-more">Show more</button>` : ""}`;
 }
 
 function matchupDetail(m, withHead = true) {

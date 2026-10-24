@@ -65,14 +65,24 @@ export default async (req) => {
     }
     for (const side of ["away", "home"]) if (teams[side]) delete teams[side].stats;
 
-    // Scoring plays, in game order: "D'Andre Swift 4 Yd Rush (Cairo Santos Kick)".
-    const scoring = (d.scoringPlays || []).map((p) => ({
-      id: String(p.id || ""), type: p.type?.abbreviation || p.scoringType?.abbreviation || "", kind: p.type?.text || "",
-      text: (p.text || "").trim(), period: p.period?.number || 0, clock: p.clock?.displayValue || "",
-      team: p.team?.abbreviation || "", proId: Number(p.team?.id) || null, away: p.awayScore ?? null, home: p.homeScore ?? null,
-    }));
+    // Every play, in game order ("(Shotgun) D.Maye pass short right to R.Stevenson for 19 yards"), for the
+    // Matchup tab's play-by-play fantasy points. `off` is the team with the ball when the play started
+    // (the kicking team on kickoffs and punts); scores are after the play.
+    const seen = new Set(), plays = [];
+    for (const dr of [...(d.drives?.previous || []), ...(d.drives?.current ? [d.drives.current] : [])]) {
+      for (const p of dr.plays || []) {
+        if (!p.text || seen.has(p.id) || /timeout|end period|end of|two-minute/i.test(p.type?.text || "")) continue;
+        seen.add(p.id);
+        plays.push({
+          id: String(p.id), seq: Number(p.sequenceNumber) || 0, type: p.type?.text || "", text: p.text.trim(),
+          period: p.period?.number || 0, clock: p.clock?.displayValue || "", wall: p.wallclock || "",
+          off: Number(p.start?.team?.id) || null, yds: p.statYardage ?? 0, away: p.awayScore ?? null, home: p.homeScore ?? null,
+        });
+      }
+    }
+    plays.sort((a, b) => a.seq - b.seq);
 
-    return json(200, { event, state, updated: Date.now(), teams, teamStats, players, scoring }, {
+    return json(200, { event, state, updated: Date.now(), teams, teamStats, players, plays }, {
       "cache-control": `public, max-age=${state === "in" ? 15 : 300}`,
       "netlify-cdn-cache-control": `public, max-age=${state === "in" ? 20 : state === "post" ? 3600 : 300}`,
     });

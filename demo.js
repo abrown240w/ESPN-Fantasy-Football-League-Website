@@ -551,15 +551,42 @@
         ts("Time of possession", "29:12", "30:48"),
       ],
       players: { away: cats(A), home: cats(H) },
-      scoring: (() => {
+      // Play-by-play in ESPN's wording, built from each player's demo stats (runs, catches, a sack, kicks).
+      plays: (() => {
+        const ab = (n) => n.replace(/^(\S)\S*\s+/, "$1.");
+        const abbr = (tm) => (tm === A ? g.away.abbr : g.home.abbr);
+        const queues = [A, H].map((tm) => {
+          const ps = forTeam(tm), qb = ps.find((x) => x.posId === 1), q = [];
+          const at = (k) => `${k % 2 ? abbr(tm) : abbr(tm === A ? H : A)} ${20 + (k * 7) % 30}`;
+          for (const p of ps) {
+            const s = p.stats, k0 = p.id;
+            const car = Math.max(0, Math.round((s[24] || 0) / 4.4));
+            for (let i = 0; i < car; i++) {
+              const y = i < car - 1 ? Math.round((s[24] || 0) / car) : (s[24] || 0) - Math.round((s[24] || 0) / car) * (car - 1);
+              q.push(i === car - 1 && s[25] ? `${ab(p.name)} up the middle for ${y} yards, TOUCHDOWN.` : `${ab(p.name)} ${["left end", "right guard", "up the middle"][i % 3]} to ${at(k0 + i)} for ${y} yard${Math.abs(y) === 1 ? "" : "s"}.`);
+            }
+            const rec = s[53] || 0;
+            for (let i = 0; i < rec && qb && qb !== p; i++) {
+              const y = i < rec - 1 ? Math.round((s[42] || 0) / rec) : (s[42] || 0) - Math.round((s[42] || 0) / rec) * (rec - 1);
+              q.push(i === rec - 1 && s[43] ? `(Shotgun) ${ab(qb.name)} pass short right to ${ab(p.name)} for ${y} yards, TOUCHDOWN.` : `(Shotgun) ${ab(qb.name)} pass short ${i % 2 ? "left" : "middle"} to ${ab(p.name)} to ${at(k0 + i)} for ${y} yards.`);
+            }
+            if (p.posId === 1) q.push(`(Shotgun) ${ab(p.name)} sacked at ${at(k0)} for -6 yards.`);
+            if (p.posId === 5 && p.pts) q.push(`${ab(p.name)} ${30 + (p.id % 25)} yard field goal is GOOD, Center-J.Long, Holder-T.Ray.`);
+          }
+          return q.map((text) => ({ tm, text }));
+        });
+        // Alternate the two teams' plays, oldest first, with the score after each.
         const out = [];
         let a = 0, h = 0, n = 0;
-        for (const p of [...forTeam(A), ...forTeam(H)].sort((x, y) => x.id - y.id)) {
-          const home = p.proId === H, qb = forTeam(p.proId).find((x) => x.posId === 1);
-          const add = (type, kind, text, pts) => { if (home) h += pts; else a += pts; n++; out.push({ id: `${id}-${n}`, type, kind, text, period: Math.min(4, 1 + Math.floor(n / 2)), clock: `${(n * 7) % 15}:${String((n * 23) % 60).padStart(2, "0")}`, team: home ? g.home.abbr : g.away.abbr, proId: p.proId, away: a, home: h }); };
-          for (let i = 0; i < (p.stats[25] || 0); i++) add("TD", "Rushing Touchdown", `${p.name} ${3 + ((p.id + i) % 30)} Yd Rush (Kick)`, 7);
-          for (let i = 0; i < (p.stats[43] || 0); i++) add("TD", "Passing Touchdown", `${p.name} ${5 + ((p.id + i) % 40)} Yd pass from ${qb && qb !== p ? qb.name : "QB"} (Kick)`, 7);
-          if (p.posId === 5 && p.pts) add("FG", "Field Goal Good", `${p.name} ${30 + (p.id % 25)} Yd Field Goal`, 3);
+        const start = Date.parse(g.date);
+        while (queues.some((q) => q.length)) for (const q of queues) {
+          const x = q.shift();
+          if (!x) continue;
+          n++;
+          const pts = /TOUCHDOWN/.test(x.text) ? 7 : /field goal is GOOD/.test(x.text) ? 3 : 0;
+          if (x.tm === H) h += pts; else a += pts;
+          out.push({ id: `${id}-${n}`, seq: n, type: pts === 7 ? "Touchdown" : "Rush", text: x.text, period: Math.min(4, 1 + Math.floor(n / 14)), clock: `${14 - (n % 14)}:${String((n * 23) % 60).padStart(2, "0")}`,
+            wall: new Date(start + n * 90e3).toISOString(), off: x.tm, yds: 0, away: a, home: h });
         }
         return out;
       })(),
