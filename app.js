@@ -2351,10 +2351,12 @@ function fieldGraphic(g) {
   if (spot == null && f.yardLine != null) spot = f.yardLine;
   if (spot == null) return "";
   // If the raw yard lines look mirrored relative to the spot, flip them (only for the newest play;
-  // an earlier one shown during a stoppage won't line up with the current spot).
+  // an earlier one shown during a stoppage won't line up with the current spot). Never for a kick, score
+  // or turnover: the ball has changed hands, so the spot is the next possession's, not this play's.
   const shown = shownPlay(g);
   let lp = shown?.lp, driveStart = f.driveStart;
-  if (lp?.end != null && !shown.earlier && Math.abs(100 - lp.end - spot) + 1 < Math.abs(lp.end - spot)) {
+  const handover = lp && (lp.scoring || ["kick", "turnover", "fumble"].includes(playKind(lp.type, shown.text)) || /touchdown|safety/i.test(lp.type || ""));
+  if (lp?.end != null && !shown.earlier && !handover && Math.abs(100 - lp.end - spot) + 1 < Math.abs(lp.end - spot)) {
     lp = { ...lp, start: lp.start == null ? null : 100 - lp.start, end: 100 - lp.end };
     driveStart = driveStart == null ? null : 100 - driveStart;
   }
@@ -2420,6 +2422,9 @@ function fieldGraphic(g) {
     const isXp = /extra point/i.test(lp.type), isFg = /field goal/i.test(lp.type);
     const goalA = offDir > 0 ? 100 : 0;
     if (isXp) startA = endA = goalA - offDir * 15;
+    // Field goals: the line of scrimmage is the kick's length minus 17 (the end zone plus the hold).
+    const fgLen = isFg ? Number(/(\d+) yard field goal/i.exec(text)?.[1]) : 0;
+    if (fgLen > 17) startA = goalA - offDir * (fgLen - 17);
     if (kind === "incomplete") endA = lp.start + offDir * (/deep/i.test(text) ? 20 : 8); // no target spot recorded
     const xs = X(startA), xe = X(endA), Y = P(0, 96)[1], mid = (xs + xe) / 2;
     const gained = Math.round((lp.end - lp.start) * offDir);
