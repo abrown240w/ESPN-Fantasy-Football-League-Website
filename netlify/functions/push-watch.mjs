@@ -85,7 +85,8 @@ async function liveAlerts(lid, season, st, teams, out) {
       for (const [sid, stat, at] of BONUSES) if (paid.has(sid) && n(o.stats, stat) < at && n(p.stats, stat) >= at) gain += ptsFor(sid, 1, p);
     }
     gain = Math.round(gain * 10) / 10;
-    if (gain >= 15) { kinds.add("big"); if (!why.length) why.push("Big play"); }
+    // Not for a D/ST: it starts each game at its best tiers (+50 or so) and loses points from there.
+    if (gain >= 15 && p.posId !== 16) { kinds.add("big"); if (!why.length) why.push("Big play"); }
     if (!kinds.size) continue;
     const game = (L.games || []).find((g) => g.home?.proId === p.proId || g.away?.proId === p.proId);
     events.push({ p, kinds, why, gain, pass: tds.includes(4), catch: tds.includes(43), game });

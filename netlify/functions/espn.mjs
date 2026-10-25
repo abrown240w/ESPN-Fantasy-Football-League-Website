@@ -89,7 +89,11 @@ export default async (req) => {
       "content-type": "application/json",
       // Short cache so live scores stay fresh but repeat visits are fast. ?fresh=… (sent right after a
       // roster move) skips caching so the change shows immediately.
-      ...(params.has("fresh") ? { "cache-control": "no-store", "netlify-cdn-cache-control": "no-store" } : {
+      ...(params.has("fresh") ? { "cache-control": "no-store", "netlify-cdn-cache-control": "no-store" } : params.has("live") ? {
+        // This week while games are on (?live=1): every viewer shares one ESPN fetch every 15 seconds.
+        "cache-control": "public, max-age=10",
+        "netlify-cdn-cache-control": "public, max-age=15",
+      } : {
         "cache-control": "public, max-age=60",
         "netlify-cdn-cache-control": "public, max-age=60, stale-while-revalidate=120",
       }),

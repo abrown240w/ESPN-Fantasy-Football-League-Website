@@ -127,6 +127,8 @@ async function api(views, scoringPeriodId, season = state.season, fresh = false)
   if (fresh) q.set("fresh", Date.now()); // straight from ESPN, skipping every cache (right after a roster move)
   views.forEach((v) => q.append("view", v));
   if (scoringPeriodId) q.set("scoringPeriodId", scoringPeriodId);
+  // This week while NFL games are on: a much shorter cache, so scores keep up with the scoring feed.
+  if (state.gameStatus?.anyLive && scoringPeriodId && scoringPeriodId === state.gameStatus.sp) q.set("live", "1");
   if (state.leagueId) q.set("leagueId", state.leagueId);
   if (season) q.set("season", season);
   let res, body;
@@ -7028,10 +7030,15 @@ function bindUi() {
     if (state.tab === "live") keepState($("view-live"), renderLive);
     else if (state.live?.games?.some((g) => g.state === "in")) { state.liveStale = false; refreshLive(); }
   });
-  // Keep live weeks fresh.
+  // Keep live weeks fresh: every 20 seconds while NFL games are on (the Matchup and Roster scores), otherwise every 2 minutes.
+  let lastWeekRefresh = 0;
   setInterval(() => {
-    if (document.visibilityState === "visible" && state.week?.status === "live" && !state.demo) refreshWeekQuietly();
-  }, 120000);
+    if (document.visibilityState !== "visible" || state.week?.status !== "live" || state.demo) return;
+    const fast = state.gameStatus?.anyLive && state.gameStatus.sp === state.week.sp && (state.tab === "matchups" || state.tab === "roster");
+    if (Date.now() - lastWeekRefresh < (fast ? 20000 : 120000)) return;
+    lastWeekRefresh = Date.now();
+    refreshWeekQuietly();
+  }, 5000);
 }
 
 // ---------- Picking up new versions ----------
