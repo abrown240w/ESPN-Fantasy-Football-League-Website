@@ -851,17 +851,25 @@ function inLeague(x, fn) {
   Object.assign(state, { leagueId: x.id, base: x.base, owner: x.owner, week: x.week || state.week });
   try { return fn(); } finally { Object.assign(state, keep); }
 }
-async function loadOtherLeague(id, wk) {
-  const get = async (views, sp) => {
+// `prev`: what's already loaded for this week. A refresh during games only re-reads the scores.
+async function loadOtherLeague(id, wk, prev) {
+  const get = async (views, sp, live) => {
     if (state.demo) return window.DemoLeague.response(views, sp);
     const q = new URLSearchParams({ leagueId: id });
     views.forEach((v) => q.append("view", v));
     if (sp) q.set("scoringPeriodId", sp);
+    if (live) q.set("live", "1"); // the short cache used while games are on
     const res = await fetch(`/api/espn?${q}`);
     const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(body.message || "Couldn't load this league.");
     return body;
   };
+  if (prev?.base && prev.week && prev.wk === wk) {
+    const x = { ...prev, at: Date.now() };
+    const raw = await get(["mBoxscore", "mMatchupScore", "mRoster"], prev.week.sp, prev.week.status === "live");
+    x.week = inLeague(x, () => buildWeek(raw, prev.week.week));
+    return x;
+  }
   const base = buildBase(await get(["mTeam", "mSettings", "mStatus", "mMatchupScore"]));
   if (state.demo) base.raw.siteOwnerTeamIds = [String(Object.keys(base.teams)[LEAGUES.findIndex((l) => l.id === id) * 2] || "")]; // a different "your team" in each pretend league
   const week = Math.min(wk, base.weeks);
@@ -880,11 +888,12 @@ function ensureOtherLeagues() {
   for (const l of LEAGUES) {
     if (l.id === curLeague()) continue;
     const x = all[l.id];
-    const stale = !x || (x.wk !== wk && !x.loading) || (!x.loading && x.week?.status === "live" && Date.now() - x.at > 60e3) || (x.error && Date.now() - x.at > 60e3);
+    // While games are on: every 20 seconds, like the league on screen.
+    const stale = !x || (x.wk !== wk && !x.loading) || (!x.loading && x.week?.status === "live" && Date.now() - x.at > 20e3) || (x.error && Date.now() - x.at > 60e3);
     if (!stale || x?.loading) continue;
     all[l.id] = { ...(x?.wk === wk ? x : {}), loading: true };
     const base = state.base;
-    loadOtherLeague(l.id, wk)
+    loadOtherLeague(l.id, wk, x?.wk === wk && !x.error ? x : null)
       .then((d) => { all[l.id] = d; })
       .catch((e) => { all[l.id] = { id: l.id, error: e.message, at: Date.now(), wk }; })
       .finally(() => { if (state.base === base && state.tab === "matchups" && (state.muScope || "league") !== "league") keepState($("view-matchups"), renderMatchups); });
