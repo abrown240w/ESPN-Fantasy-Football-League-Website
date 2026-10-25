@@ -2459,3 +2459,13 @@ main .table-wrap:has(> .pt-table), body.has-chatbar main .table-wrap:has(> .pt-t
 .pts-card .breakdown { margin: 0; }
 .gl-pts.pts-active { border-color: var(--accent); background: var(--surface-2); }
 
+/* Search boxes: our own clear (×) button on the right (the browser's own is hidden so there's only one) */
+.srch { position: relative; display: flex; flex: 1 1 auto; min-width: 0; }
+.srch input { flex: 1 1 auto; min-width: 0; width: 100%; padding-right: 34px; }
+.srch input::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; display: none; }
+.srch-x { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); width: 26px; height: 26px; border: 0; border-radius: 50%; background: var(--surface-2); color: var(--ink-2); font-size: 1.1rem; line-height: 1; cursor: pointer; display: none; align-items: center; justify-content: center; padding: 0; }
+.srch.has .srch-x { display: inline-flex; }
+.srch-x:hover { background: var(--border); color: var(--ink); }
+.pl-search .srch { flex: 1 1 auto; }
+.nt-dupe { margin: 6px 0 10px; }
+

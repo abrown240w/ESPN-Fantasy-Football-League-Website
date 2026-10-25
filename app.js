@@ -664,6 +664,15 @@ function paintLiveDot() {
   d.title = on ? "Games are being played" : "No games right now";
 }
 
+// A search box with a clear (×) button on the right that shows once something is typed.
+const searchBox = (id, placeholder, value = "") => `<span class="srch ${value ? "has" : ""}"><input id="${id}" type="search" placeholder="${esc(placeholder)}" value="${esc(value)}" autocomplete="off"><button type="button" class="srch-x" aria-label="Clear search" tabindex="-1">×</button></span>`;
+function bindSearch(id, onChange) {
+  const input = $(id), wrap = input.closest(".srch");
+  const set = () => { wrap.classList.toggle("has", !!input.value); onChange(input.value); };
+  input.addEventListener("input", set);
+  wrap.querySelector(".srch-x").addEventListener("click", () => { input.value = ""; set(); input.focus(); });
+}
+
 // ---------- Matchups ----------
 function renderMatchups() {
   const w = state.week, el = $("view-matchups");
@@ -1369,8 +1378,9 @@ function renderPlayers() {
     sort: (r) => { const x = injOf(r); return x ? (c.sort ? c.sort(x) : x[c.key]) : null; },
     render: (r) => { const x = injOf(r); return x ? (c.render ? c.render(x) : esc(x[c.key])) : `<span class="muted">–</span>`; } })) : [];
   // Search and NFL team on one line; Available / All / watch list / injuries; then the positions.
-  el.innerHTML = `<div class="pl-top"><div class="filters pl-search"><input id="pl-q" type="search" placeholder="Search players…" value="${esc(f.q)}">
-      <select id="pl-nfl" aria-label="NFL team"><option value="ALL">All teams</option>${Object.keys(NFL_NAMES).sort((a, b) => NFL_NAMES[a].localeCompare(NFL_NAMES[b])).map((t) => `<option value="${t}" ${f.nfl === t ? "selected" : ""}>${esc(NFL_NAMES[t].split(" ").pop())}</option>`).join("")}</select></div>
+  const nick = (t) => NFL_NAMES[t].split(" ").pop();
+  el.innerHTML = `<div class="pl-top"><div class="filters pl-search">${searchBox("pl-q", "Search players…", f.q)}
+      <select id="pl-nfl" aria-label="NFL team"><option value="ALL">All teams</option>${Object.keys(NFL_NAMES).sort((a, b) => nick(a).localeCompare(nick(b))).map((t) => `<option value="${t}" ${f.nfl === t ? "selected" : ""}>${esc(nick(t))}</option>`).join("")}</select></div>
     ${playersNav(f.mode, me && !DESK.matches ? { on: !!f.mine && f.mode !== "all", off: f.mode === "all" } : null)}
     <div class="filters pl-filters">
       ${posSeg("pl-pos", f.pos, true)}
@@ -1387,7 +1397,7 @@ function renderPlayers() {
     drawPlayerTable($("pl-list"), ["player", ...(actTeam() ? ["act"] : []), ...(W ? ["watch"] : []), "pos", "opp", "proj", "pts", "ppg", "seasonPts", "own", "snap", "tgt", "rush", "rz", "pprRank", "posRank", "value", ...(inj === "healthy" ? [] : injCols)], rows, f.sort, w.sp,
       desk && inj !== "all" && !D ? "Loading the injury report…" : "No players match those filters.");
   };
-  $("pl-q").addEventListener("input", (e) => { f.q = e.target.value; draw(); });
+  bindSearch("pl-q", (v) => { f.q = v; draw(); });
   $("pl-nfl").addEventListener("change", (e) => { f.nfl = e.target.value; draw(); });
   bindPosSeg("pl-pos", (v) => (f.pos = v), draw);
   $("pl-inj")?.querySelectorAll("button").forEach((b) => b.addEventListener("click", () => {
@@ -3790,6 +3800,8 @@ const NOTIFY_KINDS = [
 ];
 const pushPost = (action, body) => fetch(`/api/push/${action}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
   .then(async (r) => { const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.message || `Request failed (${r.status})`); return d; });
+// A random id for this browser, so signing up again replaces its old sign-up instead of adding a second.
+const deviceId = () => store.get("ffb.device") || (store.set("ffb.device", (crypto.randomUUID?.() || `${Date.now()}-${Math.random()}`).replace(/[^\w-]/g, "")), store.get("ffb.device"));
 const b64ToBytes = (b64) => { const s = atob((b64 + "=".repeat((4 - (b64.length % 4)) % 4)).replace(/-/g, "+").replace(/_/g, "/")); return Uint8Array.from(s, (c) => c.charCodeAt(0)); };
 async function openNotifications() {
   const lid = String(state.base.raw?.id || state.leagueId || ""), season = state.base.season;
@@ -3811,6 +3823,7 @@ async function openNotifications() {
   const denied = Notification.permission === "denied";
   showModal(`${head}
     <p class="small muted">${esc(state.base.raw.settings?.name || "This league")} · alerts are only about your own team.${status.subscribed ? ` <strong class="pos">On for this device.</strong>` : ""}</p>
+    ${status.subscribed && status.others ? `<div class="banner small nt-dupe">Your team also gets alerts on ${status.others} other sign-up${status.others > 1 ? "s" : ""} (another device, or an old copy of this one), so the same alert can arrive more than once. <button type="button" class="linkish" id="nt-solo">Keep only this device</button></div>` : ""}
     ${denied ? `<div class="banner small">Notifications are blocked for this app. Turn them on in your phone's Settings → Notifications, then come back.</div>` : ""}
     <label class="nt-team small">Your team <select id="nt-team">${ids.map((id) => `<option value="${id}" ${id === teamSel ? "selected" : ""}>${esc(team(id).name)}</option>`).join("")}</select></label>
     <div class="nt-list">${NOTIFY_KINDS.map(([k, label, desc]) => `<label class="nt-row"><span><strong>${label}</strong><span class="muted small">${desc}</span></span>
@@ -3830,13 +3843,16 @@ async function openNotifications() {
         sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(publicKey) });
       }
       const prefs = Object.fromEntries([...document.querySelectorAll(".nt-sw")].map((c) => [c.dataset.k, c.checked]));
-      await pushPost("subscribe", { subscription: sub.toJSON(), leagueId: lid, season, teamId: Number($("nt-team").value), prefs });
+      await pushPost("subscribe", { subscription: sub.toJSON(), leagueId: lid, season, teamId: Number($("nt-team").value), prefs, device: deviceId() });
       // Signed in as the owner: waiver reports can include your missed claims too.
       if (store.get("ffb.owner") === "1") await fetch("/api/roster/pushowner", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ endpoint: sub.endpoint, leagueId: lid, season }) }).catch(() => {});
       msg(`<span class="pos">✓ Saved. You'll get alerts for ${esc(team($("nt-team").value).name)}.</span>`);
       setTimeout(openNotifications, 1200);
     } catch (err) { msg(`<span class="neg">${esc(err.message)}</span>`); e.target.disabled = false; }
   });
+  $("nt-solo")?.addEventListener("click", () => pushPost("solo", { endpoint: sub.endpoint, leagueId: lid, season })
+    .then((d) => { msg(`<span class="pos">✓ Removed ${d.removed} other sign-up${d.removed === 1 ? "" : "s"}. Turn notifications on again on any other device you want.</span>`); setTimeout(openNotifications, 1600); })
+    .catch((err) => msg(`<span class="neg">${esc(err.message)}</span>`)));
   $("nt-test")?.addEventListener("click", () => pushPost("test", { endpoint: sub.endpoint, leagueId: lid, season })
     .then(() => msg(`<span class="pos">Sent. It should arrive in a few seconds.</span>`)).catch((err) => msg(`<span class="neg">${esc(err.message)}</span>`)));
   $("nt-off")?.addEventListener("click", () => pushPost("unsubscribe", { endpoint: sub.endpoint, leagueId: lid, season })

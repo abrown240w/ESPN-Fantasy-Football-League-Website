@@ -124,17 +124,21 @@ async function injuryAlerts(lid, season, st, teams, out) {
       const status = pl.injuryStatus && INJ[pl.injuryStatus] ? pl.injuryStatus : "ACTIVE";
       now[e.playerId] = status;
       const was = st.inj?.[e.playerId];
-      if (was && INJ[was] !== INJ[status]) changes.push({ teamId: String(t.id), name: pl.fullName, posId: pl.defaultPositionId, slot: e.lineupSlotId, was, status });
+      if (was && INJ[was] !== INJ[status]) changes.push({ teamId: String(t.id), id: e.playerId, name: pl.fullName, posId: pl.defaultPositionId, slot: e.lineupSlotId, was, status });
     }
   }
   const first = !st.inj;
   st.inj = now;
   if (first) return;
+  const recent = (st.injRecent ||= {});
+  for (const [id, r] of Object.entries(recent)) if (Date.now() - r.at > 3 * 3600e3) delete recent[id];
   for (const c of changes) {
     const better = c.status === "ACTIVE";
+    const title = `${better ? "✅" : "🩺"} ${c.name} · ${INJ[c.status]}`;
+    recent[c.id] = { at: Date.now(), title };
     out.push({
-      teamId: c.teamId, kinds: ["injury"], tag: `inj-${c.name}`,
-      title: `${better ? "✅" : "🩺"} ${c.name} · ${INJ[c.status]}`,
+      teamId: c.teamId, pid: c.id, kinds: ["injury"], tag: `player-${c.id}`,
+      title,
       body: `${POS[c.posId] || ""} · ${SLOT[c.slot] || "Roster"} · was ${INJ[c.was]}${!better && c.slot !== BENCH && c.slot !== IR ? ". He's in your starting lineup." : ""}`,
       url: `/?league=${lid}&tab=roster`,
     });
@@ -176,10 +180,17 @@ async function newsAlerts(lid, season, st, teams, out) {
       if (seen[r.id] == null) return;
       const fresh = list.filter((n) => n.at > seen[r.id] && Date.now() - n.at < 6 * 3600e3).slice(0, 2);
       for (const n of fresh.reverse()) {
+        const text = (n.headline || n.story).slice(0, 180);
+        // The note about a status change that was just alerted: one notification, not two. In the same run
+        // the injury alert takes the note as its message; a little later the note replaces it on the
+        // phone (same tag) with the status kept in the title.
+        const inj = out.find((x) => x.pid === r.id && x.teamId === r.teamId && x.kinds.includes("injury"));
+        if (inj) { inj.kinds = ["injury", "news"]; inj.body = text; continue; }
+        const was = st.injRecent?.[r.id];
         out.push({
-          teamId: r.teamId, kinds: ["news"], tag: `news-${r.id}-${n.at}`,
-          title: `📰 ${r.name} · ${POS[r.posId] || ""}`.trim(),
-          body: (n.headline || n.story).slice(0, 180),
+          teamId: r.teamId, kinds: ["news"], tag: was ? `player-${r.id}` : `news-${r.id}-${n.at}`,
+          title: was ? was.title : `📰 ${r.name} · ${POS[r.posId] || ""}`.trim(),
+          body: text,
           url: `/?league=${lid}&tab=roster&player=${r.id}`,
         });
       }
