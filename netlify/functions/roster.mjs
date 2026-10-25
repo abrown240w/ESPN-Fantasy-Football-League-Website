@@ -154,9 +154,10 @@ function sameOrigin(req) {
   const origin = req.headers.get("origin");
   return !!origin && new URL(origin).host === new URL(req.url).host;
 }
-async function espnRead(leagueId, season, views) {
+async function espnRead(leagueId, season, views, sp) {
   const u = new URL(`${READS}/seasons/${season}/segments/0/leagues/${leagueId}`);
   for (const v of views) u.searchParams.append("view", v);
+  if (sp) u.searchParams.set("scoringPeriodId", sp);
   const res = await fetch(u, { headers: { accept: "application/json", "user-agent": "Mozilla/5.0 (fantasy-dashboard)", cookie: `espn_s2=${C.s2}; SWID=${C.swid}` } });
   if (!res.ok) throw Object.assign(new Error(`ESPN returned ${res.status}`), { status: res.status });
   return res.json();
@@ -328,12 +329,21 @@ export default async (req, context) => {
       || items.length > 20 || !items.every((i) => [i.playerId, i.from, i.to].every(Number.isInteger))) {
       return json(400, { error: "bad_request", message: "That lineup change doesn't look right." });
     }
+    // A later week's lineup can be set ahead of time (`sp`, that week's scoring period); this week's by default.
+    const want = Number.isInteger(b.sp) ? b.sp : null;
     let data;
-    try { data = await espnRead(leagueId, season, ["mTeam", "mRoster", "mSettings", "mStatus"]); } catch (e) {
+    try {
+      data = await espnRead(leagueId, season, ["mTeam", "mRoster", "mSettings", "mStatus"]);
+      const now = data.scoringPeriodId || data.status?.latestScoringPeriod;
+      if (want && want !== now) {
+        if (want < now || want > now + 20 || want > (data.status?.finalScoringPeriod || 99)) return json(400, { error: "bad_week", message: "That week's lineup can't be changed." });
+        data = { ...data, ...(await espnRead(leagueId, season, ["mTeam", "mRoster"], want)), future: true };
+      }
+    } catch (e) {
       return json(502, { error: "upstream", message: "Couldn't load your roster from ESPN to check the change." });
     }
     if (!ownedTeams(data).includes(teamId)) return json(403, { error: "not_yours", message: "That isn't your team." });
-    const sp = data.scoringPeriodId || data.status?.latestScoringPeriod;
+    const sp = data.future ? want : data.scoringPeriodId || data.status?.latestScoringPeriod;
     const slots = data.settings?.rosterSettings?.lineupSlotCounts || {};
     const roster = data.teams.find((t) => t.id === teamId)?.roster?.entries || [];
     for (const i of items) {
@@ -342,7 +352,7 @@ export default async (req, context) => {
       if (e.lineupSlotId !== i.from) return json(409, { error: "stale", message: "Your lineup changed on ESPN since this page loaded. Refresh and try again." });
       const elig = e.playerPoolEntry?.player?.eligibleSlots || [];
       if (i.to !== 20 && (!elig.includes(i.to) || !(slots[i.to] > 0))) return json(400, { error: "ineligible", message: `${e.playerPoolEntry?.player?.fullName || "A player"} can't play that slot.` });
-      if (e.playerPoolEntry?.lineupLocked) return json(409, { error: "locked", message: `${e.playerPoolEntry?.player?.fullName || "A player"} is locked (his game has started).` });
+      if (!data.future && e.playerPoolEntry?.lineupLocked) return json(409, { error: "locked", message: `${e.playerPoolEntry?.player?.fullName || "A player"} is locked (his game has started).` });
     }
     const payload = {
       isLeagueManager: false, teamId, type: "ROSTER", memberId: `{${swidRaw()}}`, scoringPeriodId: sp, executionType: "EXECUTE",

@@ -2469,3 +2469,42 @@ main .table-wrap:has(> .pt-table), body.has-chatbar main .table-wrap:has(> .pt-t
 .pl-search .srch { flex: 1 1 auto; }
 .nt-dupe { margin: 6px 0 10px; }
 
+/* Matchup header: TD counter (a button: who scored) and, beside it, the scoring feed button (phones and Multiview) */
+.mx-mid { display: inline-flex; align-items: center; gap: 6px; }
+button.mx-tds { font: inherit; color: var(--ink); cursor: pointer; }
+button.mx-tds:hover, .mx-tds.pts-active { border-color: var(--accent); }
+.mx-feedbtn { display: none; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 0; border-radius: 50%; border: 1px solid var(--border); background: var(--surface-2); color: var(--accent-ink); cursor: pointer; flex: none; }
+.mx-feedbtn .ic { width: 18px; height: 18px; }
+.mx-feedbtn.pts-active, .mx-feedbtn:hover { border-color: var(--accent); }
+@media (max-width: 899px) {
+  .mx-feedbtn { display: inline-flex; }
+  .mx-wps { gap: 8px; }
+  .mx-tds { gap: 6px; padding: 3px 9px; }
+  .mx-tds b { font-size: .98rem; }
+  .mx-feedbtn { width: 30px; height: 30px; }
+}
+.mv-panel .mx-feedbtn { display: inline-flex; }
+/* TD popup: each team's touchdowns on its own side */
+.td-pop { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0 12px; }
+.td-col { display: grid; gap: 6px; align-content: start; min-width: 0; }
+.td-col.right { text-align: right; border-left: 1px solid var(--grid); padding-left: 12px; }
+.td-h { display: flex; align-items: center; gap: 6px; font-size: .9rem; }
+.td-col.right .td-h { justify-content: flex-end; }
+.td-it { display: grid; line-height: 1.25; font-size: .82rem; }
+.td-it strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.td-it span { color: var(--ink-2); }
+.td-it small { font-size: .7rem; }
+/* The feed in a popup */
+#pts-body .mf-item { padding: 8px 2px; border-top: 1px solid var(--grid); }
+#pts-body .mf-item:first-child { border-top: 0; }
+#pts-body h3 { margin: 0 0 4px; font-size: .95rem; }
+#pts-body .mf-top { font-size: .72rem; }
+#pts-body .mf-who { display: flex; align-items: center; gap: 6px; font-weight: 700; margin-top: 3px; }
+#pts-body .mf-who .nm-short { display: none; } #pts-body .mf-who .nm-full { display: inline; }
+#pts-body .mf-pts { margin-left: auto; font-size: .8rem; font-weight: 800; border-radius: 8px; padding: 1px 7px; }
+#pts-body .mf-pts.pos { color: #15803d; background: rgba(22,163,74,.12); }
+#pts-body .mf-pts.neg { color: #b91c1c; background: rgba(220,38,38,.1); }
+#pts-body .mf-what { font-size: .8rem; color: var(--ink-2); padding-left: 24px; }
+#pts-body .mf-text { font-size: .74rem; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+#pts-body .mf-more { display: block; margin: 8px auto 2px; }
+

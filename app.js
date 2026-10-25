@@ -364,6 +364,8 @@ function buildWeek(raw, week, nfl = null) {
     away: buildSide(m.away, sp, rosterByTeam, base.slotCounts, rosterInfo, nfl),
   }));
   const sides = matchups.flatMap((m) => [m.home, m.away]).filter(Boolean);
+  // A later week: nobody's game has started yet, whatever ESPN says about this week's locks.
+  if (week > base.current) for (const s of sides) for (const p of s.players) p.locked = false;
   const anyPlayed = sides.some((s) => s.playedCount > 0 || s.score > 0);
   const final = matchups.length > 0 && matchups.every((m) => m.winner !== "UNDECIDED");
   const status = final ? "final" : anyPlayed ? "live" : "upcoming";
@@ -1255,6 +1257,23 @@ function playPoints(box, starters, items) {
 // teams, D/ST included), newest first.
 function scoringFeed(m) {
   if (!m?.away) return "";
+  const head = `<h3>Scoring feed</h3>`, { rows, loading, started } = feedRows(m);
+  if (!started) return `${head}<p class="muted small">No starters have played yet this week.</p>`;
+  if (!rows.length) return `${head}${loading ? `<div class="loading small"><span class="spinner"></span> Loading plays…</div>` : `<p class="muted small">No points scored by these starters yet.</p>`}`;
+  const max = state.feedMax || 60;
+  const pts = (n) => `<span class="mf-pts ${n < 0 ? "neg" : "pos"}">${n < 0 ? "−" : "+"}${f2(Math.abs(n))}</span>`;
+  return `${head}<div class="mf-list">${rows.slice(0, max).map(({ pl, who, d }) => {
+    const A = d.teams.away, H = d.teams.home;
+    return `<div class="mf-item ${who.some((x) => myRow(x.t.id)) ? "my-row" : ""}">
+      <div class="mf-top muted">${qtr(pl.period)} ${esc(pl.clock)} · ${esc(A.abbr)} ${pl.away ?? ""} @ ${esc(H.abbr)} ${pl.home ?? ""}</div>
+      ${who.map(({ p, t, pts: n, what }) => `<div class="mf-who">${logoImg(t, 18)}${plinkNm(p)}${pts(n)}</div><div class="mf-what">${esc(what)}</div>`).join("")}
+      <div class="mf-text small muted">${esc(pl.text)}</div></div>`;
+  }).join("")}</div>${rows.length > max ? `<button type="button" class="linkish mf-more" id="mf-more">Show more</button>` : ""}`;
+}
+const qtr = (n) => (n > 4 ? "OT" : `Q${n}`);
+// Every play that changed a starter's points in matchup `m`, newest first (the box scores load in the
+// background; the feed and its popups redraw when they arrive).
+function feedRows(m) {
   const gs = ensureGameStatus()?.byPro || {}, items = state.base.raw.settings?.scoringSettings?.scoringItems || [];
   const games = new Map(); // game id -> { g, starters: [{ p, t }] }
   for (const s of [m.home, m.away]) for (const p of s.starters) {
@@ -1263,12 +1282,10 @@ function scoringFeed(m) {
     if (!games.has(g.id)) games.set(g.id, { g, starters: [] });
     games.get(g.id).starters.push({ p, t: team(s.teamId) });
   }
-  const head = `<h3>Scoring feed</h3>`;
-  if (!games.size) return `${head}<p class="muted small">No starters have played yet this week.</p>`;
-  const rows = [];
+  const rows = [], lg = curLeague();
   let loading = false;
   for (const { g, starters } of games.values()) {
-    ensureBox(g, () => { if (state.tab === "matchups" && state.openMatchup === m.id && $("mu-feed")) $("mu-feed").innerHTML = scoringFeed(m); });
+    ensureBox(g, () => refreshFeeds(m, lg));
     const d = state.boxes?.[g.id];
     if (!d || d === "loading") { loading = true; continue; }
     // Opponent and score from this player's side, as on the game line ("@DAL 21-17").
@@ -1280,17 +1297,48 @@ function scoringFeed(m) {
     });
   }
   rows.sort((a, b) => b.at - a.at || b.i - a.i);
-  if (!rows.length) return `${head}${loading ? `<div class="loading small"><span class="spinner"></span> Loading plays…</div>` : `<p class="muted small">No points scored by these starters yet.</p>`}`;
-  const max = state.feedMax || 60;
-  const q = (n) => (n > 4 ? "OT" : `Q${n}`), pts = (n) => `<span class="mf-pts ${n < 0 ? "neg" : "pos"}">${n < 0 ? "−" : "+"}${f2(Math.abs(n))}</span>`;
-  return `${head}<div class="mf-list">${rows.slice(0, max).map(({ pl, who, d }) => {
-    const A = d.teams.away, H = d.teams.home;
-    return `<div class="mf-item ${who.some((x) => myRow(x.t.id)) ? "my-row" : ""}">
-      <div class="mf-top muted">${q(pl.period)} ${esc(pl.clock)} · ${esc(A.abbr)} ${pl.away ?? ""} @ ${esc(H.abbr)} ${pl.home ?? ""}</div>
-      ${who.map(({ p, t, pts: n, what }) => `<div class="mf-who">${logoImg(t, 18)}${plinkNm(p)}${pts(n)}</div><div class="mf-what">${esc(what)}</div>`).join("")}
-      <div class="mf-text small muted">${esc(pl.text)}</div></div>`;
-  }).join("")}</div>${rows.length > max ? `<button type="button" class="linkish mf-more" id="mf-more">Show more</button>` : ""}`;
+  return { rows, loading, started: games.size > 0 };
 }
+// A game's plays arrived: redraw the feed column and any feed/TD popup open for this matchup.
+function refreshFeeds(m, lg) {
+  if (lg === curLeague() && state.tab === "matchups" && state.openMatchup === m.id && $("mu-feed")) $("mu-feed").innerHTML = scoringFeed(m);
+  const pop = state.mxPop;
+  if (pop && pop.m.id === m.id && pop.lg === lg && !$("pts-modal").hidden) {
+    $("pts-body").innerHTML = inLeague(lg === curLeague() ? null : state.xl?.[lg], () => (pop.kind === "td" ? tdPopHtml(m) : scoringFeed(m)));
+    placePts();
+  }
+}
+// Who scored the touchdowns, each team on its own side: the brief detail from the scoring feed.
+function tdPopHtml(m) {
+  const { rows, loading } = feedRows(m);
+  const col = (s, right) => {
+    const ids = new Set(s.starters.map((p) => String(p.id))), t = team(s.teamId), list = [];
+    for (const x of [...rows].reverse()) for (const w of x.who) {
+      if (!ids.has(String(w.p.id))) continue;
+      const td = w.what.split(" · ").filter((z) => /TD/.test(z));
+      if (td.length) list.push(`<div class="td-it"><strong>${esc(shortName(w.p.name))}</strong><span>${esc(td.join(", "))}</span><small class="muted">${qtr(x.pl.period)} ${esc(x.pl.clock)}</small></div>`);
+    }
+    return `<div class="td-col ${right ? "right" : ""}"><div class="td-h">${right ? "" : logoImg(t, 20)}<strong>${sum(s.starters, (p) => p.tds || 0)} TD</strong>${right ? logoImg(t, 20) : ""}</div>
+      ${list.join("") || (loading ? `<span class="spinner"></span>` : `<p class="muted small">None</p>`)}</div>`;
+  };
+  return `<div class="td-pop">${col(m.home, false)}${col(m.away, true)}</div>`;
+}
+// The TD counter and the feed button (phones, and Multiview panels) open popups just under them.
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-tdpop], [data-feedpop]");
+  if (!b) return;
+  const lg = b.dataset.lg, x = lg === curLeague() ? null : state.xl?.[lg];
+  const w = x ? x.week : state.week, m = w?.matchups.find((mm) => mm.id === +b.dataset.mu);
+  if (!m) return;
+  const kind = b.dataset.tdpop != null ? "td" : "feed";
+  if (state.mxPop?.anchor === b && !$("pts-modal").hidden) { closePts(); return; } // tap again to close
+  state.feedMax = 0;
+  showPop(b, "down");
+  state.mxPop = { kind, m, lg, anchor: b };
+  $("pts-body").innerHTML = inLeague(x, () => (kind === "td" ? tdPopHtml(m) : scoringFeed(m)));
+  $("pts-modal").querySelector(".pts-card").classList.toggle("wide", kind === "feed");
+  placePts();
+});
 
 function matchupDetail(m, withHead = true) {
   const { home, away } = m, st = state.week.status;
@@ -1334,7 +1382,7 @@ function matchupDetail(m, withHead = true) {
 
   return `<div class="card detail mx ${withHead ? "" : "attached"}">
     ${withHead ? `<div class="mx-top"><div class="mx-head">${headSide(home, H, false)}${headSide(away, A, true)}</div>
-    <div class="mx-wps">${wpBar(wpH, "var(--home)", false)}<span class="mx-tds" title="Touchdowns by each team's starters this week (passing TDs count)"><b>${sum(home.starters, (p) => p.tds || 0)}</b><span>TD</span><b>${sum(away.starters, (p) => p.tds || 0)}</b></span>${wpBar(wpA, "var(--away)", true)}</div>
+    <div class="mx-wps">${wpBar(wpH, "var(--home)", false)}<span class="mx-mid"><button type="button" class="mx-tds" data-tdpop data-mu="${m.id}" data-lg="${esc(curLeague())}" title="Who scored the touchdowns (passing TDs count)"><b>${sum(home.starters, (p) => p.tds || 0)}</b><span>TD</span><b>${sum(away.starters, (p) => p.tds || 0)}</b></button><button type="button" class="mx-feedbtn" data-feedpop data-mu="${m.id}" data-lg="${esc(curLeague())}" aria-label="Scoring feed" title="Scoring feed">${ic("list-details")}</button></span>${wpBar(wpA, "var(--away)", true)}</div>
     ${st === "live" ? onFieldLine(m) : ""}</div>
     ${stickBar(`<span class="sb-team">${logoImg(H, 18)}${esc(H.abbrev)}</span><strong>${st === "upcoming" ? f1(home.proj) : f2(home.score)}</strong><span class="sb-mid">${st === "final" ? "Final" : `${pct(wpH)}–${pct(wpA)}`}</span><strong>${st === "upcoming" ? f1(away.proj) : f2(away.score)}</strong><span class="sb-team">${esc(A.abbrev)}${logoImg(A, 18)}</span>`)}` : ""}
     <div class="mx-rows">${rows.map((r) => row(r, false)).join("")}</div>
@@ -3446,7 +3494,7 @@ function renderRoster() {
   const standing = 1 + Object.values(state.base.teams).filter((o) => o.seed < t.seed).length;
   const fa = faData();
   const own = ensureOwner();
-  const canEdit = !!own?.signedIn && own.teams?.map(String).includes(String(sel)) && w.week === state.base.current;
+  const canEdit = !!own?.signedIn && own.teams?.map(String).includes(String(sel)) && w.week >= state.base.current; // later weeks too: set them ahead of time
   const ed = !canEdit ? null : state.lineupEdit?.teamId === String(sel) ? state.lineupEdit : (state.lineupEdit = { teamId: String(sel), pick: null });
   const picked = ed?.pick ? side?.players.find((x) => String(x.id) === String(ed.pick)) : null;
   const rn = side ? ensureNews(side.players.map((p) => p.id), () => { if (state.tab === "roster") render(); }) : null;
@@ -4774,7 +4822,7 @@ function confirmLineup(teamId, moves, opts = {}) {
     <div class="dr-list">${(opts.side?.players || []).filter((x) => x.slotId !== IR && !moving.has(String(x.id))).sort((x, y) => (x.starter - y.starter) || (x.proj || 0) - (y.proj || 0))
       .map((x) => `<label class="dr-opt ${x.locked ? "off" : ""}"><input type="radio" name="dr" value="${esc(x.id)}" ${x.locked ? "disabled" : ""}><span><strong>${esc(x.name)}</strong> <span class="muted small">${esc(x.pos)} · ${x.starter ? esc(x.slot) : "Bench"} · proj ${f1(x.proj)}</span></span></label>`).join("")}</div>`;
   showModal(`<div class="pm-head"><h2 id="pl-modal-title">Change lineup</h2></div>
-    <p class="small muted">${esc(team(teamId).name)} · week ${state.week.week}</p><ul class="mv-list">${rows}</ul>${dropPick}
+    <p class="small muted">${esc(team(teamId).name)} · week ${state.week.week}${state.week.week > state.base.current ? " (set ahead of time)" : ""}</p><ul class="mv-list">${rows}</ul>${dropPick}
     <div class="mv-actions"><button type="button" class="mv-go" id="mv-go">${state.demo ? "Try it (demo, not sent)" : "Send to ESPN"}</button><button type="button" class="mv-cancel" id="mv-cancel">Cancel</button></div>
     <p id="mv-msg" class="small"></p>`);
   const close = () => document.querySelector("#pl-modal .modal-close").click();
@@ -4788,7 +4836,7 @@ function confirmLineup(teamId, moves, opts = {}) {
         if (!drop) throw new Error("Pick someone to drop first.");
         await sendMove("transaction", { teamId: Number(teamId), drop: Number(drop) });
       }
-      await sendMove("lineup", { teamId: Number(teamId), items: moves.map(([p, to]) => ({ playerId: Number(p.id), from: p.slotId, to })) });
+      await sendMove("lineup", { teamId: Number(teamId), sp: state.week.sp, items: moves.map(([p, to]) => ({ playerId: Number(p.id), from: p.slotId, to })) });
       msg.innerHTML = `<span class="pos">✓ ${state.demo ? "Looks good (demo: nothing was sent)" : "Saved on ESPN"}.</span>`;
       state.lineupEdit = { teamId: String(teamId), pick: null };
       await refreshAfterMove();
@@ -5927,6 +5975,7 @@ function initPlayerModal() {
     if (state.cmpPick && b.classList.contains("pl-link")) { finishPick(b.dataset.pid); return; }
     if (b.classList.contains("pts-link")) { openPtsPop(b.dataset.pid, Number(b.dataset.sp), b); return; } // a score: a small scoring breakdown
     if (stageOpen()) closeStage();
+    closePts();
     state.modalReturn = b;
     openPlayer(b.dataset.pid, b.dataset.sp ? Number(b.dataset.sp) : null);
   }, true);
@@ -5937,6 +5986,13 @@ function initPlayerModal() {
   pts.innerHTML = `<div class="pts-card" role="dialog" aria-label="Scoring"><div id="pts-body"></div><i class="pts-arrow"></i></div>`;
   document.body.appendChild(pts);
   pts.addEventListener("click", (e) => {
+    if (e.target.closest("#mf-more") && state.mxPop) {
+      state.feedMax = (state.feedMax || 60) + 60;
+      const pop = state.mxPop;
+      $("pts-body").innerHTML = inLeague(pop.lg === curLeague() ? null : state.xl?.[pop.lg], () => scoringFeed(pop.m));
+      placePts();
+      return;
+    }
     const full = e.target.closest("[data-pts-card]");
     if (full) { closePts(); openPlayer(full.dataset.ptsCard, Number(full.dataset.sp)); return; }
     if (!e.target.closest(".pts-card")) closePts(); // a tap anywhere outside the box closes it
@@ -5984,7 +6040,7 @@ document.addEventListener("keydown", (e) => {
 });
 // How a score was made: the week's scoring lines, in a popup that grows upward from the score you tapped
 // (below it only when there's no room above).
-let ptsAnchor = null;
+let ptsAnchor = null, ptsPrefer = "up";
 const ptsScrollClose = (e) => { if (!(e.target?.nodeType === 1 && e.target.closest(".pts-card"))) closePts(); };
 function closePts() {
   const pop = $("pts-modal");
@@ -5992,6 +6048,7 @@ function closePts() {
   pop.hidden = true;
   ptsAnchor?.classList.remove("pts-active");
   ptsAnchor = null;
+  state.mxPop = null;
   window.removeEventListener("scroll", ptsScrollClose, true);
   window.removeEventListener("resize", closePts);
 }
@@ -6002,7 +6059,7 @@ function placePts() {
   const vv = window.visualViewport, vw = vv?.width || innerWidth, vh = vv?.height || innerHeight, ox = vv?.offsetLeft || 0, oy = vv?.offsetTop || 0;
   const r = a.getBoundingClientRect(), m = 8, gap = 10;
   if (r.bottom < oy || r.top > oy + vh) return closePts(); // the score scrolled out of view
-  const w = Math.min(340, vw - 2 * m), cx = r.left + r.width / 2, left = Math.max(ox + m, Math.min(cx - w / 2, ox + vw - w - m));
+  const w = Math.min(card.classList.contains("wide") ? 400 : 340, vw - 2 * m), cx = r.left + r.width / 2, left = Math.max(ox + m, Math.min(cx - w / 2, ox + vw - w - m));
   card.style.width = `${w}px`;
   card.style.left = `${left}px`;
   card.style.setProperty("--ax", `${Math.max(20, Math.min(cx - left, w - 20))}px`);
@@ -6010,7 +6067,8 @@ function placePts() {
   body.style.maxHeight = "none";
   const chrome = card.offsetHeight - body.offsetHeight, full = card.offsetHeight;
   const above = r.top - oy - gap - m, below = oy + vh - r.bottom - gap - m;
-  const where = full <= above ? "up" : full <= below ? "down" : Math.max(above, below) >= 220 ? (above >= below ? "up" : "down") : "mid";
+  const [first, second] = ptsPrefer === "down" ? [["down", below], ["up", above]] : [["up", above], ["down", below]];
+  const where = full <= first[1] ? first[0] : full <= second[1] ? second[0] : Math.max(above, below) >= 220 ? (ptsPrefer === "down" ? (below >= 220 ? "down" : "up") : above >= below ? "up" : "down") : "mid";
   const room = where === "up" ? above : where === "down" ? below : vh - 2 * m;
   body.style.maxHeight = `${Math.max(60, room - chrome)}px`;
   card.classList.toggle("below", where === "down");
@@ -6019,19 +6077,26 @@ function placePts() {
   card.style.bottom = "auto";
   card.style.top = `${where === "up" ? r.top - gap - h : where === "down" ? r.bottom + gap : oy + (vh - h) / 2}px`;
 }
-async function openPtsPop(id, sp, anchor) {
+// Open the small popup by `anchor` ("up": above it if it fits, the default; "down": below it first).
+function showPop(anchor, prefer = "up") {
   const pop = $("pts-modal"), body = $("pts-body");
-  id = String(id);
   closePts();
   ptsAnchor = anchor || null;
+  ptsPrefer = prefer;
   anchor?.classList.add("pts-active");
   body.innerHTML = `<div class="loading small"><span class="spinner"></span> Loading…</div>`;
   pop.hidden = false;
   window.addEventListener("scroll", ptsScrollClose, true);
   window.addEventListener("resize", closePts);
   const card = pop.querySelector(".pts-card");
+  card.classList.remove("wide");
   card.classList.remove("grow"); void card.offsetWidth; card.classList.add("grow"); // the pop-up animation
   placePts();
+}
+async function openPtsPop(id, sp, anchor) {
+  const pop = $("pts-modal"), body = $("pts-body");
+  id = String(id);
+  showPop(anchor, "up");
   const cache = (state.playerCache ||= {});
   if (!cache[id] || Date.now() - cache[id].at > 60000) {
     try { cache[id] = { at: Date.now(), data: await fetchPlayer(id) }; }
