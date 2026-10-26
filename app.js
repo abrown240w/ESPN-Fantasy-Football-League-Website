@@ -550,15 +550,17 @@ async function fetchScoreboard(sp) {
 
 // NFL game status and scores for the selected week. Loads once per week, and keeps
 // refreshing in the background only while games are in progress.
+// NFL-wide data, so it belongs to the week (scoring period), not the league: a refresh or league switch
+// while it loads still uses it.
 function ensureGameStatus() {
-  const b = state.base, w = state.week;
+  const w = state.week;
   if (!w) return null;
   const s = state.gameStatus?.sp === w.sp ? state.gameStatus : null;
-  if ((!s || (s.anyLive && Date.now() - s.at > 25000)) && !state.gameStatusLoading) {
+  if ((!s || ((s.anyLive || !s.at) && Date.now() - s.at > 25000)) && !state.gameStatusLoading) {
     state.gameStatusLoading = true;
     fetchScoreboard(w.sp)
       .then((d) => {
-        if (state.base !== b) return;
+        if (state.week?.sp !== w.sp) return;
         const byPro = {};
         for (const g of d.games) {
           for (const [me, them] of [[g.home, g.away], [g.away, g.home]]) {
@@ -576,11 +578,13 @@ function ensureGameStatus() {
         // Nothing new (same scores, clock and possession): skip the redraw.
         state.gameStatusSame = prev?.sp === w.sp && JSON.stringify(prev.byPro) === JSON.stringify(byPro);
       })
-      .catch(() => { if (state.base === b) state.gameStatus = { sp: w.sp, at: Date.now(), byPro: {}, anyLive: false }; })
+      .catch(() => { if (state.week?.sp === w.sp && !state.gameStatus) state.gameStatus = { sp: w.sp, at: Date.now(), byPro: {}, anyLive: false }; })
       .finally(() => {
         state.gameStatusLoading = false;
         if (state.gameStatusSame) { state.gameStatusSame = false; return; }
-        if (state.base === b && (state.tab === "matchups" || state.tab === "roster")) render();
+        // The week changed while this loaded: load the one now on screen.
+        if (state.week && state.week.sp !== w.sp) { ensureGameStatus(); return; }
+        if (state.tab === "matchups" || state.tab === "roster") render();
       });
   }
   return s;
@@ -677,6 +681,26 @@ function bindSearch(id, onChange) {
   wrap.querySelector(".srch-x").addEventListener("click", () => { input.value = ""; set(); input.focus(); });
 }
 
+// Phones: the tab bar is fixed to the bottom of the screen. Kept as a direct child of the page (not inside
+// the sticky header), because iPhone can leave a fixed bar stuck mid-screen inside a sticky parent after
+// the app comes back from the background. Computers put it back in the header row.
+const PHONE_BAR = matchMedia("(max-width: 999px)");
+let tabsHome = null;
+function placeTabs() {
+  const t = $("tabs");
+  if (!t) return;
+  tabsHome ||= { parent: t.parentNode, next: t.nextSibling };
+  if (PHONE_BAR.matches) { if (t.parentNode !== document.body) document.body.appendChild(t); }
+  else if (t.parentNode !== tabsHome.parent) tabsHome.parent.insertBefore(t, tabsHome.next);
+}
+placeTabs();
+PHONE_BAR.addEventListener?.("change", placeTabs);
+// Back from the background: nudge the bar so the browser re-pins it to the bottom.
+const repinTabs = () => { const t = $("tabs"); if (!t || !PHONE_BAR.matches) return; t.style.transform = "translateZ(0)"; requestAnimationFrame(() => { t.style.transform = ""; }); };
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") repinTabs(); });
+addEventListener("pageshow", repinTabs);
+window.visualViewport?.addEventListener("resize", repinTabs);
+
 // ---------- Matchups ----------
 function renderMatchups() {
   const w = state.week, el = $("view-matchups");
@@ -707,8 +731,9 @@ function renderMatchups() {
   if (scope === "all") {
     const on = multiLeagues();
     el.innerHTML = `<div class="section-head"><h2>Week ${w.week} · my matchups</h2>${scopeSeg(scope)}</div>
-      <div class="mv-pick" role="group" aria-label="Leagues to show">${LEAGUES.map((l) => `<button type="button" class="pl-tool ${on.includes(l.id) ? "active" : ""}" aria-pressed="${on.includes(l.id)}" data-mvlg="${esc(l.id)}">${esc(state.demo && l.id === curLeague() ? "Demo" : lgShort(l))}</button>`).join("")}</div>
-      <div class="mv-grid">${LEAGUES.filter((l) => on.includes(l.id)).map((l) => `<section class="mv-panel">${multiPanel(l)}</section>`).join("") || `<p class="muted">Pick at least one league above.</p>`}</div>`;
+      <div class="mv-pick" role="group" aria-label="Leagues to show">${LEAGUES.map((l) => `<button type="button" class="pl-tool ${on.includes(l.id) ? "active" : ""}" aria-pressed="${on.includes(l.id)}" data-mvlg="${esc(l.id)}">${esc(state.demo && l.id === curLeague() ? "Demo" : lgShort(l))}</button>`).join("")}
+        <button type="button" class="pl-tool mv-feed-tg ${store.get("ffb.mvFeed") === "1" ? "active" : ""}" aria-pressed="${store.get("ffb.mvFeed") === "1"}" id="mv-feed-tg">${ic("list-details")} Scoring feed</button></div>
+      <div class="mv-grid ${store.get("ffb.mvFeed") === "1" ? "with-feed" : ""}">${LEAGUES.filter((l) => on.includes(l.id)).map((l) => `<section class="mv-panel">${multiPanel(l)}</section>`).join("") || `<p class="muted">Pick at least one league above.</p>`}</div>`;
     setScope();
     el.querySelectorAll("[data-mvlg]").forEach((b) => b.addEventListener("click", () => {
       const id = b.dataset.mvlg, cur = multiLeagues();
@@ -718,6 +743,13 @@ function renderMatchups() {
     el.querySelectorAll("[data-mvopen]").forEach((b) => b.addEventListener("click", () => {
       if (b.dataset.mvopen === curLeague()) { state.openMatchup = +b.dataset.mb; state.muScope = "league"; store.set("ffb.muScope", "league"); renderMatchups(); scrollTo(0, 0); }
       else openOtherLeagueGame(b.dataset.mvopen, +b.dataset.mb, "league");
+    }));
+    $("mv-feed-tg").addEventListener("click", () => { store.set("ffb.mvFeed", store.get("ffb.mvFeed") === "1" ? null : "1"); renderMatchups(); });
+    el.querySelectorAll("[data-mvfeed]").forEach((f) => f.addEventListener("click", (e) => {
+      if (!e.target.closest(".mf-more")) return;
+      const all = (state.mvFeedMax ||= {});
+      all[f.dataset.mvfeed] = (all[f.dataset.mvfeed] || 10) + 20;
+      keepState(el, renderMatchups);
     }));
     el.querySelectorAll("[data-mvteam]").forEach((b) => b.addEventListener("click", () => {
       if (b.dataset.mvteam === curLeague()) openPickTeam();
@@ -932,7 +964,9 @@ function multiPanel(l) {
     const head = (extra = "") => `<div class="mv-head"><strong>${name}</strong>${statusBadge(x.week.status)}${extra}</div>`;
     if (!m) return `${head()}<button type="button" class="lg-card lg-pick-team" data-mvteam="${esc(l.id)}">Select your team in ${esc(lgShort(l))} ›</button>`;
     if (!m.away) return `${head()}<p class="muted">${esc(team(m.home.teamId).name)} has a bye this week.</p>`;
-    return `${head(`<button type="button" class="linkish mv-open" data-mvopen="${esc(l.id)}" data-mb="${m.id}">Open ›</button>`)}${matchupDetail(m, true)}`;
+    // With the feed switched on: its newest plays beside the breakdown (10 to start, more on request).
+    const feed = store.get("ffb.mvFeed") === "1" ? `<div class="card mv-feed" data-mvfeed="${esc(l.id)}">${scoringFeed(m, state.mvFeedMax?.[l.id] || 10)}</div>` : "";
+    return `${head(`<button type="button" class="linkish mv-open" data-mvopen="${esc(l.id)}" data-mb="${m.id}">Open ›</button>`)}${feed ? `<div class="mv-body">${matchupDetail(m, true)}${feed}</div>` : matchupDetail(m, true)}`;
   });
 }
 // A card from another league: switch to it and open that game.
@@ -1266,12 +1300,12 @@ function playPoints(box, starters, items) {
 
 // Computers, Matchup tab: every play that changed a starter's points in the selected matchup (both
 // teams, D/ST included), newest first.
-function scoringFeed(m) {
+function scoringFeed(m, maxRows) {
   if (!m?.away) return "";
   const head = `<h3>Scoring feed</h3>`, { rows, loading, started } = feedRows(m);
   if (!started) return `${head}<p class="muted small">No starters have played yet this week.</p>`;
   if (!rows.length) return `${head}${loading ? `<div class="loading small"><span class="spinner"></span> Loading plays…</div>` : `<p class="muted small">No points scored by these starters yet.</p>`}`;
-  const max = state.feedMax || 60;
+  const max = maxRows || state.feedMax || 60;
   const pts = (n) => `<span class="mf-pts ${n < 0 ? "neg" : "pos"}">${n < 0 ? "−" : "+"}${f2(Math.abs(n))}</span>`;
   return `${head}<div class="mf-list">${rows.slice(0, max).map(({ pl, who, d }) => {
     const A = d.teams.away, H = d.teams.home;
@@ -1312,6 +1346,10 @@ function feedRows(m) {
 }
 // A game's plays arrived: redraw the feed column and any feed/TD popup open for this matchup.
 function refreshFeeds(m, lg) {
+  // Multiview with feeds: redraw the panels (once, however many games' plays arrive together).
+  if (state.tab === "matchups" && state.muScope === "all" && store.get("ffb.mvFeed") === "1" && !state.mvFeedRedraw) {
+    state.mvFeedRedraw = setTimeout(() => { state.mvFeedRedraw = 0; if (state.tab === "matchups" && state.muScope === "all") keepState($("view-matchups"), renderMatchups); }, 300);
+  }
   if (lg === curLeague() && state.tab === "matchups" && state.openMatchup === m.id && $("mu-feed")) $("mu-feed").innerHTML = scoringFeed(m);
   const pop = state.mxPop;
   if (pop && pop.m.id === m.id && pop.lg === lg && !$("pts-modal").hidden) {
@@ -2397,6 +2435,16 @@ function fieldGraphic(g) {
     return `<clipPath id="${id}">${quad(x0, x0 + EZ, "")}</clipPath><g clip-path="url(#${id})"><text class="ez" style="font-size:${fs}px" transform="matrix(${m})">${esc(abbr)}</text></g>`;
   };
   parts.push(ezText(EZ / 2, away.abbr, false, 0), ezText(W - EZ / 2, home.abbr, true, W - EZ));
+  // A break since the last play, as a strip just above the field: a team timeout in that team's color
+  // ("TIMEOUT · CAR · 2 left"), or the two-minute warning / end of a quarter / halftime in dark gray.
+  const brk = f.timeout || "", to = /Timeout #?\d* by ([A-Z]{2,4})/i.exec(brk)?.[1], qEnd = /END QUARTER (\d)/i.exec(brk)?.[1];
+  let band = null;
+  if (to) {
+    const TXT = { HST: "HOU", CLV: "CLE", BLT: "BAL", LA: "LAR", ARZ: "ARI", WAS: "WSH" };
+    const tm = [home, away].find((t) => t.abbr === to || t.abbr === TXT[to]);
+    band = { color: tm?.color || "#222", text: `⏱ TIMEOUT · ${tm?.abbr || to}${tm?.timeouts != null ? ` · ${tm.timeouts} left` : ""}` };
+  } else if (/two-minute/i.test(brk)) band = { color: "#1f2937", text: "⏱ TWO-MINUTE WARNING" };
+  else if (qEnd) band = { color: "#1f2937", text: { 1: "END OF 1ST QUARTER", 2: "HALFTIME", 3: "END OF 3RD QUARTER", 4: "END OF REGULATION" }[qEnd] || "END OF OVERTIME PERIOD" };
   // Red zone and the current drive.
   if (g.redZone && dir) { const gl = dir > 0 ? 100 : 0; parts.push(quad(Math.min(x(gl), x(gl - dir * 20)), Math.min(x(gl), x(gl - dir * 20)) + 20 * S, `fill="#e53935" opacity=".22"`)); }
   if (driveStart != null && poss) parts.push(quad(Math.min(x(driveStart), x(spot)), Math.max(x(driveStart), x(spot)), `fill="${possColor}" opacity=".3"`));
@@ -2426,7 +2474,9 @@ function fieldGraphic(g) {
     const fgLen = isFg ? Number(/(\d+) yard field goal/i.exec(text)?.[1]) : 0;
     if (fgLen > 17) startA = goalA - offDir * (fgLen - 17);
     if (kind === "incomplete") endA = lp.start + offDir * (/deep/i.test(text) ? 20 : 8); // no target spot recorded
-    const xs = X(startA), xe = X(endA), Y = P(0, 96)[1], mid = (xs + xe) / 2;
+    // A touchdown ends on the goal line in ESPN's data; draw it into the middle of the end zone.
+    const td = (/touchdown/i.test(lp.type || "") || /TOUCHDOWN/.test(text)) && !/NULLIFIED/i.test(text);
+    const xs = X(startA), xe = td && (endA <= 0 || endA >= 100) ? P(x(endA) + (endA >= 100 ? -5 : 5) * S, 96)[0] : X(endA), Y = P(0, 96)[1], mid = (xs + xe) / 2;
     const gained = Math.round((lp.end - lp.start) * offDir);
     const ydsTxt = (n) => `${n > 0 ? "+" : ""}${n} yds`;
     const tag = (txt, y, cls = "lp-yds") => parts.push(`<text x="${Math.min(W - EZ - 30, Math.max(EZ + 30, mid))}" y="${y}" class="${cls}">${esc(txt)}</text>`);
@@ -2456,13 +2506,15 @@ function fieldGraphic(g) {
     } else if (kind === "kick") {
       // Kicks: a high arc to where the ball came down, then (if returned) an arrow back the other way.
       const kd = /(?:kicks|punts) (\d+) yards?/i.exec(text)?.[1], fgd = /(\d+) yard field goal/i.exec(text)?.[1];
-      let land = /to (?:the )?end zone|touchback/i.test(text) ? (lp.start > 50 ? 0 : 100)
+      // Into the end zone: the one the kicking team is kicking toward. A touchback has no return.
+      const ez = /to (?:the )?end zone|touchback/i.test(text), tb = /touchback/i.test(text);
+      let land = ez ? goalA
         : textSpot(text, /(?:kicks|punts) \d+ yards? (?:from [A-Z]{2,3} -?\d+ )?to ([A-Z]{2,3}) (-?\d+)/, home, away);
       if (land == null) land = lp.end;
       // Field goals and extra points fly to the posts at the back of the end zone.
       const xl = isXp || isFg ? P(x(goalA) - offDir * 10 * S, 96)[0] : X(land), lift = Math.min(52, 22 + Math.abs(xl - xs) / 6);
-      if (Math.abs(xl - xs) >= 4) parts.push(`<path d="M${xs} ${Y} Q${(xs + xl) / 2} ${Y - lift * 2} ${xl} ${Y}" fill="none" stroke="#fff" stroke-width="4" stroke-dasharray="14 6" ${isXp || isFg || Math.abs(xe - xl) < 4 ? `marker-end="url(#arrow-${esc(g.id)})"` : ""}/>`);
-      const ret = isXp || isFg ? 0 : Math.round(Math.abs(lp.end - land));
+      if (Math.abs(xl - xs) >= 4) parts.push(`<path d="M${xs} ${Y} Q${(xs + xl) / 2} ${Y - lift * 2} ${xl} ${Y}" fill="none" stroke="#fff" stroke-width="4" stroke-dasharray="14 6" ${isXp || isFg || tb || Math.abs(xe - xl) < 4 ? `marker-end="url(#arrow-${esc(g.id)})"` : ""}/>`);
+      const ret = isXp || isFg || tb ? 0 : Math.round(Math.abs(lp.end - land));
       if (ret >= 1) parts.push(`<path d="M${xl} ${Y + 6} L${xe} ${Y + 6}" stroke="#fff" stroke-width="4" marker-end="url(#arrow-${esc(g.id)})"/>`);
       const good = /good/i.test(lp.type) || /is GOOD/.test(text);
       const what = /punt/i.test(lp.type) ? `Punt${kd ? ` ${kd} yds` : ""}${/fair catch/i.test(text) ? " · fair catch" : /touchback/i.test(text) ? " · touchback" : ret >= 1 ? ` · ${ret} yd return` : ""}`
@@ -2484,14 +2536,50 @@ function fieldGraphic(g) {
         parts.push(`<path d="${path}" fill="none" stroke="${color}" stroke-width="4" marker-end="url(#${color === "#fff" ? "arrow" : "arrowr"}-${esc(g.id)})"/>`);
         tag(kind === "sack" ? `Sack · ${ydsTxt(gained)}` : kind === "safety" ? "Safety" : `${ydsTxt(gained)}${/touchdown/i.test(lp.type) ? " · TD" : ""}`, tagY, kind === "sack" || kind === "safety" ? "lp-yds lp-to" : "lp-yds");
       }
+    } else if (["rush", "pass", "sack"].includes(kind)) {
+      // Too short for an arrow (no gain, or a yard either way): a ball at the spot, stopped by a bar.
+      const red = kind === "sack" || gained < 0, c = red ? "#ef5350" : "#fff";
+      parts.push(`<ellipse cx="${xe}" cy="${Y}" rx="9" ry="6" fill="#8d5524" stroke="${c}" stroke-width="2.5"/>`,
+        `<path d="M${xe + (offDir > 0 ? -1 : 1) * 14} ${Y - 13} L${xe + (offDir > 0 ? -1 : 1) * 14} ${Y + 13}" stroke="${c}" stroke-width="4" stroke-linecap="round"/>`);
+      const what = gained === 0 ? "No gain" : ydsTxt(gained);
+      tag(kind === "sack" ? `Sack · ${what}` : kind === "pass" && gained === 0 ? "Catch · no gain" : what, Y - 16, red ? "lp-yds lp-to" : "lp-yds");
     }
   }
+  // Turnover on downs: a 4th-down snap that ends with the other team's ball. The play is drawn as usual,
+  // then a red arrow from where the ball was given up, pointing the way the new offense is going.
+  if (lp && lp.end != null && lp.teamId && !lp.scoring) {
+    const kind = playKind(lp.type, shown.text);
+    const otherBall = lp.endTeamId ? lp.endTeamId !== lp.teamId : !shown.earlier && g.possession && g.possession !== lp.teamId;
+    if (lp.down === 4 && otherBall && ["pass", "incomplete", "rush", "sack"].includes(kind)) {
+      const back = lp.teamId === home.proId ? -1 : 1; // the new offense's direction (toward higher yard lines = toward the away goal)
+      // Drawn nearer the front sideline than the play, so the two don't overlap.
+      const XN = (a) => P(x(a), 128)[0], Y = P(0, 128)[1], xa = XN(lp.end), xb = XN(Math.max(0, Math.min(100, lp.end + back * 12)));
+      parts.push(`<path d="M${xa} ${Y} L${xb} ${Y}" stroke="#ef5350" stroke-width="4" marker-end="url(#arrowr-${esc(g.id)})"/>`,
+        `<path d="M${xa} ${Y - 9} L${xa} ${Y + 9}" stroke="#ef5350" stroke-width="3"/>`,
+        (() => {
+          // The words beside the arrowhead (or past the other end if that side runs out of field).
+          const tw = (narrow ? 22 : 24) * 0.56 * 17, s = Math.sign(xb - xa) || 1;
+          const fits = (x0, sg) => (sg > 0 ? x0 + tw <= W - 4 : x0 - tw >= 4);
+          const [x0, sg] = fits(xb + s * 10, s) ? [xb + s * 10, s] : [xa - s * 10, -s];
+          return `<text x="${x0}" y="${Y + 8}" class="lp-yds lp-to" style="text-anchor:${sg > 0 ? "start" : "end"}">Turnover on downs</text>`;
+        })());
+    }
+  }
+  // White lines get a solid dark track behind them, so a high pass or kick that rises above the field
+  // stays visible against a white page (dashed ones included).
+  const underlay = (s) => {
+    if (!/^<path /.test(s) || !/stroke="#fff"/.test(s)) return s;
+    const w = Number(/stroke-width="([\d.]+)"/.exec(s)?.[1] || 4);
+    return s.replace(/stroke="#fff"/, 'stroke="rgba(0,0,0,.5)"').replace(/stroke-width="[\d.]+"/, `stroke-width="${w + 3}"`)
+      .replace(/ stroke-dasharray="[^"]*"/, "").replace(/ marker-end="[^"]*"/, "").replace(/ stroke-linecap="round"/, "") + s;
+  };
   const arrowWord = dir > 0 ? "←" : dir < 0 ? "→" : "";
   const label = `${poss ? `${poss.abbr} ball ` : ""}${g.downDistance || ""}`.trim();
   return `<div class="field-wrap">
+    ${band ? `<div class="fw-band" style="background:${esc(band.color)}">${esc(band.text)}</div>` : ""}
     <svg class="field ${narrow ? "narrow" : ""}" viewBox="0 0 ${W} ${VH}" role="img" aria-label="${esc(label || "Field position")}">
-      <defs>${[["arrow", "#fff"], ["arrowy", "#fdd835"], ["arrowr", "#ef5350"]].map(([id, fill]) => `<marker id="${id}-${esc(g.id)}" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="${fill}"/></marker>`).join("")}</defs>
-      ${parts.slice(0, playFrom).join("")}<g class="play">${parts.slice(playFrom).join("")}</g>
+      <defs>${[["arrow", "#fff"], ["arrowy", "#fdd835"], ["arrowr", "#ef5350"]].map(([id, fill]) => `<marker id="${id}-${esc(g.id)}" viewBox="-1 -1 12 12" refX="6" refY="5" markerWidth="5.5" markerHeight="5.5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="${fill}" stroke="rgba(0,0,0,.6)" stroke-width="1.2" stroke-linejoin="round"/></marker>`).join("")}</defs>
+      ${parts.slice(0, playFrom).join("")}<g class="play">${parts.slice(playFrom).map(underlay).join("")}</g>
     </svg>
     <div class="field-caption">${poss ? `<strong>${esc(poss.abbr)}</strong> ball ${arrowWord} · ` : ""}${esc(g.downDistance || f.possText || "")}${f.driveDesc ? ` <span class="muted">· Drive: ${esc(f.driveDesc)}</span>` : ""}</div>
   </div>`;
@@ -6710,8 +6798,9 @@ async function refreshAll() {
     const base = buildBase(await api(["mTeam", "mSettings", "mStatus", "mMatchupScore"]));
     Object.assign(state, {
       base, weekCache: {}, awardTally: null, activity: null, history: null, values: null, usage: null,
-      weather: null, fa: null, gameStatus: null, playerCache: null,
+      weather: null, fa: null, playerCache: null,
     });
+    if (state.gameStatus) state.gameStatus.at = 0; // reload the NFL scores, clocks and possession too, but keep showing them meanwhile
     state.week = await getWeek(wk, true);
     renderHeader();
     if (!state.demo) banner(""); // clear any earlier "couldn't refresh" message

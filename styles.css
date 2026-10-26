@@ -2508,3 +2508,27 @@ button.mx-tds:hover, .mx-tds.pts-active { border-color: var(--accent); }
 #pts-body .mf-text { font-size: .74rem; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 #pts-body .mf-more { display: block; margin: 8px auto 2px; }
 
+/* Multiview: the scoring feed under each matchup (switched on with the Scoring feed button) */
+.mv-feed-tg { margin-left: auto; }
+.mv-feed { margin: 10px 0 0; padding: 12px 14px; }
+/* The feed to the right of its matchup: wider panels (one per row on a laptop, two on a big monitor) */
+@media (min-width: 900px) {
+  .mv-grid.with-feed { grid-template-columns: repeat(auto-fit, minmax(min(100%, 780px), 1fr)); }
+  .mv-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(250px, 320px); gap: 12px; align-items: start; }
+  .mv-body .mv-feed { margin: 0; }
+}
+.mv-feed h3 { margin: 0 0 6px; font-size: 1rem; }
+.mv-feed .mf-item { padding: 8px 6px; border-top: 1px solid var(--grid); }
+.mv-feed .mf-item:first-child { border-top: 0; }
+.mv-feed .mf-top { font-size: .74rem; font-variant-numeric: tabular-nums; }
+.mv-feed .mf-who { display: flex; align-items: center; gap: 6px; font-weight: 700; margin-top: 4px; min-width: 0; }
+.mv-feed .mf-who .nm-short { display: none; } .mv-feed .mf-who .nm-full { display: inline; }
+.mv-feed .mf-pts { margin-left: auto; flex: none; font-size: .82rem; font-weight: 800; border-radius: 8px; padding: 1px 7px; }
+.mv-feed .mf-pts.pos { color: #15803d; background: rgba(22,163,74,.12); }
+.mv-feed .mf-pts.neg { color: #b91c1c; background: rgba(220,38,38,.1); }
+.mv-feed .mf-what { font-size: .82rem; color: var(--ink-2); padding-left: 24px; }
+.mv-feed .mf-text { line-height: 1.3; margin-top: 2px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.mv-feed .mf-more { display: block; margin: 8px auto 2px; }
+
+/* Field graphic: a strip above the field during a break (timeout, two-minute warning, end of a quarter) */
+.fw-band { margin: 0 auto 4px; width: fit-content; max-width: 100%; padding: 2px 12px; border-radius: 999px; color: #fff; font-size: .74rem; font-weight: 800; letter-spacing: .06em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; box-shadow: 0 1px 3px rgba(0,0,0,.25); }

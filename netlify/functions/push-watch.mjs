@@ -104,9 +104,10 @@ async function liveAlerts(lid, season, st, teams, out) {
     const icon = kinds.includes("td") ? "🏈" : kinds.includes("bonus") ? "💰" : "⚡";
     const reasons = [...new Set(group.flatMap((x, i) => x.why.filter((w) => !(i > 0 && /receiving TD/.test(w)))))];
     const who = group.map((x) => `${group.length > 1 ? short(x.p.name) : x.p.name} +${f1(x.gain)} (${f1(x.p.pts ?? 0)})`).join(" · ");
+    const title = `${icon} ${reasons.join(" · ")}`;
     out.push({
-      teamId: String(e.p.teamId), kinds, tag: `play-${e.p.id}-${Date.now()}`,
-      title: `${icon} ${reasons.join(" · ")}`,
+      teamId: String(e.p.teamId), kinds, tag: `play-${e.p.id}-${Date.now()}`, dup: `play-${group.map((x) => x.p.id).sort().join("+")}-${title}`,
+      title,
       body: group.length > 1 ? who : `${e.p.name} ${POS[e.p.posId] || ""} · +${f1(e.gain)} pts, now ${f1(e.p.pts ?? 0)}`,
       url: `/?league=${lid}&tab=live${e.game ? `&game=${e.game.id}` : ""}`,
     });
@@ -138,7 +139,7 @@ async function injuryAlerts(lid, season, st, teams, out) {
     const title = `${better ? "✅" : "🩺"} ${c.name} · ${INJ[c.status]}`;
     recent[c.id] = { at: Date.now(), title };
     out.push({
-      teamId: c.teamId, pid: c.id, kinds: ["injury"], tag: `player-${c.id}`,
+      teamId: c.teamId, pid: c.id, kinds: ["injury"], tag: `player-${c.id}`, dup: `inj-${c.id}-${c.status}`,
       title,
       body: `${POS[c.posId] || ""} · ${SLOT[c.slot] || "Roster"} · was ${INJ[c.was]}${!better && c.slot !== BENCH && c.slot !== IR ? ". He's in your starting lineup." : ""}`,
       url: `/?league=${lid}&tab=roster`,
@@ -189,7 +190,7 @@ async function newsAlerts(lid, season, st, teams, out) {
         if (inj) { inj.kinds = ["injury", "news"]; inj.body = text; continue; }
         const was = st.injRecent?.[r.id];
         out.push({
-          teamId: r.teamId, kinds: ["news"], tag: was ? `player-${r.id}` : `news-${r.id}-${n.at}`,
+          teamId: r.teamId, kinds: ["news"], tag: was ? `player-${r.id}` : `news-${r.id}-${n.at}`, dup: `news-${r.id}-${n.at}`,
           title: was ? was.title : `📰 ${r.name} · ${POS[r.posId] || ""}`.trim(),
           body: text,
           url: `/?league=${lid}&tab=roster&player=${r.id}`,
@@ -357,6 +358,7 @@ export default async () => {
   for (const sub of subs) (leagues[`${sub.leagueId}:${sub.season}`] ||= []).push(sub);
 
   const health = { at: now, live, leagues: {} };
+  const runs = [], liveBatch = [];
   for (const [lk, list] of Object.entries(leagues)) {
     const [lid, season] = lk.split(":");
     const teams = new Set(list.map((x) => String(x.teamId)));
@@ -372,14 +374,25 @@ export default async () => {
         st.scoring = (info.settings?.scoringSettings?.scoringItems || []).map((i) => ({ statId: i.statId, points: i.points, ...(i.pointsOverrides ? { pointsOverrides: i.pointsOverrides } : {}) }));
         st.season = season; st.spAt = now;
       }
-      // Live scoring first, saved and sent straight away, so the slower checks below can't hold it up.
+      // Live scoring first for every league, sent before the slower checks below, so they can't hold it up.
       if (live) {
         const out = [];
         await liveAlerts(lid, season, st, teams, out).catch((e) => { h.liveError = e.message; console.log(JSON.stringify({ event: "watch_live_error", lid, message: e.message })); });
         h.sp = st.sp; h.starters = Object.keys(st.live?.players || {}).length;
         await s.setJSON(`state:${lid}`, st);
-        await deliver(out, list, st, h, lid);
+        liveBatch.push({ out, list, st, h, lid });
       }
+      runs.push({ lid, season, list, teams, h, st });
+    } catch (e) {
+      // One league failing (ESPN down, a bad save) shouldn't stop the others.
+      h.error = e.message;
+      console.log(JSON.stringify({ event: "watch_league_error", lid, message: e.message }));
+    }
+  }
+  await deliverAll(liveBatch);
+  const batch = [];
+  for (const { lid, season, list, teams, h, st } of runs) {
+    try {
       const out = [];
       if (doInjuries || !st.inj) await injuryAlerts(lid, season, st, teams, out).catch((e) => console.log(JSON.stringify({ event: "watch_injury_error", lid, message: e.message })));
       if (doNews || !st.news) await newsAlerts(lid, season, st, teams, out).catch((e) => console.log(JSON.stringify({ event: "watch_news_error", lid, message: e.message })));
@@ -389,13 +402,14 @@ export default async () => {
         st.lineupWeek = st.sp;
       }
       await s.setJSON(`state:${lid}`, st);
-      await deliver(out, list, st, h, lid);
+      batch.push({ out, list, st, h, lid });
     } catch (e) {
       // One league failing (ESPN down, a bad save) shouldn't stop the others.
       h.error = e.message;
       console.log(JSON.stringify({ event: "watch_league_error", lid, message: e.message }));
     }
   }
+  await deliverAll(batch);
   // What the watcher did on its last run and its recent alerts (read by /api/push/health).
   const prev = (await s.get("health", { type: "json" }).catch(() => null)) || {};
   health.ms = Date.now() - now;
@@ -405,22 +419,39 @@ export default async () => {
   await s.setJSON("health", health).catch(() => {});
 };
 
-// Deliver: your team only, the kinds you left on, private details only for the owner.
-async function deliver(out, list, st, h, lid) {
-  for (const n of out) {
-    let sent = 0, failed = 0, skipped = 0;
-    for (const sub of list) {
-      if (!n.kinds.some((k) => sub.prefs?.[k] !== false)) { if (String(sub.teamId) === n.teamId) skipped++; continue; }
-      if (n.league ? String(sub.teamId) === n.actor : String(sub.teamId) !== n.teamId) continue;
-      const body = n.publicBody !== undefined && !sub.owner ? n.publicBody : n.body;
-      if (!body) continue;
-      // The league name is the bold first line; the alert and its details go underneath.
-      const ok = await sendPush(sub, st.leagueName ? { title: st.leagueName, body: `${n.title}\n${body}`, url: n.url, tag: n.tag } : { title: n.title, body, url: n.url, tag: n.tag });
-      ok ? sent++ : failed++;
+// Deliver: your team only, the kinds you left on, private details only for the owner. The same player
+// alert from more than one of your leagues (you have him on two teams) goes to each device once, with
+// "Multiple leagues" on top and the leagues named underneath.
+async function deliverAll(batch) {
+  const sends = new Map(); // device + alert -> the copies of it, one per league
+  for (const { out, list, st, h, lid } of batch) {
+    for (const n of out) {
+      const rec = { at: Date.now(), lid, team: n.teamId || n.actor || "", kinds: n.kinds, title: n.title, sent: 0, failed: 0, skipped: 0 };
+      (h.sent ||= []).push(rec);
+      for (const sub of list) {
+        if (!n.kinds.some((k) => sub.prefs?.[k] !== false)) { if (String(sub.teamId) === n.teamId) rec.skipped++; continue; }
+        if (n.league ? String(sub.teamId) === n.actor : String(sub.teamId) !== n.teamId) continue;
+        const body = n.publicBody !== undefined && !sub.owner ? n.publicBody : n.body;
+        if (!body) continue;
+        const key = n.dup ? `${sub.subscription.endpoint}|${n.dup}` : `${sub.key}|${sends.size}`;
+        if (!sends.has(key)) sends.set(key, []);
+        sends.get(key).push({ sub, n, body, st, rec });
+      }
     }
-    (h.sent ||= []).push({ at: Date.now(), lid, team: n.teamId || n.actor || "", kinds: n.kinds, title: n.title, sent, failed, skipped });
+    if (out.length) console.log(JSON.stringify({ event: "watch_sent", lid, alerts: out.length, kinds: [...new Set(out.flatMap((n) => n.kinds))] }));
   }
-  if (out.length) console.log(JSON.stringify({ event: "watch_sent", lid, alerts: out.length, kinds: [...new Set(out.flatMap((n) => n.kinds))] }));
+  for (const copies of sends.values()) {
+    const [first] = copies, { sub, n } = first;
+    const names = [...new Set(copies.map((c) => c.st.leagueName).filter(Boolean))];
+    // An injury that touches your starting lineup in any of them leads with that league's message.
+    const main = copies.find((c) => /starting lineup/.test(c.body)) || first;
+    const payload = names.length > 1
+      ? { title: "Multiple leagues", body: `${n.title}\n${main.body}\n${names.join(" · ")}`, url: main.n.url, tag: n.tag }
+      : first.st.leagueName ? { title: first.st.leagueName, body: `${n.title}\n${first.body}`, url: n.url, tag: n.tag } // league name on top, the alert underneath
+      : { title: n.title, body: first.body, url: n.url, tag: n.tag };
+    const ok = await sendPush(sub, payload);
+    for (const c of copies) ok ? c.rec.sent++ : c.rec.failed++;
+  }
 }
 
 export const config = { schedule: "* * * * *" };

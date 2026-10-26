@@ -36,17 +36,24 @@ async function getJson(url, { fantasy = false, headers = {} } = {}) {
 // turnover itself) is read from the game's play-by-play, which lists every play. Cached briefly per game.
 const STOPPAGE = /timeout|two-minute|end (of )?(period|half|quarter|game|regulation)|official|injury|coin toss|review|challenge/i;
 const playCache = new Map(); // event id -> { at, play }
+const BREAK_TYPE = /^(timeout|two-minute warning|end period|end of half)$/i, BREAK_TEXT = /^(Timeout #?\d* by |Two-Minute Warning|END QUARTER \d)/i;
 export function pickLastPlay(summary) {
   const dr = summary?.drives || {};
   const plays = [...(dr.previous || []).flatMap((x) => x.plays || []), ...(dr.current?.plays || [])];
   const p = [...plays].reverse().find((q) => !STOPPAGE.test(q.type?.text || ""));
   if (!p) return null;
+  // A break since that play, for the field graphic: a team timeout ("Timeout #2 by CAR at 10:33."), the
+  // two-minute warning, or the end of a quarter ("END QUARTER 2").
+  const after = plays.slice(plays.indexOf(p) + 1).reverse().find((q) => BREAK_TYPE.test(q.type?.text || "") || BREAK_TEXT.test(q.text || ""));
   const team = p.start?.team?.id ?? p.team?.id;
   return {
     id: p.id, type: p.type?.text || "", text: String(p.text || "").trim(),
     start: p.start?.yardLine ?? null, end: p.end?.yardLine ?? null, endText: p.end?.possessionText || "",
     yards: p.statYardage ?? null, teamId: team ? Number(team) : null, scoring: !!p.scoringPlay,
+    // Who has the ball after it, and the down it was run on: a 4th down ending with the other team's ball is a turnover on downs.
+    endTeamId: p.end?.team?.id ? Number(p.end.team.id) : null, down: p.start?.down ?? null,
     drive: dr.current?.description || "",
+    timeout: after ? String(after.text || "").trim() : "",
   };
 }
 async function realLastPlay(eventId) {
@@ -103,6 +110,8 @@ export default async (req) => {
           yards: lp.statYardage ?? null,
           teamId: lp.team?.id ? Number(lp.team.id) : null,
           scoring: !!lp.scoreValue,
+          endTeamId: lp.end?.team?.id ? Number(lp.end.team.id) : null,
+          down: lp.start?.down ?? null,
         } : null,
         driveStart: lp.drive?.start?.yardLine ?? null,
         driveDesc: lp.drive?.description || "",
@@ -127,13 +136,16 @@ export default async (req) => {
       try {
         const rp = await realLastPlay(g.id), cur = g.field?.lastPlay;
         if (!rp) return;
+        // The scoreboard's own "last play" may itself be the break.
+        const tNow = BREAK_TEXT.test(g.lastPlay || "") ? g.lastPlay : rp.timeout;
+        if (tNow && g.field) g.field.timeout = tNow;
         const stale = !cur || STOPPAGE.test(cur.type || "") || cur.start == null || !g.lastPlay;
         if (!stale) return;
-        const lastPlay = { type: rp.type, start: rp.start, end: rp.end, yards: rp.yards, teamId: rp.teamId, scoring: rp.scoring };
+        const lastPlay = { type: rp.type, start: rp.start, end: rp.end, yards: rp.yards, teamId: rp.teamId, scoring: rp.scoring, endTeamId: rp.endTeamId, down: rp.down };
         g.lastPlay = rp.text;
         // No situation at all (the ball between plays): still give the graphic a spot from that play.
         g.field = g.field ? { ...g.field, lastPlay, yardLine: g.field.yardLine ?? rp.end, possText: g.field.possText || rp.endText }
-          : { yardLine: rp.end, possText: rp.endText, down: null, distance: null, lastPlay, driveStart: null, driveDesc: rp.drive };
+          : { yardLine: rp.end, possText: rp.endText, down: null, distance: null, lastPlay, driveStart: null, driveDesc: rp.drive, timeout: tNow || "" };
       } catch { /* keep the scoreboard's own last play */ }
     }));
     const proIds = games.flatMap((g) => [g.home.proId, g.away.proId]).filter(Boolean);
