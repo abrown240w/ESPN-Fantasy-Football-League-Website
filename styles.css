@@ -2581,3 +2581,95 @@ button.mx-tds:hover, .mx-tds.pts-active { border-color: var(--accent); }
 .rc-place { font-size: .76rem; font-weight: 600; color: var(--ink-2); font-variant-numeric: tabular-nums; }
 .rc-place b { font-size: .7rem; }
 
+/* A short note pinned near the bottom of the screen (roster moves saving) */
+.flash { position: fixed; left: 50%; bottom: calc(76px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); z-index: 130; max-width: min(92vw, 440px); display: flex; align-items: center; gap: 8px;
+  padding: 9px 16px; border-radius: 999px; background: #1f2937; color: #fff; font-size: .88rem; font-weight: 600; box-shadow: 0 6px 20px rgba(0,0,0,.25); }
+.flash[hidden] { display: none; }
+.flash.ok { background: #15803d; }
+.flash.err { background: #b91c1c; border-radius: 14px; }
+.flash .spinner { width: 14px; height: 14px; border-color: rgba(255,255,255,.35); border-top-color: #fff; }
+@media (min-width: 1000px) { .flash { bottom: 24px; } body.has-chatbar .flash { bottom: calc(var(--chatbar) + 16px); } }
+
+/* Schedule (League tab): one team's road ahead, then every team week by week */
+.sch-pick { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; }
+.sch-pick select { font: inherit; font-weight: 600; padding: 5px 8px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--ink); max-width: 220px; }
+.sch-card { padding: 12px 14px; margin: 0 0 14px; }
+.sch-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.sch-row { display: grid; grid-template-columns: 54px minmax(0, 1.4fr) 110px 58px minmax(0, 1.6fr); align-items: center; gap: 10px; padding: 8px 4px; border-top: 1px solid var(--grid); }
+.sch-row:first-child { border-top: 0; }
+.sch-wk { font-weight: 700; color: var(--ink-2); font-size: .85rem; }
+.sch-opp { display: flex; align-items: center; gap: 8px; min-width: 0; cursor: pointer; }
+.sch-opp > span { display: grid; min-width: 0; }
+.sch-opp strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sch-proj { font-variant-numeric: tabular-nums; text-align: right; color: var(--ink-2); }
+.sch-proj strong { color: var(--ink); }
+.sch-wp { justify-self: center; font-weight: 800; font-size: .85rem; padding: 3px 8px; border-radius: 999px; background: var(--surface-2); font-variant-numeric: tabular-nums; }
+.sch-wp.easy, .sch-cell.easy { background: rgba(22,163,74,.16); color: #15803d; }
+.sch-wp.tough, .sch-cell.tough { background: rgba(220,38,38,.14); color: #b3261e; }
+.sch-miss { color: var(--ink-2); line-height: 1.35; }
+.sch-why { font-size: .7rem; font-weight: 700; text-transform: uppercase; color: var(--muted); }
+.sch-grid td, .sch-grid th { white-space: nowrap; }
+.sch-grid tbody tr { cursor: pointer; }
+.sch-grid tr.sch-sel td { box-shadow: inset 0 0 0 9999px rgba(57,135,229,.07); }
+.sch-cell { display: inline-grid; justify-items: center; min-width: 46px; padding: 3px 6px; border-radius: 8px; background: var(--surface-2); font-weight: 700; font-size: .8rem; line-height: 1.1; }
+.sch-cell small { font-size: .68rem; font-weight: 600; opacity: .85; }
+@media (max-width: 760px) {
+  .sch-row { grid-template-columns: 44px minmax(0, 1fr) auto; grid-template-areas: "wk opp wp" "wk proj proj" "wk miss miss"; row-gap: 4px; }
+  .sch-wk { grid-area: wk; align-self: start; padding-top: 4px; } .sch-opp { grid-area: opp; } .sch-wp { grid-area: wp; } .sch-proj { grid-area: proj; text-align: left; } .sch-miss { grid-area: miss; }
+  .sch-miss:empty { display: none; }
+}
+
+/* Game log: season picker beside the stat views */
+.gl-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+.gl-top .gl-modes { margin: 0; }
+.gl-season { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
+.gl-season select { font: inherit; font-weight: 700; padding: 4px 8px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--ink); }
+.gl-sum { margin: 0 0 6px; color: var(--ink-2); }
+
+/* Playoffs tab: bracket rounds as columns, games spaced so each lines up between the two it came from */
+.bk-note { margin: -4px 0 10px; }
+.bk-wrap { overflow-x: auto; overflow-y: hidden; padding-bottom: 4px; }
+.bk { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(210px, 1fr); gap: 14px; min-width: min-content; }
+.bk-col { display: flex; flex-direction: column; min-width: 0; }
+.bk-h { font-size: .8rem; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: var(--ink-2); margin: 0 2px 8px; white-space: nowrap; }
+.bk-h .muted { text-transform: none; letter-spacing: 0; font-weight: 600; }
+.bk-games { flex: 1; display: flex; flex-direction: column; justify-content: space-around; gap: 10px; }
+.bk-game { position: relative; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; box-shadow: 0 1px 3px rgba(16,24,40,.08); }
+.bk-game.proj { border-style: dashed; }
+.bk-game.is-bye { opacity: .75; }
+.bk-team { display: grid; grid-template-columns: 18px auto minmax(0, 1fr) auto; align-items: center; gap: 6px; padding: 6px 8px; font-size: .84rem; cursor: pointer; }
+.bk-team + .bk-team { border-top: 1px solid var(--grid); }
+.bk-team.bye { cursor: default; grid-template-columns: 18px 1fr; }
+.bk-seed { font-size: .7rem; font-weight: 800; color: var(--muted); text-align: center; }
+.bk-nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.bk-team.won .bk-nm { font-weight: 800; }
+.bk-team.lost { opacity: .55; }
+.bk-r { font-variant-numeric: tabular-nums; }
+.bk-fav { font-weight: 800; color: var(--ink); }
+.bk-team.my-row { background: rgba(57,135,229,.08); }
+.bk-live { position: absolute; top: 4px; right: 4px; font-size: .55rem; }
+.bk-trophy { display: grid; justify-items: center; gap: 6px; text-align: center; padding: 14px 10px; border-radius: 12px; background: var(--surface); border: 1px solid var(--border); }
+.bk-trophy .ic { width: 28px; height: 28px; color: #c9a227; }
+.bk-bubble { margin: 10px 2px 0; }
+.bk-bubble [data-tpop] { cursor: pointer; }
+/* Consolation ladders: one column per week, games stacked from the top */
+.bk-games.top { justify-content: flex-start; }
+.bk-ladder { grid-auto-columns: minmax(210px, 1fr); }
+
+
+/* Single-row header on laptop widths: a little tighter so all the League tabs fit beside the week picker */
+@media (min-width: 1360px) and (max-width: 1599px) {
+  #tabs { gap: 13px; }
+  #tabs button { font-size: .9rem; }
+  .topbar { gap: 18px; }
+  .topbar .week-nav select { max-width: 170px; text-overflow: ellipsis; }
+}
+
+/* Projected final standings: likely place, the range, odds of each place as a strip of squares */
+.fo-table td { vertical-align: middle; }
+.fo-rk { color: var(--muted); font-weight: 700; }
+.fo-range { white-space: nowrap; color: var(--ink-2); font-weight: 600; }
+.fo-strip { display: inline-grid; grid-template-columns: repeat(var(--n), 14px); gap: 2px; vertical-align: middle; }
+.fo-strip i { display: block; width: 14px; height: 14px; border-radius: 3px; background: color-mix(in srgb, var(--accent) calc(var(--p) * 100%), var(--surface-2)); }
+@media (max-width: 640px) { .fo-strip { grid-template-columns: repeat(var(--n), 9px); gap: 1px; } .fo-strip i { width: 9px; height: 12px; } }
+

@@ -75,8 +75,8 @@ const state = {
   // Only the leagues in LEAGUES can be opened; anything else falls back to the default.
   leagueId: [params.get("league"), store.get("ffb.league")].find((id) => LEAGUES.some((l) => l.id === id)) || "",
   season: params.get("season") || store.get("ffb.season") || "",
-  tab: ({ usage: "players", injuries: "players", league: "season" })[[params.get("tab"), store.get("ffb.tab")].find((t) => ["roster", "matchups", "live", "players", "usage", "injuries", "trade", "transactions", "managers", "season", "history", "league"].includes(t))]
-    || [params.get("tab"), store.get("ffb.tab")].find((t) => ["roster", "matchups", "live", "players", "trade", "transactions", "managers", "season", "history"].includes(t)) || "roster",
+  tab: ({ usage: "players", injuries: "players", league: "season" })[[params.get("tab"), store.get("ffb.tab")].find((t) => ["roster", "matchups", "live", "players", "usage", "injuries", "trade", "transactions", "managers", "schedule", "playoffs", "season", "history", "league"].includes(t))]
+    || [params.get("tab"), store.get("ffb.tab")].find((t) => ["roster", "matchups", "live", "players", "trade", "transactions", "managers", "schedule", "playoffs", "season", "history"].includes(t)) || "roster",
   base: null,
   week: null,
   weekCache: {},
@@ -647,13 +647,13 @@ const ptsCell = (p, status) => (p.played ? ptsLink(p.id, state.week.sp, f1(p.act
 
 // Five tabs across the top. Players also holds the Injury Report; League holds Standings, the Weekly
 // Snapshot, Transactions, the Trade Analyzer and History (as sub-tabs).
-const TAB_GROUP = { injuries: "players", usage: "players", season: "league", managers: "league", transactions: "league", trade: "league", history: "league" };
+const TAB_GROUP = { injuries: "players", usage: "players", season: "league", managers: "league", schedule: "league", playoffs: "league", transactions: "league", trade: "league", history: "league" };
 const groupOf = (t) => TAB_GROUP[t] || t;
 const homeOf = (t) => (t === "league" ? "season" : t);
-const LEAGUE_SUBS = [["season", "Standings"], ["managers", "Weekly"], ["transactions", "Moves"], ["trade", "Trades"], ["history", "History"]];
+const LEAGUE_SUBS = [["season", "Standings"], ["managers", "Weekly"], ["schedule", "Schedule"], ["playoffs", "Playoffs"], ["transactions", "Moves"], ["trade", "Trades"], ["history", "History"]];
 function showView(name) {
   setTimeout(updateFloatHeads, 0);
-  for (const v of ["roster", "matchups", "live", "players", "usage", "injuries", "trade", "transactions", "managers", "season", "history"]) $(`view-${v}`).hidden = v !== name;
+  for (const v of ["roster", "matchups", "live", "players", "usage", "injuries", "trade", "transactions", "managers", "schedule", "playoffs", "season", "history"]) $(`view-${v}`).hidden = v !== name;
   // Computers have League's sub-tabs in the main row instead of a League tab.
   const desk = DESK.matches;
   document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("active", b.classList.contains("desk-tab") ? b.dataset.tab === name : b.dataset.tab === groupOf(name)));
@@ -2424,6 +2424,360 @@ function recapImpact(x, byPro, st) {
     <p class="rc-stand small">${standingsLine(x)}</p></div>`;
 }
 
+// ---------- Schedule (League tab) ----------
+// The rest of the regular season, matchup by matchup. Each team's expected score in a week comes from its
+// current roster: points per game this season, nudged by how that week's NFL opponent defends the position,
+// with players on bye or on IR counted as zero, and the best lineup the rest can field. The win chance is
+// colored like the roster's matchup difficulty (green = favorable, red = tough).
+function schedOutlook() {
+  const b = state.base, cur = ensureCurrentRosters();
+  if (!cur) return null;
+  const nfl = cur.nfl || state.week?.nfl || {}, oprk = nfl.oprk || {};
+  const posAvg = {};
+  for (const [pos, m] of Object.entries(oprk)) { const v = Object.values(m).map((x) => x?.[1]).filter(Number.isFinite); posAvg[pos] = v.length ? sum(v) / v.length : null; }
+  const weeks = [];
+  for (let wk = b.current; wk <= b.regWeeks; wk++) if (b.schedule.some((m) => m.matchupPeriodId === wk)) weeks.push(wk);
+  // One player's expected points in a week, and why it's zero when it is.
+  const expect = (p, wk) => {
+    if (p.slotId === IR || /INJURY_RESERVE|SUSPENSION/.test(p.injury || "")) return { pts: 0, why: "IR" };
+    if (wk === b.current && WONT_PLAY.test(p.injury || "")) return { pts: 0, why: "out" };
+    const sp = b.scoringPeriodFor(wk), sched = nfl.sched?.[p.proId], g = sched?.[sp];
+    if (sched && !g) return { pts: 0, why: "bye" };
+    const ppg = p.seasonAvg ?? p.proj ?? 0, o = g ? oprk[p.posId]?.[g[0]] : null, avg = posAvg[p.posId];
+    return { pts: ppg * (o && avg ? Math.max(0.8, Math.min(1.2, o[1] / avg)) : 1) };
+  };
+  const sides = Object.fromEntries(cur.sides.map((s) => [String(s.teamId), s]));
+  // Who'd normally start (season points per game): the ones whose absence is worth pointing out.
+  const regulars = Object.fromEntries(cur.sides.map((s) => [String(s.teamId), new Set(optimalLineup(s.players, b.slotCounts, (p) => (p.slotId === IR ? 0 : p.seasonAvg ?? p.proj ?? 0)).lineup.map((x) => String(x.p.id)))]));
+  const teamWeek = (id, wk) => {
+    const s = sides[id];
+    if (!s) return { pts: 0, missing: [] };
+    const exp = new Map(s.players.map((p) => [String(p.id), expect(p, wk)]));
+    const pts = optimalLineup(s.players, b.slotCounts, (p) => exp.get(String(p.id)).pts).points;
+    const missing = s.players.filter((p) => regulars[id].has(String(p.id)) && exp.get(String(p.id)).why).map((p) => ({ p, why: exp.get(String(p.id)).why }));
+    return { pts, missing };
+  };
+  const out = weeks.map((wk) => ({
+    wk,
+    games: b.schedule.filter((m) => m.matchupPeriodId === wk && m.away).map((m) => {
+      const h = teamWeek(String(m.home.teamId), wk), a = teamWeek(String(m.away.teamId), wk);
+      // Less certain the further out it is (rosters change), and never a sure thing.
+      const wp = Math.max(0.03, Math.min(0.97, normCdf((h.pts - a.pts) / (38 + 3 * (wk - b.current)))));
+      return { home: String(m.home.teamId), away: String(m.away.teamId), h, a, wp };
+    }),
+  }));
+  return { weeks: out };
+}
+const schCls = (wp) => (wp >= 0.6 ? "easy" : wp <= 0.4 ? "tough" : "");
+function renderSchedule() {
+  const el = $("view-schedule"), b = state.base;
+  const O = schedOutlook();
+  if (!O) { el.innerHTML = `<div class="section-head"><h2>Schedule</h2></div><div class="loading small"><span class="spinner"></span> Loading rosters…</div>`; return; }
+  if (!O.weeks.length) { el.innerHTML = `<div class="section-head"><h2>Schedule</h2></div><p class="muted">The regular season is over.</p>`; return; }
+  const ids = Object.keys(b.teams).sort((x, y) => team(x).name.localeCompare(team(y).name));
+  const sel = state.schedTeam && b.teams[state.schedTeam] ? state.schedTeam : String(myTeamId() || ids[0]);
+  state.schedTeam = sel;
+  // This team's side of each remaining week.
+  const mine = (id) => O.weeks.map(({ wk, games }) => {
+    const g = games.find((x) => x.home === id || x.away === id);
+    if (!g) return { wk, bye: true };
+    const home = g.home === id;
+    return { wk, opp: home ? g.away : g.home, me: home ? g.h : g.a, them: home ? g.a : g.h, wp: home ? g.wp : 1 - g.wp };
+  });
+  const rows = ids.map((id) => ({ id, list: mine(id) }));
+  const missTxt = (list) => list.map(({ p, why }) => `${esc(shortName(p.name))} <span class="sch-why">${why === "bye" ? "bye" : why === "IR" ? "IR" : "out"}</span>`).join(", ");
+  const detail = mine(sel).map((x) => {
+    if (x.bye) return `<div class="sch-row"><span class="sch-wk">Wk ${x.wk}</span><span class="muted">No game</span></div>`;
+    const o = team(x.opp);
+    return `<div class="sch-row">
+      <span class="sch-wk">Wk ${x.wk}</span>
+      <span class="sch-opp" data-tpop="${x.opp}">${logoImg(o, 26)}<span><strong>${esc(o.name)}</strong><span class="muted small">${recordStr(o)}</span></span></span>
+      <span class="sch-proj"><strong>${f1(x.me.pts)}</strong> – ${f1(x.them.pts)}</span>
+      <span class="sch-wp ${schCls(x.wp)}">${pct(x.wp)}</span>
+      <span class="sch-miss small">${x.me.missing.length ? `<span class="neg">Without:</span> ${missTxt(x.me.missing)}` : ""}${x.me.missing.length && x.them.missing.length ? "<br>" : ""}${x.them.missing.length ? `<span class="pos">They're without:</span> ${missTxt(x.them.missing)}` : ""}</span>
+    </div>`;
+  }).join("");
+  const expW = (list) => sum(list.filter((x) => !x.bye), (x) => x.wp);
+  const t = team(sel), left = mine(sel).filter((x) => !x.bye);
+  el.innerHTML = `<div class="section-head"><h2>Schedule</h2><label class="small muted sch-pick">Team <select id="sch-team">${ids.map((id) => `<option value="${id}" ${id === sel ? "selected" : ""}>${esc(team(id).name)}</option>`).join("")}</select></label></div>
+    <div class="card sch-card"><div class="sch-head">${logoImg(t, 34)}<div><strong>${esc(t.name)}</strong><div class="muted small">${recordStr(t)} · about ${f1(expW(left))} more wins expected in ${left.length} game${left.length === 1 ? "" : "s"}</div></div></div>
+      <div class="sch-list">${detail}</div></div>
+    <div class="section-head"><h2>Every team, week by week</h2></div>
+    <div class="table-wrap sch-grid-wrap"><table class="data sch-grid"><thead><tr><th>Team</th>${O.weeks.map(({ wk }) => `<th class="num">Wk ${wk}</th>`).join("")}<th class="num" title="Expected wins over the rest of the regular season">Exp. W</th></tr></thead>
+      <tbody>${rows.sort((x, y) => expW(y.list) - expW(x.list)).map(({ id, list }) => `<tr class="${myRow(id)} ${id === sel ? "sch-sel" : ""}" data-schteam="${id}"><td><div class="team-cell">${logoImg(team(id), 24)}<strong>${esc(team(id).name)}</strong></div></td>
+        ${list.map((x) => (x.bye ? `<td class="num muted">–</td>` : `<td class="num"><span class="sch-cell ${schCls(x.wp)}" title="Week ${x.wk} vs ${esc(team(x.opp).name)}: ${f1(x.me.pts)}–${f1(x.them.pts)}${x.me.missing.length ? ` · without ${x.me.missing.map((m) => shortName(m.p.name)).join(", ")}` : ""}">${esc(team(x.opp).abbrev || team(x.opp).name.slice(0, 4))}<small>${pct(x.wp)}</small></span></td>`)).join("")}
+        <td class="num"><strong>${f1(expW(list))}</strong></td></tr>`).join("")}</tbody></table></div>
+    <p class="muted small">Expected scores use each player's points per game this season, adjusted for how that week's NFL opponent defends his position, and the best lineup his team can field without players on bye or on IR.</p>`;
+  $("sch-team").addEventListener("change", (e) => { state.schedTeam = e.target.value; renderSchedule(); });
+  el.querySelectorAll("[data-schteam]").forEach((r) => r.addEventListener("click", (e) => {
+    if (e.target.closest("[data-tpop], a, button")) return;
+    state.schedTeam = r.dataset.schteam; renderSchedule(); scrollTo({ top: 0, behavior: "smooth" });
+  }));
+}
+
+// ---------- Playoffs (League tab) ----------
+// Before the playoffs: an estimated bracket. Seeds come from the standings simulation (expected wins, then
+// points for), and each game shows the favorite's chance from the teams' season scoring. Once ESPN sets the
+// bracket, the real seeds, matchups and scores take over; later rounds are projected until they're played.
+// Standard bracket order: 1 v 8 and 4 v 5 on top, 2 v 7 and 3 v 6 below; top seeds get any byes.
+// Everyone else plays ESPN's consolation "ladders" for final placement (see ladder() below).
+const bracketOrder = (n) => (n === 1 ? [1] : bracketOrder(n / 2).flatMap((s) => [s, n + 1 - s]));
+function playoffBracket() {
+  const b = state.base, ss = b.raw.settings?.scheduleSettings || {}, spots = ss.playoffTeamCount || 0;
+  if (spots < 2) return null;
+  const done = (m) => m.winner && m.winner !== "UNDECIDED";
+  const po = b.schedule.filter((m) => m.matchupPeriodId > b.regWeeks && m.playoffTierType && m.playoffTierType !== "NONE");
+  const real = po.some((m) => m.playoffTierType === "WINNERS_BRACKET");
+  // Each team's strength: its season scoring pulled toward the league average (as in the playoff odds).
+  const reg = b.schedule.filter((m) => m.matchupPeriodId <= b.regWeeks && m.away && done(m));
+  const sc = {};
+  for (const m of reg) for (const s of [m.home, m.away]) (sc[s.teamId] ||= []).push(s.totalPoints);
+  const all = Object.values(sc).flat(), lg = all.length ? sum(all) / all.length : 100;
+  const sd = all.length > 2 ? Math.sqrt(sum(all, (x) => (x - lg) ** 2) / (all.length - 1)) : 25;
+  const str = (id) => { const l = sc[id] || []; return (sum(l) + 3 * lg) / (l.length + 3); };
+  const winP = (a, c) => normCdf((str(a) - str(c)) / (sd * Math.SQRT2));
+  // Every team in seed order: ESPN's once the bracket is set, otherwise the projected finish.
+  let order, chance = {};
+  if (real) order = Object.values(b.teams).sort((x, y) => (x.seed || 99) - (y.seed || 99)).map((t) => String(t.id));
+  else {
+    const odds = playoffOdds();
+    if (!odds) return null;
+    order = Object.keys(b.teams).sort((x, y) => odds.teams[y].wins - odds.teams[x].wins || odds.teams[x].seed - odds.teams[y].seed);
+    chance = Object.fromEntries(Object.entries(odds.teams).map(([id, o]) => [id, o.playoffs]));
+  }
+  const seedOf = Object.fromEntries(order.map((id, i) => [id, i + 1]));
+  const seeds = order.slice(0, spots);
+  const size = 2 ** Math.ceil(Math.log2(spots)), rounds = Math.log2(size);
+  const listed = [...new Set(playoffPeriods().map((p) => p.wk))];
+  const weekAt = (r) => listed[r] ?? b.regWeeks + r + 1;
+  const weeks = Array.from({ length: Math.max(rounds, listed.length) }, (_, r) => weekAt(r));
+  // One game between a and c in week wk of a tier: ESPN's result or score if there is one, else the favorite.
+  const game = (tier, wk, a, c) => {
+    const g = po.find((m) => m.playoffTierType === tier && m.matchupPeriodId === wk && m.away && [m.home.teamId, m.away.teamId].map(String).sort().join() === [a, c].sort().join());
+    const side = (id) => (g ? (String(g.home.teamId) === id ? g.home : g.away) : null);
+    const sa = side(a), scc = side(c), final = !!g && done(g);
+    const live = !!g && !final && ((sa.totalPointsLive ?? sa.totalPoints ?? 0) + (scc.totalPointsLive ?? scc.totalPoints ?? 0)) > 0;
+    const p = winP(a, c);
+    const winner = final ? (g.winner === "HOME" ? String(g.home.teamId) : String(g.away.teamId)) : p >= 0.5 ? a : c;
+    return { a, c, p, winner, loser: winner === a ? c : a, final, live, projected: !g,
+      scoreA: sa ? sa.totalPointsLive ?? sa.totalPoints : null, scoreC: scc ? scc.totalPointsLive ?? scc.totalPoints : null };
+  };
+  // Championship bracket, round by round.
+  let slots = bracketOrder(size).map((s) => (s <= spots ? seeds[s - 1] : null));
+  const champ = [], knocked = []; // knocked[r] = teams eliminated in round r
+  for (let r = 0; r < rounds; r++) {
+    const wk = weekAt(r), games = [], next = [];
+    knocked[r] = [];
+    for (let i = 0; i < slots.length; i += 2) {
+      const a = slots[i], c = slots[i + 1];
+      if (!a || !c) { games.push({ a, c, bye: true }); next.push(a || c); continue; }
+      const g = game("WINNERS_BRACKET", wk, a, c);
+      games.push(g); next.push(g.winner); knocked[r].push(g.loser);
+    }
+    champ.push({ wk, games });
+    slots = next;
+  }
+  // ESPN's consolation ladders: each week the group is sorted by wins in the ladder (a bye counts as a win),
+  // then seed, and neighbors play, but not two teams who met the week before (the next team down steps
+  // in); an odd team out gets a bye. Real pairings are used once ESPN posts them.
+  const ladder = (tier, pool, fromRound) => {
+    const wins = Object.fromEntries(pool.map((id) => [id, 0]));
+    let lastOpp = {};
+    const out = [];
+    for (let r = fromRound; r < weeks.length; r++) {
+      const wk = weeks[r], real = po.filter((m) => m.playoffTierType === tier && m.matchupPeriodId === wk && pool.includes(String(m.home.teamId)));
+      let pairs;
+      if (real.length) pairs = real.map((m) => [String(m.home.teamId), m.away ? String(m.away.teamId) : null]);
+      else {
+        const o = [...pool].sort((x, y) => wins[y] - wins[x] || seedOf[x] - seedOf[y]);
+        pairs = [];
+        for (let i = 0; i < o.length; i += 2) {
+          if (i + 1 < o.length && lastOpp[o[i]] === o[i + 1]) {
+            const j = o.findIndex((x, k) => k > i + 1 && lastOpp[o[i]] !== x);
+            if (j > 0) [o[i + 1], o[j]] = [o[j], o[i + 1]];
+          }
+          pairs.push([o[i], o[i + 1] || null]);
+        }
+      }
+      lastOpp = Object.fromEntries(pairs.flatMap(([a, c]) => (c ? [[a, c], [c, a]] : [])));
+      const games = pairs.map(([a, c]) => {
+        if (!c) { wins[a]++; return { a, c: null, bye: true }; }
+        const g = game(tier, wk, a, c);
+        wins[g.winner]++;
+        return g;
+      });
+      out.push({ wk, games });
+    }
+    return out;
+  };
+  const consolation = ladder("LOSERS_CONSOLATION_LADDER", order.slice(spots), 0);
+  // Placement games: teams knocked out of the championship bracket play from the next week, each round's
+  // losers in their own group (the semifinal losers meet for 3rd).
+  const placement = weeks.map((wk) => ({ wk, games: [] }));
+  knocked.forEach((group, r) => { if (group.length > 1 || r < rounds - 1) ladder("WINNERS_CONSOLATION_LADDER", group, r + 1).forEach((rd) => placement.find((x) => x.wk === rd.wk)?.games.push(...rd.games)); });
+  return { real, champ, champion: slots[0], seedOf, chance, bubble: real ? [] : order.slice(spots, spots + 2), spots,
+    consolation, placement: placement.filter((x) => x.games.length) };
+}
+
+function renderPlayoffs() {
+  const el = $("view-playoffs");
+  const B = playoffBracket();
+  if (!B) { el.innerHTML = `<div class="section-head"><h2>Playoffs</h2></div><p class="muted">This league's playoff settings aren't available.</p>`; return; }
+  const n = B.champ.length;
+  const label = (r) => (r === n - 1 ? "Championship" : r === n - 2 ? "Semifinals" : r === n - 3 ? "Quarterfinals" : `Round ${r + 1}`);
+  const line = (id, g, side) => {
+    if (!id) return `<div class="bk-team bye"><span class="bk-seed"></span><span class="muted">Bye</span></div>`;
+    const t = team(id), won = g && !g.bye && g.final && g.winner === id, lost = g && !g.bye && g.final && g.winner !== id;
+    const right = g?.bye ? `<span class="bk-r muted small">bye</span>`
+      : g.scoreA != null && (g.final || g.live) ? `<span class="bk-r"><strong>${f2(side === "a" ? g.scoreA : g.scoreC)}</strong></span>`
+      : `<span class="bk-r small ${g.winner === id ? "bk-fav" : "muted"}">${pct(side === "a" ? g.p : 1 - g.p)}</span>`;
+    return `<div class="bk-team ${myRow(id)} ${won ? "won" : ""} ${lost ? "lost" : ""}" data-tpop="${id}"><span class="bk-seed">${B.seedOf[id] || ""}</span>${logoImg(t, 20)}<span class="bk-nm">${esc(t.name)}</span>${right}</div>`;
+  };
+  const box = (g) => `<div class="bk-game ${g.bye ? "is-bye" : ""} ${g.projected && !g.bye ? "proj" : ""}">${line(g.a, g, "a")}${g.bye ? "" : line(g.c, g, "c")}${g.live ? `<span class="badge live bk-live">LIVE</span>` : ""}</div>`;
+  const cols = B.champ.map((rd, r) => `<div class="bk-col"><div class="bk-h">${label(r)}<span class="muted small"> · Wk ${rd.wk}</span></div><div class="bk-games">${rd.games.map(box).join("")}</div></div>`).join("");
+  const done = B.champ.at(-1).games[0]?.final;
+  const champ = B.champion ? `<div class="bk-col bk-champ"><div class="bk-h">${done ? "Champion" : "Projected champion"}</div><div class="bk-games"><div class="bk-trophy">${ic("trophy")}${logoImg(team(B.champion), 40)}<strong>${esc(team(B.champion).name)}</strong><span class="muted small">${esc(team(B.champion).owner)}</span></div></div></div>` : "";
+  // Ladders: one column per week, games stacked.
+  const ladderCols = (rounds) => `<div class="bk-wrap"><div class="bk bk-ladder">${rounds.map((rd) => `<div class="bk-col"><div class="bk-h">Week ${rd.wk}</div><div class="bk-games top">${rd.games.map(box).join("")}</div></div>`).join("")}</div></div>`;
+  const bubble = B.bubble.length ? `<p class="small bk-bubble"><span class="muted">On the bubble:</span> ${B.bubble.map((id) => `<span data-tpop="${id}">${esc(team(id).name)} <span class="muted">${oddsPct(B.chance[id] || 0)}</span></span>`).join(" · ")}</p>` : "";
+  el.innerHTML = `<div class="section-head"><h2>Championship bracket</h2>${B.real ? "" : `<span class="badge">PROJECTED</span>`}</div>
+    ${B.real ? "" : `<p class="muted small bk-note">Seeds by expected finish, the favorite advancing in each game. ESPN's real bracket replaces this once the regular season ends.</p>`}
+    <div class="bk-wrap"><div class="bk">${cols}${champ}</div></div>${bubble}
+    ${B.consolation.length ? `<div class="section-head"><h2>Consolation bracket</h2><span class="muted small">Teams that missed the playoffs, playing for final place</span></div>${ladderCols(B.consolation)}` : ""}
+    ${B.placement.length ? `<div class="section-head"><h2>Placement games</h2><span class="muted small">Teams knocked out of the playoffs, playing for 3rd, 5th and on</span></div>${ladderCols(B.placement)}` : ""}
+    ${finishHtml()}`;
+}
+
+// ---------- Final standings outlook (Playoffs tab) ----------
+// Plays out the rest of the season many times: the regular season, the playoff bracket and both consolation
+// ladders (ESPN's pairing rule), with each game's scores drawn from the teams' season scoring. Every run
+// gives each team a final place (1st = champion, 2nd = runner-up, then the knocked-out teams by their
+// placement games, then the consolation ladder). Run again as of a week earlier to show who moved.
+function simulateFinish(cutoff, runs = 2000) {
+  const b = state.base, ss = b.raw.settings?.scheduleSettings || {}, spots = ss.playoffTeamCount || 0;
+  if (spots < 2) return null;
+  const ids = Object.keys(b.teams), N = ids.length;
+  const known = (m) => m.matchupPeriodId <= cutoff && m.winner && m.winner !== "UNDECIDED";
+  // Strength from the season scoring up to the cutoff, pulled toward the league average.
+  const sc = Object.fromEntries(ids.map((id) => [id, []]));
+  for (const m of b.schedule) if (m.matchupPeriodId <= b.regWeeks && m.away && known(m)) for (const s of [m.home, m.away]) sc[s.teamId]?.push(s.totalPoints);
+  const all = Object.values(sc).flat(), lg = all.length ? sum(all) / all.length : 100;
+  const sd = all.length > 2 ? Math.sqrt(sum(all, (x) => (x - lg) ** 2) / (all.length - 1)) : 25;
+  const mean = Object.fromEntries(ids.map((id) => [id, (sum(sc[id]) + 3 * lg) / (sc[id].length + 3)]));
+  let seed = 98765 + cutoff;
+  const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
+  const normal = () => { let u = 0; while (!u) u = rnd(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * rnd()); };
+  const po = b.schedule.filter((m) => m.matchupPeriodId > b.regWeeks && m.playoffTierType && m.playoffTierType !== "NONE");
+  const realGame = (tier, wk, a, c) => po.find((m) => m.playoffTierType === tier && m.matchupPeriodId === wk && m.away && known(m) && [m.home.teamId, m.away.teamId].map(String).sort().join() === [a, c].sort().join());
+  // One game: the real result if it's known by the cutoff, otherwise drawn.
+  const play = (tier, wk, a, c) => {
+    const g = tier && realGame(tier, wk, a, c);
+    if (g) return g.winner === "HOME" ? String(g.home.teamId) : String(g.away.teamId);
+    return mean[a] + sd * normal() >= mean[c] + sd * normal() ? a : c;
+  };
+  const size = 2 ** Math.ceil(Math.log2(spots)), rounds = Math.log2(size);
+  const listed = [...new Set(playoffPeriods().map((p) => p.wk))];
+  const weeks = Array.from({ length: Math.max(rounds, listed.length) }, (_, r) => listed[r] ?? b.regWeeks + r + 1);
+  const reg = b.schedule.filter((m) => m.matchupPeriodId <= b.regWeeks && m.away);
+  const counts = Object.fromEntries(ids.map((id) => [id, new Array(N).fill(0)]));
+  for (let n = 0; n < runs; n++) {
+    // Regular season: record, then points for (the leagues' tiebreaker).
+    const w = Object.fromEntries(ids.map((id) => [id, 0])), pf = Object.fromEntries(ids.map((id) => [id, 0]));
+    for (const m of reg) {
+      const h = String(m.home.teamId), a = String(m.away.teamId);
+      if (known(m)) { pf[h] += m.home.totalPoints || 0; pf[a] += m.away.totalPoints || 0; if (m.winner === "HOME") w[h]++; else if (m.winner === "AWAY") w[a]++; else { w[h] += 0.5; w[a] += 0.5; } continue; }
+      const hs = mean[h] + sd * normal(), as = mean[a] + sd * normal();
+      pf[h] += hs; pf[a] += as; w[hs >= as ? h : a]++;
+    }
+    const order = [...ids].sort((x, y) => w[y] - w[x] || pf[y] - pf[x]);
+    const seedOf = Object.fromEntries(order.map((id, i) => [id, i + 1]));
+    // Championship bracket.
+    let slots = bracketOrder(size).map((s) => (s <= spots ? order[s - 1] : null));
+    const knocked = [];
+    for (let r = 0; r < rounds; r++) {
+      const next = [];
+      knocked[r] = [];
+      for (let i = 0; i < slots.length; i += 2) {
+        const a = slots[i], c = slots[i + 1];
+        if (!a || !c) { next.push(a || c); continue; }
+        const win = play("WINNERS_BRACKET", weeks[r], a, c);
+        next.push(win); knocked[r].push(win === a ? c : a);
+      }
+      slots = next;
+    }
+    // A ladder: returns its teams best-first. Places come from the last week's games in ladder order (the
+    // top game is for the highest place left, and so on down; the team with the bye finishes last), as ESPN
+    // does.
+    const ladder = (tier, pool, from) => {
+      const wins = Object.fromEntries(pool.map((id) => [id, 0]));
+      let places = [...pool].sort((x, y) => seedOf[x] - seedOf[y]);
+      let last = {};
+      for (let r = from; r < weeks.length; r++) {
+        const o = [...pool].sort((x, y) => wins[y] - wins[x] || seedOf[x] - seedOf[y]);
+        const pairs = [];
+        for (let i = 0; i < o.length; i += 2) {
+          if (i + 1 < o.length && last[o[i]] === o[i + 1]) { const j = o.findIndex((x, k) => k > i + 1 && last[o[i]] !== x); if (j > 0) [o[i + 1], o[j]] = [o[j], o[i + 1]]; }
+          pairs.push([o[i], o[i + 1] || null]);
+        }
+        last = {};
+        places = [];
+        for (const [a, c] of pairs) {
+          if (!c) { wins[a]++; places.push(a); continue; }
+          const win = play(tier, weeks[r], a, c);
+          wins[win]++;
+          places.push(win, win === a ? c : a);
+          last[a] = c; last[c] = a;
+        }
+      }
+      return places;
+    };
+    // Final places: champion, runner-up, then each round's knocked-out teams (latest round first), then the rest.
+    const finish = [slots[0], ...knocked[rounds - 1]];
+    for (let r = rounds - 2; r >= 0; r--) finish.push(...(knocked[r].length > 1 ? ladder("WINNERS_CONSOLATION_LADDER", knocked[r], r + 1) : knocked[r]));
+    finish.push(...ladder("LOSERS_CONSOLATION_LADDER", order.slice(spots), 0));
+    finish.forEach((id, i) => { if (counts[id]) counts[id][i]++; });
+  }
+  return Object.fromEntries(ids.map((id) => {
+    const c = counts[id].map((x) => x / runs), exp = c.reduce((s, p, i) => s + p * (i + 1), 0);
+    let acc = 0, lo = N, hi = 1;
+    c.forEach((p, i) => { acc += p; if (acc >= 0.1 && lo === N) lo = i + 1; if (acc >= 0.9 && hi === 1) hi = i + 1; }); // 10th–90th percentile
+    return [id, { dist: c, exp, best: Math.min(lo, hi), worst: Math.max(lo, hi), likely: c.indexOf(Math.max(...c)) + 1, title: c[0] }];
+  }));
+}
+function finishOutlook() {
+  const b = state.base;
+  const done = [...new Set(b.schedule.filter((m) => m.winner && m.winner !== "UNDECIDED").map((m) => m.matchupPeriodId))].sort((x, y) => x - y);
+  const last = done.at(-1) || 0;
+  const key = `${b.season}:${last}:${b.schedule.filter((m) => m.winner && m.winner !== "UNDECIDED").length}`;
+  if (state.finishOut?.key === key) return state.finishOut;
+  const now = simulateFinish(last), before = last > 0 ? simulateFinish(done.at(-2) || 0) : null;
+  state.finishOut = { key, now, before, last };
+  return state.finishOut;
+}
+function finishHtml() {
+  const F = finishOutlook();
+  if (!F?.now) return "";
+  const ids = Object.keys(F.now).sort((x, y) => F.now[x].exp - F.now[y].exp), N = ids.length;
+  const settled = ids.every((id) => Math.max(...F.now[id].dist) > 0.999); // every place decided
+  const rows = ids.map((id, i) => {
+    const o = F.now[id], prev = F.before?.[id], t = team(id);
+    // Movement over the last week: change in expected finish, shown as places up or down (rounded).
+    const move = prev ? Math.round((prev.exp - o.exp) * 10) / 10 : 0;
+    const mv = !prev || Math.abs(move) < 0.3 ? `<span class="muted">–</span>` : `<span class="${move > 0 ? "pos" : "neg"}">${move > 0 ? "▲" : "▼"} ${f1(Math.abs(move))}</span>`;
+    const strip = o.dist.map((p, k) => `<i style="--p:${Math.min(1, p * 2.2).toFixed(2)}" title="${ordinal(k + 1)}: ${oddsPct(p)}"></i>`).join("");
+    return `<tr class="${myRow(id)}"><td class="num fo-rk">${i + 1}</td>
+      <td><div class="team-cell" data-tpop="${id}">${logoImg(t, 26)}<div><strong>${esc(t.name)}</strong><div class="small muted">${recordStr(t)}</div></div></div></td>
+      <td class="num"><strong>${f1(o.exp)}</strong></td>
+      <td class="num">${mv}</td>
+      <td class="num fo-range">${o.best === o.worst ? ordinal(o.best) : `${ordinal(o.best)}–${ordinal(o.worst)}`}</td>
+      <td class="fo-strip-td"><span class="fo-strip" style="--n:${N}">${strip}</span></td>
+      <td class="num">${oddsPct(o.title)}</td></tr>`;
+  }).join("");
+  return `<div class="section-head"><h2>${settled ? "Final standings" : "Projected final standings"}</h2>${F.before ? `<span class="muted small">Change since before week ${F.last}</span>` : ""}</div>
+    <div class="table-wrap"><table class="data fo-table"><thead><tr><th class="num">#</th><th>Team</th><th class="num" title="Average final place across the simulations">Avg finish</th><th class="num" title="Places gained or lost in the projected finish since a week ago">Week</th><th class="num" title="80% of the simulated seasons end in this range">Range</th><th title="Chance of each final place, 1st on the left">Odds by place (1st → ${ordinal(N)})</th><th class="num" title="Chance to win the championship">Title</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <p class="muted small">From 2,000 simulations of the rest of the season, the playoffs and the consolation games, using each team's scoring this season. Darker squares are likelier places.</p>`;
+}
+
 // ---------- Season ----------
 function renderSeason() {
   const el = $("view-season");
@@ -3987,12 +4341,14 @@ function renderRoster() {
   el.querySelectorAll("[data-sp]").forEach((b) => b.addEventListener("click", () => {
     const p = side.players.find((x) => String(x.id) === b.dataset.sp);
     if (!picked || b.classList.contains("on")) { state.lineupEdit.pick = picked ? null : p.id; renderRoster(); return; }
-    confirmLineup(sel, [[picked, p.slotId], [p, picked.slotId]]);
+    sendLineup(sel, [[picked, p.slotId], [p, picked.slotId]]);
   }));
   el.querySelectorAll("[data-empty]").forEach((b) => b.addEventListener("click", () => {
     const slot = Number(b.dataset.empty);
     const needDrop = slot === BENCH && picked.slotId === IR && side.players.filter((p) => p.slotId !== IR).length >= rosterSize();
-    confirmLineup(sel, [[picked, slot]], { needDrop, side });
+    // Coming off IR onto a full roster still asks who to drop; any other move goes straight to ESPN.
+    if (needDrop) confirmLineup(sel, [[picked, slot]], { needDrop, side });
+    else sendLineup(sel, [[picked, slot]]);
   }));
   $("mv-done")?.addEventListener("click", () => { state.lineupEdit.pick = null; renderRoster(); });
   $("mv-drop")?.addEventListener("click", () => { const p = picked; state.lineupEdit.pick = null; confirmDrop(sel, p); });
@@ -5066,16 +5422,30 @@ function claimOdds(p) {
   const maxRate = Math.max(0.5, ...rows.map((r) => r.rate));
   const avg = sum(rows, (r) => r.strength) / Math.max(1, rows.length);
   const proj = p.proj || 0;
+  // Trade value (FantasyCalc): how he ranks among every rostered player, and how he compares with the
+  // least valuable bench player each team could drop for him. A valuable enough player gets claimed as a
+  // stash whether or not he helps anyone this week.
+  ensureValues();
+  const v = valueOf(Number(p.id)) || 0;
+  const rostered = wk.sides.flatMap((s) => s.players.map((x) => valueOf(Number(x.id)) || 0));
+  const vRank = v ? rostered.filter((x) => x > v).length / Math.max(1, rostered.length) : 1; // 0 = most valuable rostered
+  const stash = v ? Math.max(0, Math.min(1, (0.75 - vRank) / 0.45)) : 0; // 1 once he'd be in the top ~30% of rostered players
   for (const r of rows) {
+    const side = wk.sides.find((x) => String(x.teamId) === r.id);
+    const cut = Math.min(...(side?.players || []).filter((x) => !x.starter && x.slotId !== IR).map((x) => valueOf(Number(x.id)) || 0), Infinity);
+    const better = v && Number.isFinite(cut) ? Math.max(0, Math.min(1, (v - cut) / Math.max(400, v * 0.5))) : 0; // worth more than their worst bench player?
     const act = A ? 0.25 + 0.75 * Math.min(1, r.rate / maxRate) : 0.6; // how busy they are on the wire
     const gap = r.healthy < need ? 1 : r.healthy === need ? 0.55 : 0.2; // can they field the spot this week?
     const upg = 1 / (1 + Math.exp(-(proj - r.kth) / 2.5)); // would he start for them?
     const weak = Math.max(0, Math.min(1, 0.5 + (avg - r.strength) / Math.max(5, avg))); // their group vs the league
-    r.pct = Math.max(2, Math.min(95, Math.round(100 * act * (0.45 * upg + 0.3 * gap + 0.25 * weak))));
-    r.why = [r.healthy < need ? `short at ${pos}` : upg > 0.6 ? `he'd start` : "", weak > 0.62 ? `thin ${pos} group` : weak < 0.35 ? `deep at ${pos}` : "",
+    const now = 0.45 * upg + 0.3 * gap + 0.25 * weak; // this week's need
+    const hold = stash * better; // worth stashing over someone on their bench
+    // A high-value player gets claimed even by quieter teams.
+    r.pct = Math.max(2, Math.min(95, Math.round(100 * (act + (1 - act) * hold * 0.7) * Math.max(now, hold))));
+    r.why = [hold > 0.5 && hold >= now ? "worth a stash" : r.healthy < need ? `short at ${pos}` : upg > 0.6 ? `he'd start` : "", weak > 0.62 ? `thin ${pos} group` : weak < 0.35 ? `deep at ${pos}` : "",
       A ? `${r.claims} claim${r.claims === 1 ? "" : "s"} · ${r.adds} add${r.adds === 1 ? "" : "s"}` : ""].filter(Boolean).join(" · ");
   }
-  return { rows, loadingActivity: !A && state.activity === "loading" };
+  return { rows, value: v, loadingActivity: !A && state.activity === "loading" };
 }
 function openClaimOdds(id) {
   state.oddsFor = String(id);
@@ -5096,7 +5466,7 @@ function openClaimOdds(id) {
       <div class="odds-team"><strong>${esc(team(r.id).name)}</strong><span class="muted small">${esc(r.why)}</span></div>
       <div class="odds-pct"><strong>${r.pct}%</strong><span class="odds-bar"><i style="width:${r.pct}%"></i></span></div></li>`).join("")}</ol>
     ${O.loadingActivity ? `<p class="muted small"><span class="spinner"></span> Adding each team's claim history…</p>` : ""}
-    <p class="muted small">Estimates from how often each team has claimed or picked up players this season, whether they can field a ${esc(pos)} this week (byes and injuries), whether he'd start for them, and how their ${esc(pos)} group compares with the league.</p></div>`);
+    <p class="muted small">Estimates from how often each team has claimed or picked up players this season, whether they can field a ${esc(pos)} this week (byes and injuries), whether he'd start for them, and how their ${esc(pos)} group compares with the league, and his trade value${O.value ? ` (${fmtVal(O.value)})` : ""}: a valuable enough player gets claimed as a stash even when he won't play this week.</p></div>`);
   back();
 }
 
@@ -5185,6 +5555,32 @@ document.addEventListener("click", (e) => {
   if (b.dataset.trade) goTrade(b.dataset.trade);
   else openAdd(b.dataset.add, b.dataset.drop, { name: b.dataset.nm, posId: b.dataset.pos, proId: b.dataset.pro });
 });
+
+// A move made with the slot pills: straight to ESPN, with a note at the bottom of the screen while it
+// saves ("Saving…", then "✓ Saved on ESPN" or what went wrong). moves = [[player, toSlot], …]
+async function sendLineup(teamId, moves) {
+  state.lineupEdit = { teamId: String(teamId), pick: null };
+  const what = moves.length === 2 ? `${shortName(moves[0][0].name)} ⇄ ${shortName(moves[1][0].name)}` : `${shortName(moves[0][0].name)} → ${slotName(moves[0][1])}`;
+  flash(`<span class="spinner"></span> Saving ${esc(what)}…`, "busy");
+  try {
+    await sendMove("lineup", { teamId: Number(teamId), sp: state.week.sp, items: moves.map(([p, to]) => ({ playerId: Number(p.id), from: p.slotId, to })) });
+    flash(`✓ ${state.demo ? "Demo: not sent" : "Saved on ESPN"} · ${esc(what)}`, "ok");
+    await refreshAfterMove();
+  } catch (err) {
+    flash(esc(err.message), "err", 6000);
+    renderRoster();
+  }
+}
+// A short note pinned near the bottom of the screen.
+function flash(html, kind = "", ms = 2600) {
+  let f = $("flash");
+  if (!f) { f = document.createElement("div"); f.id = "flash"; f.setAttribute("role", "status"); document.body.appendChild(f); }
+  clearTimeout(flash.t);
+  f.className = `flash ${kind}`;
+  f.innerHTML = html;
+  f.hidden = false;
+  if (kind !== "busy") flash.t = setTimeout(() => { f.hidden = true; }, ms);
+}
 
 // Confirm, then send the moves to ESPN. moves = [[player, toSlot], …]
 function confirmLineup(teamId, moves, opts = {}) {
@@ -6302,7 +6698,8 @@ function gameLine(posId, s) {
   return statLine(posId, s) || "No stats";
 }
 
-async function fetchPlayer(id) {
+async function fetchPlayer(id, season) {
+  if (season && String(season) !== String(state.base?.season)) return fetchPastPlayer(id, season);
   if (state.demo) return window.DemoLeague.player(Number(id));
   const q = new URLSearchParams({ id });
   if (state.leagueId) q.set("leagueId", state.leagueId);
@@ -6316,6 +6713,20 @@ async function fetchPlayer(id) {
   }
   if (!res.ok) throw new ApiError(body.error, body.message || `Request failed (${res.status})`);
   return body;
+}
+
+// A player's game log from an earlier season. ESPN only has it through a league that existed that year, so
+// this tries the league on screen, then the others (they all score the same way).
+async function fetchPastPlayer(id, season) {
+  if (state.demo) throw new Error("Past seasons aren't in the demo.");
+  const ids = [String(state.leagueId || LEAGUES[0].id), ...LEAGUES.map((l) => l.id)].filter((x, i, a) => a.indexOf(x) === i);
+  for (const lid of ids) {
+    try {
+      const res = await fetch(`/api/player?${new URLSearchParams({ id, leagueId: lid, season })}`);
+      if (res.ok) return await res.json();
+    } catch { /* try the next league */ }
+  }
+  throw new Error(`No ${season} game log for him.`);
 }
 
 function initPlayerModal() {
@@ -6346,7 +6757,7 @@ function initPlayerModal() {
     e.preventDefault();
     e.stopPropagation();
     if (state.cmpPick && b.classList.contains("pl-link")) { finishPick(b.dataset.pid); return; }
-    if (b.classList.contains("pts-link")) { openPtsPop(b.dataset.pid, Number(b.dataset.sp), b); return; } // a score: a small scoring breakdown
+    if (b.classList.contains("pts-link")) { openPtsPop(b.dataset.pid, Number(b.dataset.sp), b, b.dataset.season); return; } // a score: a small scoring breakdown
     if (stageOpen()) closeStage();
     closePts();
     state.modalReturn = b;
@@ -6466,17 +6877,18 @@ function showPop(anchor, prefer = "up") {
   card.classList.remove("grow"); void card.offsetWidth; card.classList.add("grow"); // the pop-up animation
   placePts();
 }
-async function openPtsPop(id, sp, anchor) {
+async function openPtsPop(id, sp, anchor, season) {
   const pop = $("pts-modal"), body = $("pts-body");
   id = String(id);
   showPop(anchor, "up");
-  const cache = (state.playerCache ||= {});
-  if (!cache[id] || Date.now() - cache[id].at > 60000) {
-    try { cache[id] = { at: Date.now(), data: await fetchPlayer(id) }; }
+  const cache = (state.playerCache ||= {}), key = season ? `${id}:${season}` : id;
+  if (season && state.pastLogs?.[key]?.weeks) cache[key] = { at: Date.now(), data: state.pastLogs[key] };
+  if (!cache[key] || Date.now() - cache[key].at > (season ? 864e5 : 60000)) {
+    try { cache[key] = { at: Date.now(), data: await fetchPlayer(id, season) }; }
     catch (e) { if (!pop.hidden) { body.innerHTML = `<div class="banner">${esc(e.message)}</div>`; placePts(); } return; }
   }
   if (pop.hidden || ptsAnchor !== (anchor || null)) return;
-  const d = cache[id].data, p = d.player, w = d.weeks.find((x) => x.sp === sp);
+  const d = cache[key].data, p = d.player, w = d.weeks.find((x) => x.sp === sp);
   body.innerHTML = w ? breakdownHtml(w, p.posId) : (() => {
     const row = cmpRow(id, cmpWeek()), live = row && sp === state.week?.sp && row.played;
     return `<p class="muted small">${live ? `${f2(row.actual)} points so far.` : `No scoring for week ${sp}.`}</p>`;
@@ -6554,6 +6966,38 @@ function goLiveGame(id, side) {
   const scrollTo = () => document.querySelector(`.card.game[data-game="${CSS.escape(id)}"]`)?.scrollIntoView({ behavior: "smooth", block: "start" });
   setTimeout(scrollTo, 350);
   setTimeout(scrollTo, 1600); // again once the live data has loaded
+}
+
+// One earlier season's game log: the same columns as this season's (no opponent ranks or usage, which
+// are this season's only), each week's points opening its scoring breakdown.
+function pastLog(d, yr, mode) {
+  const p = d.player, weeks = d.weeks || [];
+  if (!weeks.length) return `<p class="muted">No games in ${yr}.</p>`;
+  const bySp = Object.fromEntries(weeks.map((w) => [w.sp, w]));
+  const STAT = { pass: [3, 4], rush: [24, 25], rec: [42, 43] };
+  const sv = (w, id) => Math.round(w.stats?.[id] || 0);
+  const ncols = mode === "game" ? 3 : mode === "rec" ? 8 : mode === "rush" ? 7 : 6;
+  const last = Math.max(17, ...weeks.map((w) => w.sp));
+  // The team he was on around a missed week, for its bye.
+  const teamAt = (sp) => (weeks.reduce((a, w) => (Math.abs(w.sp - sp) < Math.abs(a.sp - sp) ? w : a), weeks[0]).proId);
+  const rows = Array.from({ length: last }, (_, i) => i + 1).map((sp) => {
+    const w = bySp[sp];
+    if (!w) {
+      const bye = d.byes?.[teamAt(sp)] === sp;
+      return `<tr class="gl-row gl-none"><td class="gl-wk">${sp}</td><td class="gl-game"><strong>${bye ? "BYE" : "–"}</strong>${bye ? "" : `<div class="gl-line">Did not play</div>`}</td>${`<td class="num muted">–</td>`.repeat(ncols - 2)}</tr>`;
+    }
+    const pts = `<td class="num gl-ptd"><button type="button" class="gl-pts pts-link" data-pid="${esc(p.id)}" data-sp="${sp}" data-season="${esc(yr)}" title="How these points were scored">${f1(w.pts)}</button></td>`;
+    const opp = `<td class="gl-game"><strong>${w.opp ? `${w.home ? "vs" : "@"} ${esc(PRO[w.opp] || "")}` : "–"}</strong>${mode === "game" ? `<div class="gl-line">${esc(compactLine(p.posId, w.stats) || gameLine(p.posId, w.stats))}</div>` : ""}</td>`;
+    if (mode === "game") return `<tr class="gl-row"><td class="gl-wk">${sp}</td>${opp}${pts}</tr>`;
+    const [yd, td] = STAT[mode];
+    return `<tr class="gl-row"><td class="gl-wk">${sp}</td>${opp}${mode === "rec" ? `<td class="num">${sv(w, 58)}</td><td class="num">${sv(w, 53)}</td>` : mode === "rush" ? `<td class="num">${sv(w, 23)}</td>` : ""}<td class="num">${sv(w, yd)}</td><td class="num">${sv(w, td)}</td><td class="num">${sv(w, 20)}/${sv(w, 72)}</td>${pts}</tr>`;
+  }).join("");
+  const name = { pass: "Passing", rush: "Rushing", rec: "Receiving" }[mode];
+  const heads = mode === "game" ? `<th class="num">FPTS</th>`
+    : `${mode === "rec" ? `<th class="num" title="Targets">Tgt</th><th class="num" title="Receptions">Rec</th>` : mode === "rush" ? `<th class="num" title="Rushing attempts">Att</th>` : ""}<th class="num" title="${name} yards">Yds</th><th class="num" title="${name} touchdowns">TD</th><th class="num" title="Interceptions thrown / fumbles lost">I/F</th><th class="num">FPTS</th>`;
+  const total = d.seasonPts || sum(weeks, (w) => w.pts);
+  return `<p class="gl-sum small"><strong>${f1(total)}</strong> pts · <strong>${f1(total / weeks.length)}</strong> per game · ${weeks.length} game${weeks.length === 1 ? "" : "s"}${weeks.length ? ` · best ${f1(Math.max(...weeks.map((w) => w.pts)))}` : ""}</p>
+    <table class="data gamelog gl-compact gl-${mode}"><thead><tr><th class="gl-wk">Wk</th><th>Opp</th>${heads}</tr></thead><tbody>${rows}</tbody></table>`;
 }
 
 // ctx is only given for the side-by-side compare screen: { body, st, alive, stage }, so two cards can be on screen
@@ -6737,10 +7181,23 @@ function renderPlayerModal(d, focusSp, ctx) {
   } else if (tab === "usage") {
     pane = `<div class="pm-usage"></div>`;
   } else if (tab === "log") {
-    const all = Array.from({ length: Math.max(18, lastWeek) }, (_, i) => i + 1); // the whole NFL season
-    pane = `${focusSp && !bySp[focusSp] ? `<p class="muted small">No stats yet for week ${focusSp}.</p>` : ""}
-      ${glModes}
-      ${logTable(all)}${ul ? nvCredit() : ""}`;
+    const cur = String(state.base.season), yr = S.glSeasonFor === String(p.id) && S.glSeason ? S.glSeason : cur;
+    const pick = `<label class="gl-season small">Season <select id="gl-season">${[0, 1, 2, 3].map((n) => String(Number(cur) - n)).map((y) => `<option value="${y}" ${y === yr ? "selected" : ""}>${y}</option>`).join("")}</select></label>`;
+    if (yr === cur) {
+      const all = Array.from({ length: Math.max(18, lastWeek) }, (_, i) => i + 1); // the whole NFL season
+      pane = `<div class="gl-top">${pick}${glModes}</div>${focusSp && !bySp[focusSp] ? `<p class="muted small">No stats yet for week ${focusSp}.</p>` : ""}
+        ${logTable(all)}${ul ? nvCredit() : ""}`;
+    } else {
+      const key = `${p.id}:${yr}`, past = (state.pastLogs ||= {})[key];
+      if (!past) {
+        state.pastLogs[key] = "loading";
+        fetchPastPlayer(p.id, yr).then((x) => { state.pastLogs[key] = x; }).catch((e) => { state.pastLogs[key] = { error: e.message }; }).finally(rerender);
+      }
+      const pm = mode === "use" ? ({ 1: "pass", 2: "rush", 3: "rec", 4: "rec" }[p.posId] || "game") : mode; // no usage numbers for past seasons
+      const modes = hasViews ? `<div class="seg gl-modes">${[["pass", "Passing"], ["rush", "Rushing"], ["rec", "Receiving"]].map(([k, l]) => `<button type="button" data-glm="${k}" class="${pm === k ? "active" : ""}">${l}</button>`).join("")}</div>` : "";
+      pane = `<div class="gl-top">${pick}${modes}</div>${!past || past === "loading" ? `<div class="loading small"><span class="spinner"></span> Loading ${yr}…</div>`
+        : past.error ? `<p class="muted">${esc(past.error)}</p>` : pastLog(past, yr, hasViews ? pm : "game")}`;
+    }
   } else if (tab === "depth") {
     const dc = p.proId ? ensureDepth(p.proId, rerender) : null;
     pane = !p.proId ? `<p class="muted">Not on an NFL team.</p>`
@@ -6814,6 +7271,7 @@ function renderPlayerModal(d, focusSp, ctx) {
   body.querySelectorAll("[data-cardx]").forEach((b) => b.addEventListener("click", (e) => { e.stopPropagation(); closeCard(b.dataset.cardx); }));
   body.querySelector("[data-compare]")?.addEventListener("click", () => startCompare(String(p.id)));
   body.querySelectorAll("[data-glm]").forEach((b) => b.addEventListener("click", () => { S.glMode = b.dataset.glm; renderPlayerModal(d, focusSp, ctx); }));
+  body.querySelector("#gl-season")?.addEventListener("change", (e) => { S.glSeason = e.target.value; S.glSeasonFor = String(p.id); renderPlayerModal(d, focusSp, ctx); });
   body.querySelectorAll("[data-txmore]").forEach((b) => b.addEventListener("click", () => { const box = body.querySelector(".tx-more"); box.hidden = !box.hidden; b.textContent = box.hidden ? b.dataset.txmore : "Show less ▴"; }));
   if (tab === "log" && focusSp && bySp[focusSp]) body.querySelector(`.pm-pane tr.gl-row[data-sp="${focusSp}"]`)?.scrollIntoView({ block: "center" });
 }
@@ -6923,7 +7381,7 @@ function render() {
   keepState($(`view-${state.tab}`), () => renderTab());
 }
 function renderTab() {
-  ({ roster: renderRoster, matchups: renderMatchups, live: renderLive, players: renderPlayers, usage: renderUsage, injuries: renderInjuries, managers: renderManagers, season: renderSeason, history: renderHistory, trade: renderTradeAnalyzer, transactions: renderTransactions })[state.tab]();
+  ({ roster: renderRoster, matchups: renderMatchups, live: renderLive, players: renderPlayers, usage: renderUsage, injuries: renderInjuries, managers: renderManagers, schedule: renderSchedule, playoffs: renderPlayoffs, season: renderSeason, history: renderHistory, trade: renderTradeAnalyzer, transactions: renderTransactions })[state.tab]();
 }
 
 // Fetch (or reuse) one week's data without touching the screen.
@@ -7186,7 +7644,7 @@ function resetTab(tab) {
 function switchTab(tab, from, leaving = false) {
   tab = homeOf(tab);
   if (leaving && state.tab && groupOf(state.tab) !== groupOf(tab)) {
-    for (const t of ["roster", "matchups", "live", "players", "usage", "injuries", "trade", "transactions", "managers", "season", "history"]) if (groupOf(t) === groupOf(state.tab)) resetTab(t);
+    for (const t of ["roster", "matchups", "live", "players", "usage", "injuries", "trade", "transactions", "managers", "schedule", "playoffs", "season", "history"]) if (groupOf(t) === groupOf(state.tab)) resetTab(t);
     if (tab === "matchups") state.openMatchup = null; // always arrive on your own game
   }
   state.tab = tab;

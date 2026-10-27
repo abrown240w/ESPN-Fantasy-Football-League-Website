@@ -73,6 +73,7 @@ export default async (req) => {
         injury: pl.injuryStatus && pl.injuryStatus !== "ACTIVE" ? pl.injuryStatus : "",
         teamId: entry.onTeamId || 0, bye: proTeam?.byeWeek || null,
       },
+      byes: Object.fromEntries((sched.settings?.proTeams || []).map((t) => [t.id, t.byeWeek || null])),
       seasonPts: round2(seasonOf(0)?.appliedTotal || 0),
       seasonProj: round2(seasonOf(1)?.appliedTotal || 0),
       weeks,
