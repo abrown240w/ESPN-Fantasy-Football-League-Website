@@ -2532,3 +2532,52 @@ button.mx-tds:hover, .mx-tds.pts-active { border-color: var(--accent); }
 
 /* Field graphic: a strip above the field during a break (timeout, two-minute warning, end of a quarter) */
 .fw-band { margin: 0 auto 4px; width: fit-content; max-width: 100%; padding: 2px 12px; border-radius: 999px; color: #fff; font-size: .74rem; font-weight: 800; letter-spacing: .06em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; box-shadow: 0 1px 3px rgba(0,0,0,.25); }
+
+/* Weekly recap: your matchup's story, then the games that moved the standings */
+.rc-note { margin: -4px 0 10px; }
+.rc-card { padding: 14px 16px; margin: 0 0 14px; }
+.rc-head { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 10px; }
+.rc-team { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px; min-width: 0; }
+.rc-team.right { grid-template-columns: auto minmax(0, 1fr) auto; direction: rtl; }
+.rc-team.right > * { direction: ltr; }
+.rc-team.right .rc-id { text-align: right; }
+.rc-id { display: grid; min-width: 0; }
+.rc-id strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.rc-score { font-size: 1.35rem; font-weight: 800; font-variant-numeric: tabular-nums; color: var(--muted); }
+.rc-team.won .rc-score { color: var(--ink); }
+.rc-vs { font-size: .72rem; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.rc-story { margin: 10px 0 0; line-height: 1.5; }
+.rc-stand { margin: 6px 0 0; color: var(--ink-2); }
+.rc-chart { display: block; width: 100%; height: 80px; margin: 12px 0 0; overflow: visible; }
+.rc-zero { stroke: var(--grid); stroke-width: 1; }
+.rc-day { stroke: var(--grid); stroke-dasharray: 3 4; vector-effect: non-scaling-stroke; }
+.rc-dayl { fill: var(--muted); font-size: 10px; }
+.rc-line { fill: none; stroke: var(--ink-2); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.rc-home { fill: var(--home); opacity: .35; }
+.rc-away { fill: var(--away); opacity: .35; }
+.rc-cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; margin-top: 12px; border-top: 1px solid var(--grid); padding-top: 10px; }
+.rc-cols h4 { margin: 0 0 4px; font-size: .9rem; }
+.rc-keys { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; font-size: .88rem; }
+.rc-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: 14px; }
+.rc-grid .rc-card { margin: 0 0 14px; }
+@media (max-width: 640px) { .rc-cols { grid-template-columns: 1fr; gap: 10px; } .rc-score { font-size: 1.1rem; } }
+.rc-legend { display: flex; justify-content: space-between; gap: 10px; font-size: .72rem; color: var(--muted); margin-top: 2px; }
+.rc-legend span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rc-sw { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; opacity: .6; }
+.rc-sw.home { background: var(--home); } .rc-sw.away { background: var(--away); }
+/* Phones: names on two lines, score under the name */
+@media (max-width: 640px) {
+  .rc-head { gap: 6px; align-items: start; }
+  .rc-team, .rc-team.right { grid-template-columns: auto minmax(0, 1fr); grid-template-areas: "logo id" "score score"; row-gap: 4px; direction: ltr; }
+  .rc-team.right { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "id logo" "score score"; }
+  .rc-team > :first-child { grid-area: logo; }
+  .rc-id { grid-area: id; }
+  .rc-id strong { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-height: 1.2; font-size: .9rem; }
+  .rc-id .muted { font-size: .72rem; }
+  .rc-score { grid-area: score; }
+  .rc-team.right .rc-score { text-align: right; }
+  .rc-vs { align-self: center; }
+}
+.rc-place { font-size: .76rem; font-weight: 600; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.rc-place b { font-size: .7rem; }
+

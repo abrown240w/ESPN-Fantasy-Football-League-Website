@@ -1318,8 +1318,8 @@ function scoringFeed(m, maxRows) {
 const qtr = (n) => (n > 4 ? "OT" : `Q${n}`);
 // Every play that changed a starter's points in matchup `m`, newest first (the box scores load in the
 // background; the feed and its popups redraw when they arrive).
-function feedRows(m) {
-  const gs = ensureGameStatus()?.byPro || {}, items = state.base.raw.settings?.scoringSettings?.scoringItems || [];
+function feedRows(m, byPro) {
+  const gs = byPro || ensureGameStatus()?.byPro || {}, items = state.base.raw.settings?.scoringSettings?.scoringItems || [];
   const games = new Map(); // game id -> { g, starters: [{ p, t }] }
   for (const s of [m.home, m.away]) for (const p of s.starters) {
     const g = gs[p.proId];
@@ -1346,6 +1346,10 @@ function feedRows(m) {
 }
 // A game's plays arrived: redraw the feed column and any feed/TD popup open for this matchup.
 function refreshFeeds(m, lg) {
+  // The Weekly recap replays finished games: redraw it once their plays are in.
+  if (state.tab === "managers" && !state.recapRedraw) {
+    state.recapRedraw = setTimeout(() => { state.recapRedraw = 0; if (state.tab === "managers") keepState($("view-managers"), renderManagers); }, 300);
+  }
   // Multiview with feeds: redraw the panels (once, however many games' plays arrive together).
   if (state.tab === "matchups" && state.muScope === "all" && store.get("ffb.mvFeed") === "1" && !state.mvFeedRedraw) {
     state.mvFeedRedraw = setTimeout(() => { state.mvFeedRedraw = 0; if (state.tab === "matchups" && state.muScope === "all") keepState($("view-matchups"), renderMatchups); }, 300);
@@ -2128,16 +2132,36 @@ function awardChips(teamId) {
 
 // ---------- Managers ----------
 function renderManagers() {
-  const w = state.week, el = $("view-managers");
-  const sides = w.sides;
-  if (w.status === "upcoming") {
-    el.innerHTML = `<div class="section-head"><h2>Week ${w.week} snapshot</h2></div><p class="muted">The weekly snapshot appears once games kick off. Check the Matchups tab for projections.</p>`;
-    return;
+  const el = $("view-managers");
+  // A review of a finished week (ESPN has a winner for every game): the week on screen once it's over,
+  // otherwise the latest finished week before it.
+  let w = state.week, note = "";
+  if (w.status !== "final") {
+    const done = (wk) => { const ms = state.base.schedule.filter((m) => m.matchupPeriodId === wk); return ms.length > 0 && ms.every((m) => m.winner && m.winner !== "UNDECIDED"); };
+    let prev = w.week - 1;
+    while (prev >= 1 && !done(prev)) prev--;
+    if (prev < 1) { el.innerHTML = `<div class="section-head"><h2>Weekly recap</h2></div><p class="muted">The first recap appears once week 1 is over.</p>`; return; }
+    const c = state.weekCache[prev];
+    if (!c) {
+      el.innerHTML = `<div class="loading"><span class="spinner"></span> Loading week ${prev}…</div>`;
+      const base = state.base;
+      getWeek(prev).catch(() => {}).finally(() => { if (state.base === base && state.tab === "managers") renderManagers(); });
+      return;
+    }
+    w = c;
+    note = `<p class="muted small rc-note">Week ${state.week.week} ${state.week.status === "live" ? "is still being played" : "hasn't been played yet"}, so this is the week ${prev} review.</p>`;
   }
-  const so = w.status === "final" ? "" : " (so far)";
+  const sides = w.sides;
   const awards = weekAwards(w);
+  const byPro = weekGames(w.sp);
+  const me = String(myTeamId() || ""), mine = w.matchups.find((m) => m.away && [m.home.teamId, m.away.teamId].map(String).includes(me));
+  const impact = impactGames(w, mine);
+  const stand = { before: standingsThrough(w.week - 1), after: standingsThrough(w.week) };
 
-  el.innerHTML = `<div class="section-head"><h2>Week ${w.week} awards${so} ${statusBadge(w.status)}</h2></div>
+  el.innerHTML = `<div class="section-head"><h2>Week ${w.week} recap</h2></div>${note}
+    ${mine ? recapMine(mine, byPro, stand) : `<div class="card rc-card"><p class="muted">Pick your team (Sign in › My team) to get your matchup's recap here.</p></div>`}
+    ${impact.length ? `<div class="section-head"><h2>Games that shaped the standings</h2></div><div class="rc-grid">${impact.map((x) => recapImpact(x, byPro, stand)).join("")}</div>` : ""}
+    <div class="section-head"><h2>Week ${w.week} awards ${statusBadge(w.status)}</h2></div>
     <div class="grid grid-awards wk-awards" style="--n:${awards.length}">${awards.map((a) => `<div class="card award"><div class="label">${AWARD_ICONS[a.key] ? awardIcon(a.key) + " " : ""}${a.label}</div><div class="value">${a.value}</div><div class="who">${teamName(a.side.teamId, 20)}</div><div class="why">${esc(team(a.side.teamId).owner)}${a.why ? " · " + a.why : ""}</div></div>`).join("")}</div>
     <div class="section-head"><h2>Manager report card</h2><span class="muted small">Optimal = the highest-scoring lineup possible from that roster this week</span></div>
     <div id="mg-table"></div>`;
@@ -2154,6 +2178,250 @@ function renderManagers() {
   ];
   const draw = () => $("mg-table").replaceChildren(sortableTable(cols, sides, state.managers.sort, draw, { rowClass: (r) => myRow(r.teamId), tableClass: "mg-table" }));
   draw();
+}
+
+// ---------- Weekly recap ----------
+// The Weekly tab reviews a finished week: your matchup told as a story (who led, when it flipped, the play
+// that decided it, who carried each side), then the two games that moved the standings most. Built from
+// the same play-by-play as the scoring feed, so it follows the real order the points came in.
+
+// NFL game status (ids, kickoff, final or not) for any week, by pro team. The Matchup tab's copy only
+// covers the week on screen; a recap may be of the week before.
+function weekGames(sp) {
+  const all = (state.sbCache ||= {});
+  if (all[sp] && all[sp] !== "loading") return all[sp];
+  if (!all[sp]) {
+    all[sp] = "loading";
+    const base = state.base;
+    fetchScoreboard(sp)
+      .then((d) => {
+        const byPro = {};
+        for (const g of d.games || []) for (const [me, them] of [[g.home, g.away], [g.away, g.home]]) {
+          byPro[me.proId] = { id: g.id, state: g.state, date: g.date, home: me === g.home, oppAbbr: them.abbr };
+        }
+        all[sp] = byPro;
+      })
+      .catch(() => { all[sp] = {}; })
+      .finally(() => { if (state.base === base && state.tab === "managers") keepState($("view-managers"), renderManagers); });
+  }
+  return null;
+}
+
+// Standings after a week: record, then points for (the leagues' tiebreaker). Regular season only.
+function standingsThrough(wk) {
+  const b = state.base, rec = Object.fromEntries(Object.keys(b.teams).map((id) => [id, { id, w: 0, l: 0, t: 0, pf: 0 }]));
+  for (const m of b.schedule) {
+    if (m.matchupPeriodId > Math.min(wk, b.regWeeks) || !m.away || !m.winner || m.winner === "UNDECIDED") continue;
+    const h = rec[m.home.teamId], a = rec[m.away.teamId];
+    if (!h || !a) continue;
+    h.pf += m.home.totalPoints || 0; a.pf += m.away.totalPoints || 0;
+    if (m.winner === "HOME") { h.w++; a.l++; } else if (m.winner === "AWAY") { a.w++; h.l++; } else { h.t++; a.t++; }
+  }
+  const list = Object.values(rec).sort((x, y) => (y.w + y.t / 2) - (x.w + x.t / 2) || y.pf - x.pf);
+  list.forEach((r, i) => { r.rank = i + 1; });
+  return Object.fromEntries(list.map((r) => [r.id, r]));
+}
+
+// One matchup replayed play by play: [{ at, ph, pa, row }] in time order, with each side's projected
+// finish after every scoring play. A D/ST's "starts at +50 and loses points as it gives them up" is
+// folded in at the end of its game, so it doesn't look like a 50-point swing at kickoff.
+function matchupRace(m, byPro) {
+  const { rows, loading } = feedRows(m, byPro);
+  const homeIds = new Set(m.home.starters.map((p) => String(p.id)));
+  // Each scoring play's points per player; a D/ST's tier points wait for the end of its game.
+  const ev = [], deferred = new Map(); // game id -> { at, pts: Map(player id -> pts) }
+  for (const row of [...rows].reverse()) {
+    const gains = [];
+    for (const w of row.who) {
+      if (w.p.posId === 16 && /Kickoff:|allowed/.test(w.what)) {
+        const d = deferred.get(row.d.event) || { at: 0, pts: new Map() };
+        d.pts.set(String(w.p.id), (d.pts.get(String(w.p.id)) || 0) + w.pts);
+        deferred.set(row.d.event, d);
+      } else gains.push([String(w.p.id), w.pts]);
+    }
+    const d = deferred.get(row.d.event);
+    if (d) d.at = Math.max(d.at, row.at);
+    if (gains.length) ev.push({ at: row.at, gains, row });
+  }
+  for (const [, d] of deferred) ev.push({ at: d.at + 1, gains: [...d.pts], row: null });
+  ev.sort((x, y) => x.at - y.at);
+  // Projected finish after each play: points so far, plus what each starter is still expected to add
+  // (all of his projection before kickoff, a shrinking share as his game goes on).
+  const GAME = 3.2 * 3600e3, sofar = new Map();
+  const kick = (p) => Date.parse(byPro?.[p.proId]?.date) || null;
+  const projAt = (side, t) => sum(side.starters, (p) => {
+    const k = kick(p), got = sofar.get(String(p.id)) || 0;
+    if (!k || t < k) return got + (p.proj || 0);
+    return got + (p.proj || 0) * Math.max(0, 1 - (t - k) / GAME);
+  });
+  const start = { at: (ev[0]?.at || 0) - 1, ph: projAt(m.home, -Infinity), pa: projAt(m.away, -Infinity), row: null };
+  for (const e of ev) {
+    for (const [id, pts] of e.gains) sofar.set(id, (sofar.get(id) || 0) + pts);
+    e.home = e.gains.filter(([id]) => homeIds.has(id)).reduce((s, [, x]) => s + x, 0);
+    e.away = e.gains.filter(([id]) => !homeIds.has(id)).reduce((s, [, x]) => s + x, 0);
+    e.ph = projAt(m.home, e.at); e.pa = projAt(m.away, e.at);
+  }
+  // It ends where it ended.
+  if (ev.length && !loading) { const last = ev[ev.length - 1]; last.ph = m.home.score; last.pa = m.away.score; }
+  return { ev, start, loading };
+}
+
+const dayPart = (at) => {
+  const d = new Date(at), day = d.getDay(), hr = d.getHours();
+  return day === 4 ? "Thursday night" : day === 1 ? "Monday night" : day === 0 ? (hr < 15 ? "early Sunday" : hr < 19 ? "Sunday afternoon" : "Sunday night") : d.toLocaleDateString(undefined, { weekday: "long" });
+};
+// "A. Brown's 14-yd catch (Q4, NE @ CHI)"
+function playPhrase(e) {
+  const r = e.row;
+  if (!r) return "a defense's final tally";
+  const best = [...r.who].sort((x, y) => Math.abs(y.pts) - Math.abs(x.pts))[0];
+  const first = best.what.split(" · ")[0] || "";
+  const m = /^(.*?), (-?\d+) yds$/.exec(first);
+  let what = m ? `${m[2]}-yd ${m[1]}` : first;
+  what = what.replace(/\b(Catch|Run|Completion|Field goal|Sacked|Interception|Fumble|Kick|Punt|Return|Two-point|Extra|Missed|Kneel|Sack|Safety|Blocked|Forced)\b/g, (w) => w.toLowerCase());
+  const A = r.d.teams.away, H = r.d.teams.home;
+  const nm = shortName(best.p.name);
+  return `${esc(nm)}${/s$/i.test(nm) ? "'" : "'s"} ${esc(what)} (${qtr(r.pl.period)}, ${esc(A.abbr)} @ ${esc(H.abbr)})`;
+}
+
+// A few sentences on how a matchup went, told by the projected finish: who was expected to win going in,
+// who looked in control along the way, and the play after which the winner was ahead for good.
+function raceStory(m, race) {
+  const H = team(m.home.teamId), A = team(m.away.teamId);
+  const hs = m.home.score, as = m.away.score, margin = Math.abs(hs - as);
+  if (hs === as) return `${esc(H.name)} and ${esc(A.name)} finished tied at ${f2(hs)}.`;
+  const homeWon = hs > as, W = homeWon ? H : A, L = homeWon ? A : H;
+  const out = [], ev = race.ev;
+  const lead = (e) => (homeWon ? e.ph - e.pa : e.pa - e.ph); // the winner's projected margin
+  const pre = race.start ? lead(race.start) : null;
+  if (ev.length) {
+    let changes = 0, prev = Math.sign(pre || 0), forGood = null, maxDef = Math.max(0, -(pre || 0)), defAt = pre < 0 ? race.start : null, swing = null;
+    for (const e of ev) {
+      const x = lead(e), s = Math.sign(Math.round(x * 10));
+      if (s && prev && s !== prev) changes++;
+      if (s > 0 && prev <= 0) forGood = e;
+      if (s) prev = s;
+      if (-x > maxDef) { maxDef = -x; defAt = e; }
+      // A play's own weight: the fantasy points it put up, for the winner (+) or the loser (−).
+      e.swing = homeWon ? e.home - e.away : e.away - e.home;
+      if (e.row && (!swing || Math.abs(e.swing) > Math.abs(swing.d))) swing = { e, d: e.swing };
+    }
+    if (pre >= 0 && maxDef < 1) out.push(`${esc(W.name)} went in projected to win by ${f1(pre)} and never really trailed.`);
+    // The moment the loser looked safest; the play is named only if it was a big one.
+    else if (maxDef >= 10 && defAt?.row) out.push(`${esc(L.name)} looked in control ${dayPart(defAt.at)}${Math.abs(defAt.swing || 0) >= 5 ? ` after ${playPhrase(defAt)}` : ""}, on track to win by ${f1(maxDef)}, but ${esc(W.name)} turned it around${forGood?.row ? ` and went ahead for good ${dayPart(forGood.at)} on ${playPhrase(forGood)}` : ""}.`);
+    else out.push(`${pre < 0 ? `${esc(L.name)} was projected to win by ${f1(-pre)} going in. ` : ""}The projected winner changed ${changes === 1 ? "once" : `${changes} times`}${forGood?.row ? `; ${esc(W.name)} pulled ahead for good ${dayPart(forGood.at)} on ${playPhrase(forGood)}` : ""}.`);
+    if (swing && Math.abs(swing.d) >= 6) out.push(`Biggest play: ${playPhrase(swing.e)}, ${swing.d > 0 ? "+" : "−"}${f1(Math.abs(swing.d))} for ${esc((swing.d > 0 ? W : L).name)}.`);
+  } else if (pre != null && pre < -3) out.push(`${esc(W.name)} was projected to lose by ${f1(-pre)}.`);
+  out.push(margin < 5 ? `It came down to ${f2(margin)} points.` : margin > 40 ? `It ended a ${f1(margin)}-point blowout.` : `Final margin: ${f1(margin)}.`);
+  return out.join(" ");
+}
+
+// Who carried each side, who let it down, and a bench call that would have flipped it.
+function keyPlayers(side, opp, won) {
+  const st = [...side.starters].filter((p) => p.played || p.actual);
+  const tops = [...st].sort((a, b) => b.actual - a.actual).slice(0, 2);
+  const bust = [...st].filter((p) => p.proj - p.actual >= 5).sort((a, b) => (a.actual - a.proj) - (b.actual - b.proj))[0];
+  const items = tops.map((p) => `<li>⭐ ${plink(p.id, shortName(p.name))} <strong>${f1(p.actual)}</strong> <span class="muted">proj ${f1(p.proj)}</span></li>`);
+  if (bust && !tops.includes(bust)) items.push(`<li>🧊 ${plink(bust.id, shortName(bust.name))} <strong>${f1(bust.actual)}</strong> <span class="muted">proj ${f1(bust.proj)}</span></li>`);
+  if (!won) {
+    // The best swap from the bench into a slot he could play.
+    let swap = null;
+    for (const b of side.bench) for (const s of side.starters) {
+      if (!b.eligible.includes(s.slotId) || b.actual <= s.actual) continue;
+      const gain = b.actual - s.actual;
+      if (!swap || gain > swap.gain) swap = { b, s, gain };
+    }
+    const short = opp.score - side.score;
+    if (swap && swap.gain > short) items.push(`<li>🪑 Starting ${plink(swap.b.id, shortName(swap.b.name))} (${f1(swap.b.actual)}) over ${plink(swap.s.id, shortName(swap.s.name))} (${f1(swap.s.actual)}) would have won it.</li>`);
+  }
+  return `<ul class="rc-keys">${items.join("")}</ul>`;
+}
+
+// The projected margin over the week as a small chart: above the line, the left team is on track to win.
+function raceChart(m, race) {
+  const ev = [race.start, ...race.ev].filter(Boolean);
+  if (ev.length < 3) return "";
+  const W = 600, Hh = 90, pad = 6, diffs = ev.map((e) => e.ph - e.pa), mx = Math.max(10, ...diffs.map(Math.abs));
+  const X = (i) => pad + (i / (ev.length - 1)) * (W - 2 * pad), Y = (d) => Hh / 2 - (d / mx) * (Hh / 2 - pad);
+  const pts = diffs.map((d, i) => `${X(i).toFixed(1)},${Y(d).toFixed(1)}`).join(" ");
+  // Day dividers (Thursday | Sunday | Monday) where the scoring moves to another day.
+  const days = [];
+  const DAY = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  ev.forEach((e, i) => { const d = new Date(Math.max(e.at, ev[1]?.at || 0)).getDay(); if (i === 0 || d !== new Date(Math.max(ev[i - 1].at, ev[1]?.at || 0)).getDay()) days.push([X(i), DAY[d]]); });
+  const id = `rc-${m.id}`;
+  return `<svg class="rc-chart" viewBox="0 0 ${W} ${Hh}" preserveAspectRatio="none" role="img" aria-label="Lead over the week">
+    <defs><clipPath id="${id}-t"><rect x="0" y="0" width="${W}" height="${Hh / 2}"/></clipPath><clipPath id="${id}-b"><rect x="0" y="${Hh / 2}" width="${W}" height="${Hh / 2}"/></clipPath></defs>
+    ${days.map(([x, l]) => `<line x1="${x}" y1="0" x2="${x}" y2="${Hh}" class="rc-day"/><text x="${x + 3}" y="11" class="rc-dayl">${l}</text>`).join("")}
+    <line x1="0" y1="${Hh / 2}" x2="${W}" y2="${Hh / 2}" class="rc-zero"/>
+    <polygon points="${X(0)},${Hh / 2} ${pts} ${X(ev.length - 1)},${Hh / 2}" class="rc-home" clip-path="url(#${id}-t)"/>
+    <polygon points="${X(0)},${Hh / 2} ${pts} ${X(ev.length - 1)},${Hh / 2}" class="rc-away" clip-path="url(#${id}-b)"/>
+    <polyline points="${pts}" class="rc-line"/></svg>
+    <div class="rc-legend"><span><i class="rc-sw home"></i>${esc(team(m.home.teamId).name)} ahead</span><span><i class="rc-sw away"></i>${esc(team(m.away.teamId).name)} ahead</span></div>`;
+}
+
+// `st`: the standings before and after that week, for each team's record and place ("4-3 · 5th ▲2").
+function recapHead(m, st) {
+  const H = team(m.home.teamId), A = team(m.away.teamId), hw = m.home.score > m.away.score, aw = m.away.score > m.home.score;
+  const place = (id) => {
+    const a = st?.after?.[id], b = st?.before?.[id];
+    if (!a) return "";
+    const move = b && b.w + b.l + b.t ? b.rank - a.rank : 0;
+    return `<span class="rc-place">${a.w}-${a.l}${a.t ? `-${a.t}` : ""} · ${ordinal(a.rank)}${move ? ` <b class="${move > 0 ? "pos" : "neg"}">${move > 0 ? "▲" : "▼"}${Math.abs(move)}</b>` : ""}</span>`;
+  };
+  const side = (t, s, won, right) => `<div class="rc-team ${right ? "right" : ""} ${won ? "won" : ""}">${logoImg(t, 34)}<div class="rc-id"><strong data-tpop="${t.id}">${esc(t.name)}</strong><span class="muted small">${esc(t.owner)}</span>${place(t.id)}</div><div class="rc-score">${f2(s.score)}</div></div>`;
+  return `<div class="rc-head">${side(H, m.home, hw, false)}<span class="rc-vs">${hw || aw ? "Final" : "Tie"}</span>${side(A, m.away, aw, true)}</div>`;
+}
+
+// Your matchup: the story, the lead chart, and each manager's key players.
+function recapMine(m, byPro, st) {
+  const race = byPro ? matchupRace(m, byPro) : { ev: [], loading: true };
+  const hw = m.home.score > m.away.score;
+  return `<div class="card rc-card rc-mine">${recapHead(m, st)}
+    ${race.ev.length ? raceChart(m, race) : race.loading ? `<div class="loading small"><span class="spinner"></span> Replaying the week…</div>` : ""}
+    <p class="rc-story">${raceStory(m, race)}</p>
+    <div class="rc-cols"><div><h4>${esc(team(m.home.teamId).owner || team(m.home.teamId).name)}</h4>${keyPlayers(m.home, m.away, hw)}</div>
+      <div><h4>${esc(team(m.away.teamId).owner || team(m.away.teamId).name)}</h4>${keyPlayers(m.away, m.home, !hw)}</div></div></div>`;
+}
+
+// The two other games that moved the standings most: places gained or lost, crossing the playoff line,
+// and teams fighting near it count most; a close finish adds a little.
+function impactGames(w, skip) {
+  const b = state.base, spots = b.raw.settings?.scheduleSettings?.playoffTeamCount || 4;
+  if (w.week > b.regWeeks) {
+    return w.matchups.filter((m) => m.away && m.playoff && m.id !== skip?.id).slice(0, 2).map((m) => ({ m, note: "" }));
+  }
+  const before = standingsThrough(w.week - 1), after = standingsThrough(w.week);
+  return w.matchups.filter((m) => m.away && m.id !== skip?.id).map((m) => {
+    let score = 0;
+    for (const s of [m.home, m.away]) {
+      const x = before[s.teamId], y = after[s.teamId];
+      score += Math.abs(x.rank - y.rank) + ((x.rank <= spots) !== (y.rank <= spots) ? 4 : 0) + Math.max(0, 2 - Math.abs(y.rank - spots - 0.5) / 2);
+    }
+    if (Math.abs(m.home.score - m.away.score) < 8) score += 1;
+    return { m, score, before, after, spots };
+  }).sort((x, y) => y.score - x.score).slice(0, 2);
+}
+function standingsLine(x) {
+  const { m, before, after, spots } = x;
+  if (!before) return "";
+  const won = m.home.score >= m.away.score ? m.home : m.away, lost = won === m.home ? m.away : m.home;
+  const ord = (n) => ordinal(n), rec = (r) => `${r.w}-${r.l}${r.t ? `-${r.t}` : ""}`;
+  const say = (s, verb) => {
+    const p = before[s.teamId].rank, q = after[s.teamId].rank, t = team(s.teamId), r = after[s.teamId];
+    const line = p === q ? `stays ${ord(q)}` : `${verb(q < p)} from ${ord(p)} to ${ord(q)}`;
+    const cut = (p <= spots) !== (q <= spots) ? (q <= spots ? ", into a playoff spot" : ", out of a playoff spot") : "";
+    return `${esc(t.name)} (${rec(r)}) ${line}${cut}`;
+  };
+  return `${say(won, (up) => (up ? "climbs" : "slips"))}; ${say(lost, (up) => (up ? "climbs" : "drops"))}.`;
+}
+function recapImpact(x, byPro, st) {
+  const { m } = x;
+  const race = byPro ? matchupRace(m, byPro) : { ev: [], loading: true };
+  const won = m.home.score >= m.away.score ? m.home : m.away;
+  const star = [...won.starters].sort((a, b) => b.actual - a.actual)[0];
+  return `<div class="card rc-card">${recapHead(m, st)}
+    <p class="rc-story">${raceStory(m, race)}${star ? ` ${plink(star.id, shortName(star.name))} led the way with ${f1(star.actual)}.` : ""}</p>
+    <p class="rc-stand small">${standingsLine(x)}</p></div>`;
 }
 
 // ---------- Season ----------
@@ -3949,6 +4217,7 @@ const NOTIFY_KINDS = [
   ["trade", "Trades", "A trade involving your team is accepted"],
   ["waiver", "Waiver report", "One summary after each waiver run: who you got (and missed)"],
   ["adds", "Adds & drops", "Another team in your league picks up or drops a player (waiver runs come as one summary)"],
+  ["recap", "Weekly recap", "Tuesdays at 7:30 AM Central: how your week went, with a link to the recap"],
 ];
 const pushPost = (action, body) => fetch(`/api/push/${action}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
   .then(async (r) => { const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.message || `Request failed (${r.status})`); return d; });

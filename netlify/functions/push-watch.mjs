@@ -13,6 +13,8 @@
 //   lineup             Sundays at 10:30 Central: bench players projected to outscore your starters
 //   adds               every 10 minutes: another team in your league picks up or drops a player
 //                      (free-agent moves one at a time; a waiver run as one summary)
+//   recap              Tuesdays from 7:30 AM Central (once ESPN has every result): the week is complete,
+//                      how your game went, and a link to the Weekly recap
 // The first time it sees a league it just records the current state, so nothing old is announced.
 
 import { store, allSubs, sendPush, espn, playerNames, waiverOrder } from "../lib/push-common.mjs";
@@ -49,6 +51,33 @@ function chicagoNow() {
   const p = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: "America/Chicago", weekday: "short", hour: "numeric", minute: "numeric", hourCycle: "h23" })
     .formatToParts(new Date()).map((x) => [x.type, x.value]));
   return { day: p.weekday, hour: Number(p.hour), minute: Number(p.minute) };
+}
+
+// ---- Tuesday recap ----
+// Once every game of the last week has a result: "Week 7 is complete. You beat X 119.62–98.26." Sent once
+// per week; tapping it opens that week on the Weekly tab.
+async function recapAlerts(lid, season, st, teams, out) {
+  const data = await espn(lid, season, ["mMatchupScore"]);
+  const sched = data.schedule || [];
+  const done = (p) => { const ms = sched.filter((m) => m.matchupPeriodId === p); return ms.length > 0 && ms.every((m) => m.winner && m.winner !== "UNDECIDED"); };
+  const wk = [...new Set(sched.map((m) => m.matchupPeriodId))].sort((a, b) => b - a).find(done);
+  if (!wk || (st.recapWeek || 0) >= wk) return;
+  st.recapWeek = wk;
+  const name = (id) => st.teamNames?.[id] || `Team ${id}`, pts = (n) => (Number(n) || 0).toFixed(2);
+  for (const m of sched.filter((x) => x.matchupPeriodId === wk)) {
+    for (const [me, op, side] of [[m.home, m.away, "HOME"], [m.away, m.home, "AWAY"]]) {
+      if (!me || !teams.has(String(me.teamId))) continue;
+      const line = !op ? "You had a bye."
+        : m.winner === "TIE" ? `You tied ${name(op.teamId)} at ${pts(me.totalPoints)}.`
+        : m.winner === side ? `You beat ${name(op.teamId)} ${pts(me.totalPoints)}–${pts(op.totalPoints)}.`
+        : `You lost to ${name(op.teamId)} ${pts(op.totalPoints)}–${pts(me.totalPoints)}.`;
+      out.push({
+        teamId: String(me.teamId), kinds: ["recap"], tag: `recap-${lid}-${wk}`,
+        title: `📊 Week ${wk} is complete`, body: `${line} See how your team matched up with the league.`,
+        url: `/?league=${lid}&tab=managers&week=${wk}`,
+      });
+    }
+  }
 }
 
 // ---- Live scoring: touchdowns, big plays, bonuses ----
@@ -346,11 +375,13 @@ export default async () => {
   if (minute % step(sched) !== 0) return;
   const live = !!sched?.games?.some((g) => g.state === "in"), busy = gameTime(sched);
   const lineupTime = ct.day === "Sun" && ct.hour === 10 && ct.minute >= 30 && ct.minute < 45;
+  // Tuesday recap: from 7:30 AM Central, retried until noon in case ESPN posts the last results late.
+  const recapTime = ct.day === "Tue" && ((ct.hour === 7 && ct.minute >= 30) || (ct.hour >= 8 && ct.hour < 12));
   // Around games: news every 5 minutes, the rest every 10. Otherwise everything on each (10- or 30-minute) run.
   const doInjuries = !busy || minute % 10 === 0, doNews = !busy || minute % 5 === 0, doTx = !busy || minute % 10 === 0;
   // Proof the schedule is running, and how fresh its copy of the NFL schedule is.
   await s.setJSON("beat", { at: now, live, schedAt: sched?.at || null, schedErr }).catch(() => {});
-  if (!live && !doInjuries && !doNews && !doTx && !lineupTime) return;
+  if (!live && !doInjuries && !doNews && !doTx && !lineupTime && !recapTime) return;
 
   const subs = await allSubs();
   if (!subs.length) return;
@@ -397,6 +428,7 @@ export default async () => {
       if (doInjuries || !st.inj) await injuryAlerts(lid, season, st, teams, out).catch((e) => console.log(JSON.stringify({ event: "watch_injury_error", lid, message: e.message })));
       if (doNews || !st.news) await newsAlerts(lid, season, st, teams, out).catch((e) => console.log(JSON.stringify({ event: "watch_news_error", lid, message: e.message })));
       if (doTx || !st.seenTrades) await transactionAlerts(lid, season, st, teams, out).catch((e) => console.log(JSON.stringify({ event: "watch_tx_error", lid, message: e.message })));
+      if (recapTime) await recapAlerts(lid, season, st, teams, out).catch((e) => console.log(JSON.stringify({ event: "watch_recap_error", lid, message: e.message })));
       if (lineupTime && st.lineupWeek !== st.sp) {
         await lineupAlerts(lid, season, st, teams, out).catch((e) => console.log(JSON.stringify({ event: "watch_lineup_error", lid, message: e.message })));
         st.lineupWeek = st.sp;

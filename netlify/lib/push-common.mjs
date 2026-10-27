@@ -11,7 +11,7 @@ import { getStore } from "@netlify/blobs";
 import webpush from "web-push";
 import { createHash } from "node:crypto";
 
-export const PREFS = ["injury", "news", "td", "big", "bonus", "lineup", "trade", "waiver", "adds"];
+export const PREFS = ["injury", "news", "td", "big", "bonus", "lineup", "trade", "waiver", "adds", "recap"];
 export const READS = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl";
 export const store = () => getStore({ name: "push", consistency: "strong" });
 export const subKey = (endpoint, leagueId) => `sub:${createHash("sha256").update(endpoint).digest("hex").slice(0, 32)}:${leagueId}`;
