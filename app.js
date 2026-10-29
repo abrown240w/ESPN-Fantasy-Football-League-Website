@@ -3818,6 +3818,58 @@ function renderRivalry(seasons) {
   $("riv-b").addEventListener("change", (e) => { r.b = e.target.value; renderRivalry(seasons); });
 }
 
+// ---------- Player nemeses (History tab) ----------
+// For one manager: the NFL players who beat them most often when starting against them, and the ones
+// they usually beat. Built server-side from every finished week's lineups (/api/nemesis); the first
+// time a league is opened it takes a few calls while the weeks are read.
+async function loadNemesis(onProgress) {
+  const q = new URLSearchParams({ leagueId: String(state.base.raw?.id || state.leagueId), season: String(state.base.season) });
+  for (let i = 0; i < 12; i++) {
+    const r = await fetch(`/api/nemesis?${q}`);
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.message || "Couldn't load past lineups.");
+    if (!d.more) return d;
+    onProgress?.(d);
+  }
+  throw new Error("Still reading past lineups. Try again in a minute.");
+}
+function renderNemesis() {
+  const box = $("nemesis");
+  if (!box) return;
+  if (state.demo) { box.innerHTML = `<p class="muted small">Not available in the demo.</p>`; return; }
+  const key = `${state.base.raw?.id}:${state.base.season}`, N = state.nemesis;
+  if (!N || N.key !== key) {
+    const base = state.base;
+    state.nemesis = { key, loading: true };
+    box.innerHTML = `<div class="loading"><span class="spinner"></span> Reading past lineups…</div>`;
+    loadNemesis((d) => { if ($("nemesis") && state.base === base) $("nemesis").innerHTML = `<div class="loading"><span class="spinner"></span> Reading past lineups… ${d.weeks} of ${d.total} weeks</div>`; })
+      .then((d) => { if (state.base === base) state.nemesis = { key, d }; })
+      .catch((e) => { if (state.base === base) state.nemesis = { key, error: e.message }; })
+      .finally(() => { if (state.base === base) renderNemesis(); });
+    return;
+  }
+  if (N.loading) return;
+  if (N.error) { box.innerHTML = `<p class="muted small">${esc(N.error)}</p>`; return; }
+  const d = N.d, owners = Object.keys(d.rec || {}).filter((o) => d.owners[o]).sort((x, y) => d.owners[x].name.localeCompare(d.owners[y].name));
+  if (!owners.length) { box.innerHTML = `<p class="muted">Nemeses appear once there are finished games.</p>`; return; }
+  const myOwner = String(state.base.raw.teams?.find((t) => String(t.id) === String(myTeamId()))?.primaryOwner || "");
+  if (!d.rec[state.nemOwner]) state.nemOwner = d.rec[myOwner] ? myOwner : owners[0];
+  const who = state.nemOwner, rows = Object.entries(d.rec[who]).map(([id, r]) => ({ id, p: d.players[id] || ["Unknown player"], g: r[0], w: r[1], l: r[2], t: r[3], pts: r[4] }));
+  const first = d.owners[who].name.split(" ")[0];
+  const table = (list, kind) => `<div class="card nm-card"><h3>${kind === "l" ? `Beat ${esc(first)} most` : `${esc(first)} beat most`}</h3>
+    ${list.length ? `<table class="data nm-table"><thead><tr><th class="num">#</th><th>Player</th><th class="num" title="${esc(d.owners[who].name)}'s record in games this player started against them">Record</th><th class="num" title="Points this player averaged in those games">Avg pts</th></tr></thead><tbody>
+    ${list.map((x, i) => `<tr><td class="num muted">${i + 1}</td><td>${plink(x.id, x.p[0])}${x.p[1] === 16 ? "" : ` <span class="muted small">${POS[x.p[1]] || ""}</span>`}</td>
+      <td class="num"><span class="${x.w > x.l ? "pos" : x.l > x.w ? "neg" : ""}"><strong>${x.w}–${x.l}${x.t ? `–${x.t}` : ""}</strong></span></td><td class="num">${f1(x.pts / x.g)}</td></tr>`).join("")}</tbody></table>`
+    : `<p class="muted small">Nobody yet.</p>`}</div>`;
+  const nemeses = rows.filter((x) => x.l > 0).sort((a, b) => b.l - a.l || a.w - b.w || b.pts / b.g - a.pts / a.g).slice(0, 20);
+  const victims = rows.filter((x) => x.w > 0).sort((a, b) => b.w - a.w || a.l - b.l || a.pts / a.g - b.pts / b.g).slice(0, 20);
+  box.innerHTML = `<div class="filters"><select id="nm-owner" aria-label="Manager">${owners.map((o) => `<option value="${esc(o)}" ${o === who ? "selected" : ""}>${esc(d.owners[o].name)}</option>`).join("")}</select>
+      <span class="muted small">${d.years.length > 1 ? `${d.years[0]}–${d.years.at(-1)}` : d.years[0]} · playoffs included · ordered by most losses (or wins), then the best record</span></div>
+    <div class="grid grid-2 nm-grid">${table(nemeses, "l")}${table(victims, "w")}</div>
+    ${d.failed?.length ? `<p class="muted small">ESPN wouldn't share lineups from ${d.failed.join(" and ")}.</p>` : ""}`;
+  $("nm-owner").addEventListener("change", (e) => { state.nemOwner = e.target.value; renderNemesis(); });
+}
+
 // Totals per manager across every completed season.
 function allTimeManagers(seasons) {
   const byOwner = {};
@@ -3906,7 +3958,9 @@ function renderHistory() {
       <div class="section-head"><h2>All-time managers</h2><span class="muted small">Completed seasons only · click a column to sort</span></div>
       <div id="hist-table"></div>
       <div class="section-head"><h2>Rivalries</h2><span class="muted small">Head-to-head, every season including this one</span></div>
-      <div id="rivalry"></div>`;
+      <div id="rivalry"></div>
+      <div class="section-head"><h2>Player nemeses</h2><span class="muted small">NFL players who started against a manager, every season including this one</span></div>
+      <div id="nemesis"></div>`;
   } else {
     const s = seasons.find((x) => String(x.year) === String(sel));
     const c = s.champ;
@@ -3924,7 +3978,7 @@ function renderHistory() {
     <div class="seg hist-seg ${DESK.matches ? "st-subs" : ""}" id="hist-seg"><button data-y="all" class="${sel === "all" ? "active" : ""}">All-time</button>${seasons.map((s) => `<button data-y="${s.year}" class="${String(sel) === String(s.year) ? "active" : ""}">${s.year}</button>`).join("")}</div>
     ${body}`;
   $("hist-seg").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => { state.historySel = b.dataset.y; renderHistory(); }));
-  if (sel === "all") renderRivalry(seasons);
+  if (sel === "all") { renderRivalry(seasons); renderNemesis(); }
 
   if (sel === "all") {
     const rows = allTimeManagers(seasons);

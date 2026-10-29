@@ -2722,3 +2722,9 @@ button.mx-tds:hover, .mx-tds.pts-active { border-color: var(--accent); }
   .modal-card { max-height: calc(100dvh - 12px); }
 }
 
+/* History: player nemeses */
+.nm-card { padding: 12px 14px; }
+.nm-card h3 { margin: 0 0 8px; font-size: .95rem; }
+.nm-table td, .nm-table th { padding-top: 5px; padding-bottom: 5px; }
+.nm-grid { align-items: start; }
+
