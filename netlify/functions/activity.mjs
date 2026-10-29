@@ -70,9 +70,15 @@ export default async (req) => {
     const usesBudget = !!info.settings?.acquisitionSettings?.isUsingAcquisitionBudget;
 
     const periods = Array.from({ length: latest }, (_, i) => i + 1);
-    const pages = await Promise.all(periods.map((sp) => getJson(`${league}?view=mTransactions2&scoringPeriodId=${sp}`)));
+    // Trades in league review aren't in the weekly transaction lists yet: ESPN keeps them in the
+    // pending list (needs the saved ESPN sign-in), so read that too.
+    const [pages, pend] = await Promise.all([
+      Promise.all(periods.map((sp) => getJson(`${league}?view=mTransactions2&scoringPeriodId=${sp}`))),
+      getJson(`${league}?view=mPendingTransactions`).catch(() => ({})),
+    ]);
     const byId = new Map();
     for (const page of pages) for (const t of page.transactions || []) byId.set(t.id, t);
+    for (const t of [...(pend.pendingTransactions || []), ...(pend.transactions || [])]) if (t?.id && !byId.has(t.id)) byId.set(t.id, t);
     const all = [...byId.values()];
 
     // How ESPN records a trade: the TRADE_PROPOSAL stays "PENDING" even after the trade goes through.
@@ -119,9 +125,9 @@ export default async (req) => {
         moves.push({ id: t.id, kind: "trade", date, week: t.scoringPeriodId, sides: tradeSides(t) });
       } else if (t.type === "TRADE_UPHOLD" && t.status === "EXECUTED" && (t.items || []).length && !byId.has(t.relatedTransactionId)) {
         moves.push({ id: t.id, kind: "trade", date, week: t.scoringPeriodId, sides: tradeSides(t) });
-      } else if (t.type === "TRADE_PROPOSAL" && acceptedAt.has(t.id) && !executed.has(t.id) && !vetoed.has(t.id) && !isClosed(t.status)) {
+      } else if (t.type === "TRADE_PROPOSAL" && (acceptedAt.has(t.id) || /^ACCEPT/.test(t.status || "")) && !executed.has(t.id) && !vetoed.has(t.id) && !isClosed(t.status)) {
         // Accepted by both teams but not processed yet (e.g. in the league's review period).
-        pendingTrades.push({ id: t.id, proposedDate: t.proposedDate, acceptedDate: acceptedAt.get(t.id), sides: tradeSides(t) });
+        pendingTrades.push({ id: t.id, proposedDate: t.proposedDate, acceptedDate: acceptedAt.get(t.id) || t.proposedDate, processDate: t.processDate || null, sides: tradeSides(t) });
       }
     }
     moves.sort((a, b) => b.date - a.date);
@@ -143,8 +149,8 @@ export default async (req) => {
     }
 
     return json(200, { usesBudget, moves, pendingTrades, players, signedIn: !!(process.env.ESPN_S2 && process.env.SWID), tradeDebug }, {
-      "cache-control": "public, max-age=120",
-      "netlify-cdn-cache-control": "public, max-age=120, stale-while-revalidate=300",
+      "cache-control": "public, max-age=60",
+      "netlify-cdn-cache-control": "public, max-age=60, stale-while-revalidate=120",
     });
   } catch (err) {
     if (err instanceof UpstreamError && (err.status === 401 || err.status === 403)) {

@@ -21,7 +21,8 @@
 //   • Every change attempt is written to the function log (Netlify > Logs > Functions > roster).
 //
 // Routes: POST /api/roster/login {passphrase} · POST /api/roster/logout ·
-//         GET /api/roster/session?leagueId=&season= · POST /api/roster/lineup {leagueId, season, teamId, items}
+//         GET /api/roster/session?leagueId=&season= · POST /api/roster/lineup {leagueId, season, teamId, items, sp?, asLM?}
+//                                    (asLM: the site owner changing any team's lineup as the League Manager)
 //         POST /api/roster/transaction {leagueId, season, teamId, add?, drop?, waiver?, bid?}  (pickups, claims, drops)
 //         GET  /api/roster/pending?leagueId=&season=   (your pending claims and trade offers; owner only)
 //         POST /api/roster/trade {leagueId, season, teamId, otherTeamId, send: [ids], receive: [ids], comment?}
@@ -342,7 +343,11 @@ export default async (req, context) => {
     } catch (e) {
       return json(502, { error: "upstream", message: "Couldn't load your roster from ESPN to check the change." });
     }
-    if (!ownedTeams(data).includes(teamId)) return json(403, { error: "not_yours", message: "That isn't your team." });
+    // As League Manager (site owner only): any team, the way ESPN's own LM tools send it. ESPN itself
+    // refuses it if this account isn't the league's manager.
+    const asLM = b.asLM === true;
+    if (asLM && WHO?.kind !== "owner") return json(403, { error: "not_lm", message: "Only the site owner can change other teams' lineups." });
+    if (!asLM && !ownedTeams(data).includes(teamId)) return json(403, { error: "not_yours", message: "That isn't your team." });
     const sp = data.future ? want : data.scoringPeriodId || data.status?.latestScoringPeriod;
     const slots = data.settings?.rosterSettings?.lineupSlotCounts || {};
     const roster = data.teams.find((t) => t.id === teamId)?.roster?.entries || [];
@@ -352,13 +357,14 @@ export default async (req, context) => {
       if (e.lineupSlotId !== i.from) return json(409, { error: "stale", message: "Your lineup changed on ESPN since this page loaded. Refresh and try again." });
       const elig = e.playerPoolEntry?.player?.eligibleSlots || [];
       if (i.to !== 20 && (!elig.includes(i.to) || !(slots[i.to] > 0))) return json(400, { error: "ineligible", message: `${e.playerPoolEntry?.player?.fullName || "A player"} can't play that slot.` });
-      if (!data.future && e.playerPoolEntry?.lineupLocked) return json(409, { error: "locked", message: `${e.playerPoolEntry?.player?.fullName || "A player"} is locked (his game has started).` });
+      if (!asLM && !data.future && e.playerPoolEntry?.lineupLocked) return json(409, { error: "locked", message: `${e.playerPoolEntry?.player?.fullName || "A player"} is locked (his game has started).` });
     }
     const payload = {
-      isLeagueManager: false, teamId, type: "ROSTER", memberId: `{${swidRaw()}}`, scoringPeriodId: sp, executionType: "EXECUTE",
+      isLeagueManager: asLM, teamId, type: "ROSTER", memberId: `{${swidRaw()}}`, scoringPeriodId: sp, executionType: "EXECUTE",
+      ...(asLM ? { isActingAsTeamOwner: false, skipTransactionCounters: false } : {}),
       items: items.map((i) => ({ playerId: i.playerId, type: "LINEUP", fromLineupSlotId: i.from, toLineupSlotId: i.to })),
     };
-    return espnWrite(leagueId, season, payload, { event: "lineup", ip, leagueId, season, teamId, sp, items, at: new Date().toISOString() });
+    return espnWrite(leagueId, season, payload, { event: asLM ? "lineup_lm" : "lineup", ip, leagueId, season, teamId, sp, items, at: new Date().toISOString() });
   }
 
   // Free-agent pickup (with or without a drop), waiver claim, or a plain drop.
@@ -641,6 +647,41 @@ export default async (req, context) => {
       try { if (!pendingNow(await espnRead(leagueId, season, ["mPendingTransactions"]))) return json(200, { ok: true }); } catch { return json(200, { ok: true, unverified: true }); }
     }
     return json(502, { error: "espn_refused", message: `ESPN didn't ${kind === "trade-in" ? "decline" : "cancel"} it${lastMsg ? `: ${lastMsg}` : ""}. You can do it in the ESPN app for now.` });
+  }
+
+  // Vote on a trade in league review: veto or uphold, as the League Manager (site owner only; final) or
+  // as a manager (a vote toward the league's veto count, for a team that isn't in the trade).
+  // The LM veto is the shape ESPN's own LM page sends: { isLeagueManager: true, isActingAsTeamOwner: false,
+  // type: "TRADE_VETO", relatedTransactionId: the trade, comment }. Uphold is TRADE_UPHOLD (the type ESPN
+  // records for upheld trades); a manager's vote is the same with isLeagueManager false and their own team.
+  // ESPN refuses anything this account isn't allowed to do, and its message is passed back.
+  if (action === "tradevote" && req.method === "POST") {
+    if (!signedIn(req)) return json(401, { error: "signed_out", message: "Connect your ESPN account first." });
+    if (!sameOrigin(req)) return json(403, { error: "origin", message: "Changes have to come from the site itself." });
+    const b = await req.json().catch(() => ({}));
+    const season = String(b.season || defaultSeason()), leagueId = String(b.leagueId || ""), txId = String(b.txId || "");
+    const vote = b.vote === "uphold" ? "uphold" : b.vote === "veto" ? "veto" : null, asLM = b.asLM === true;
+    const comment = String(b.comment || "").slice(0, 500);
+    if (!validLeague(leagueId, season) || !/^[\w-]{6,64}$/.test(txId) || !vote) return json(400, { error: "bad_request", message: "That vote doesn't look right." });
+    if (asLM && WHO?.kind !== "owner") return json(403, { error: "not_lm", message: "Only the site owner can act as League Manager." });
+    let data;
+    try { data = await espnRead(leagueId, season, ["mTeam", "mPendingTransactions", "mStatus"]); } catch {
+      return json(502, { error: "upstream", message: "Couldn't load the pending trades from ESPN." });
+    }
+    const tx = livePending(data).find((x) => String(x.id) === txId);
+    if (!tx || !/^TRADE/.test(tx.type || "")) return json(409, { error: "gone", message: "That trade isn't pending anymore." });
+    const parties = new Set([tx.teamId, ...(tx.items || []).flatMap((i) => [i.fromTeamId, i.toTeamId])].filter((x) => x != null).map(Number));
+    let teamId = tx.teamId;
+    if (!asLM) {
+      teamId = ownedTeams(data).find((id) => !parties.has(Number(id)));
+      if (teamId == null) return json(403, { error: "no_vote", message: ownedTeams(data).length ? "Teams in the trade don't vote on it." : "You don't have a team in this league." });
+    }
+    const payload = {
+      isLeagueManager: asLM, teamId, type: vote === "veto" ? "TRADE_VETO" : "TRADE_UPHOLD", comment, memberId: `{${swidRaw()}}`, relatedTransactionId: txId,
+      scoringPeriodId: data.scoringPeriodId || data.status?.latestScoringPeriod, executionType: "EXECUTE",
+      ...(asLM ? { isActingAsTeamOwner: false, skipTransactionCounters: false } : {}),
+    };
+    return espnWrite(leagueId, season, payload, { event: `trade_${vote}${asLM ? "_lm" : ""}`, ip, leagueId, season, txId, teamId, at: new Date().toISOString() });
   }
 
   // ---------- League chat (ESPN's chat.espn.com service, same ESPN sign-in) ----------

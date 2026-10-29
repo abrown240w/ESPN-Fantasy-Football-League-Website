@@ -650,7 +650,7 @@ const ptsCell = (p, status) => (p.played ? ptsLink(p.id, state.week.sp, f1(p.act
 const TAB_GROUP = { injuries: "players", usage: "players", season: "league", managers: "league", schedule: "league", playoffs: "league", transactions: "league", trade: "league", history: "league" };
 const groupOf = (t) => TAB_GROUP[t] || t;
 const homeOf = (t) => (t === "league" ? "season" : t);
-const LEAGUE_SUBS = [["season", "Standings"], ["managers", "Weekly"], ["schedule", "Schedule"], ["playoffs", "Playoffs"], ["transactions", "Moves"], ["trade", "Trades"], ["history", "History"]];
+const LEAGUE_SUBS = [["season", "Standings"], ["trade", "Trades"], ["schedule", "Schedule"], ["playoffs", "Playoffs"], ["transactions", "Moves"], ["managers", "Weekly"], ["history", "History"]];
 function showView(name) {
   setTimeout(updateFloatHeads, 0);
   for (const v of ["roster", "matchups", "live", "players", "usage", "injuries", "trade", "transactions", "managers", "schedule", "playoffs", "season", "history"]) $(`view-${v}`).hidden = v !== name;
@@ -2436,7 +2436,11 @@ function schedOutlook() {
   const posAvg = {};
   for (const [pos, m] of Object.entries(oprk)) { const v = Object.values(m).map((x) => x?.[1]).filter(Number.isFinite); posAvg[pos] = v.length ? sum(v) / v.length : null; }
   const weeks = [];
-  for (let wk = b.current; wk <= b.regWeeks; wk++) if (b.schedule.some((m) => m.matchupPeriodId === wk)) weeks.push(wk);
+  const decided = (m) => m.winner && m.winner !== "UNDECIDED";
+  for (let wk = b.current; wk <= b.regWeeks; wk++) {
+    const ms = b.schedule.filter((m) => m.matchupPeriodId === wk && m.away);
+    if (ms.length && !ms.every(decided)) weeks.push(wk);
+  }
   // One player's expected points in a week, and why it's zero when it is.
   const expect = (p, wk) => {
     if (p.slotId === IR || /INJURY_RESERVE|SUSPENSION/.test(p.injury || "")) return { pts: 0, why: "IR" };
@@ -2473,7 +2477,6 @@ function renderSchedule() {
   const el = $("view-schedule"), b = state.base;
   const O = schedOutlook();
   if (!O) { el.innerHTML = `<div class="section-head"><h2>Schedule</h2></div><div class="loading small"><span class="spinner"></span> Loading rosters…</div>`; return; }
-  if (!O.weeks.length) { el.innerHTML = `<div class="section-head"><h2>Schedule</h2></div><p class="muted">The regular season is over.</p>`; return; }
   const ids = Object.keys(b.teams).sort((x, y) => team(x).name.localeCompare(team(y).name));
   const sel = state.schedTeam && b.teams[state.schedTeam] ? state.schedTeam : String(myTeamId() || ids[0]);
   state.schedTeam = sel;
@@ -2484,8 +2487,30 @@ function renderSchedule() {
     const home = g.home === id;
     return { wk, opp: home ? g.away : g.home, me: home ? g.h : g.a, them: home ? g.a : g.h, wp: home ? g.wp : 1 - g.wp };
   });
-  const rows = ids.map((id) => ({ id, list: mine(id) }));
+  // This team's finished regular-season games: opponent, both scores, the result.
+  const firstLeft = O.weeks[0]?.wk ?? b.regWeeks + 1;
+  const pastWeeks = [...new Set(b.schedule.filter((m) => m.matchupPeriodId < firstLeft && m.matchupPeriodId <= b.regWeeks).map((m) => m.matchupPeriodId))].sort((x, y) => x - y);
+  const past = (id) => pastWeeks.map((wk) => {
+    const m = b.schedule.find((x) => x.matchupPeriodId === wk && (String(x.home.teamId) === id || String(x.away?.teamId) === id));
+    if (!m || !m.away) return { wk, bye: true };
+    const home = String(m.home.teamId) === id, me = home ? m.home : m.away, them = home ? m.away : m.home;
+    const res = m.winner === "TIE" ? "T" : m.winner === (home ? "HOME" : "AWAY") ? "W" : "L";
+    return { wk, mid: m.id, opp: String(them.teamId), ms: me.totalPoints || 0, os: them.totalPoints || 0, res };
+  });
+  const rows = ids.map((id) => ({ id, list: mine(id), done: past(id) }));
+  const resCls = (r) => (r === "W" ? "easy" : r === "L" ? "tough" : "");
   const missTxt = (list) => list.map(({ p, why }) => `${esc(shortName(p.name))} <span class="sch-why">${why === "bye" ? "bye" : why === "IR" ? "IR" : "out"}</span>`).join(", ");
+  const pastRows = past(sel).map((x) => {
+    if (x.bye) return `<div class="sch-row past"><span class="sch-wk">Wk ${x.wk}</span><span class="muted">No game</span></div>`;
+    const o = team(x.opp);
+    return `<div class="sch-row past" data-schgame="${x.wk}:${x.mid}" title="Open this matchup">
+      <span class="sch-wk">Wk ${x.wk}</span>
+      <span class="sch-opp" data-tpop="${x.opp}">${logoImg(o, 26)}<span><strong>${esc(o.name)}</strong><span class="muted small">${recordStr(o)}</span></span></span>
+      <span class="sch-proj"><strong>${f2(x.ms)}</strong> – ${f2(x.os)}</span>
+      <span class="sch-wp ${resCls(x.res)}">${x.res}</span>
+      <span class="sch-miss small muted">${x.res === "T" ? "Tie" : `${x.res === "W" ? "Won" : "Lost"} by ${f1(Math.abs(x.ms - x.os))}`}</span>
+    </div>`;
+  }).join("");
   const detail = mine(sel).map((x) => {
     if (x.bye) return `<div class="sch-row"><span class="sch-wk">Wk ${x.wk}</span><span class="muted">No game</span></div>`;
     const o = team(x.opp);
@@ -2501,14 +2526,22 @@ function renderSchedule() {
   const t = team(sel), left = mine(sel).filter((x) => !x.bye);
   el.innerHTML = `<div class="section-head"><h2>Schedule</h2><label class="small muted sch-pick">Team <select id="sch-team">${ids.map((id) => `<option value="${id}" ${id === sel ? "selected" : ""}>${esc(team(id).name)}</option>`).join("")}</select></label></div>
     <div class="card sch-card"><div class="sch-head">${logoImg(t, 34)}<div><strong>${esc(t.name)}</strong><div class="muted small">${recordStr(t)} · about ${f1(expW(left))} more wins expected in ${left.length} game${left.length === 1 ? "" : "s"}</div></div></div>
-      <div class="sch-list">${detail}</div></div>
+      <div class="sch-list">${pastRows ? `<div class="sch-sub">Played</div>${pastRows}` : ""}${detail ? `<div class="sch-sub">Still to play <span class="muted">· projected</span></div>${detail}` : `<p class="muted small">The regular season is over.</p>`}</div></div>
     <div class="section-head"><h2>Every team, week by week</h2></div>
-    <div class="table-wrap sch-grid-wrap"><table class="data sch-grid"><thead><tr><th>Team</th>${O.weeks.map(({ wk }) => `<th class="num">Wk ${wk}</th>`).join("")}<th class="num" title="Expected wins over the rest of the regular season">Exp. W</th></tr></thead>
-      <tbody>${rows.sort((x, y) => expW(y.list) - expW(x.list)).map(({ id, list }) => `<tr class="${myRow(id)} ${id === sel ? "sch-sel" : ""}" data-schteam="${id}"><td><div class="team-cell">${logoImg(team(id), 24)}<strong>${esc(team(id).name)}</strong></div></td>
+    <div class="table-wrap sch-grid-wrap"><table class="data sch-grid"><thead><tr><th>Team</th>${pastWeeks.map((wk) => `<th class="num sch-done-h">Wk ${wk}</th>`).join("")}${O.weeks.map(({ wk }) => `<th class="num">Wk ${wk}</th>`).join("")}<th class="num" title="Expected wins over the rest of the regular season">Exp. W</th></tr></thead>
+      <tbody>${rows.sort((x, y) => (team(y.id).wins + expW(y.list)) - (team(x.id).wins + expW(x.list))).map(({ id, list, done }) => `<tr class="${myRow(id)} ${id === sel ? "sch-sel" : ""}" data-schteam="${id}"><td><div class="team-cell">${logoImg(team(id), 24)}<strong>${esc(team(id).name)}</strong></div></td>
+        ${done.map((x) => (x.bye ? `<td class="num muted">–</td>` : `<td class="num"><span class="sch-cell done ${resCls(x.res)}" title="Week ${x.wk} vs ${esc(team(x.opp).name)}: ${f2(x.ms)}–${f2(x.os)}">${esc(team(x.opp).abbrev || team(x.opp).name.slice(0, 4))}<small>${x.res} ${Math.round(x.ms)}–${Math.round(x.os)}</small></span></td>`)).join("")}
         ${list.map((x) => (x.bye ? `<td class="num muted">–</td>` : `<td class="num"><span class="sch-cell ${schCls(x.wp)}" title="Week ${x.wk} vs ${esc(team(x.opp).name)}: ${f1(x.me.pts)}–${f1(x.them.pts)}${x.me.missing.length ? ` · without ${x.me.missing.map((m) => shortName(m.p.name)).join(", ")}` : ""}">${esc(team(x.opp).abbrev || team(x.opp).name.slice(0, 4))}<small>${pct(x.wp)}</small></span></td>`)).join("")}
         <td class="num"><strong>${f1(expW(list))}</strong></td></tr>`).join("")}</tbody></table></div>
     <p class="muted small">Expected scores use each player's points per game this season, adjusted for how that week's NFL opponent defends his position, and the best lineup his team can field without players on bye or on IR.</p>`;
   $("sch-team").addEventListener("change", (e) => { state.schedTeam = e.target.value; renderSchedule(); });
+  el.querySelectorAll("[data-schgame]").forEach((r) => r.addEventListener("click", async (e) => {
+    if (e.target.closest("[data-tpop]")) return;
+    const [wk, mid] = r.dataset.schgame.split(":").map(Number);
+    state.pendingOpen = mid;
+    await loadWeek(wk);
+    switchTab("matchups"); setUrl(); scrollTo(0, 0);
+  }));
   el.querySelectorAll("[data-schteam]").forEach((r) => r.addEventListener("click", (e) => {
     if (e.target.closest("[data-tpop], a, button")) return;
     state.schedTeam = r.dataset.schteam; renderSchedule(); scrollTo({ top: 0, behavior: "smooth" });
@@ -4220,7 +4253,11 @@ function renderRoster() {
   const standing = 1 + Object.values(state.base.teams).filter((o) => o.seed < t.seed).length;
   const fa = faData();
   const own = ensureOwner();
-  const canEdit = !!own?.signedIn && own.teams?.map(String).includes(String(sel)) && w.week >= state.base.current; // later weeks too: set them ahead of time
+  const myTeam = !!own?.signedIn && own.teams?.map(String).includes(String(sel));
+  // Commissioner mode: signed in as the site owner, on someone else's team, lineup changes go to ESPN as the
+  // League Manager (with a confirmation). Pickups, claims and trades stay with each team's own manager.
+  const lm = !myTeam && !!own?.signedIn && own.kind === "owner" && !state.demo;
+  const canEdit = (myTeam || lm) && w.week >= state.base.current; // later weeks too: set them ahead of time
   const ed = !canEdit ? null : state.lineupEdit?.teamId === String(sel) ? state.lineupEdit : (state.lineupEdit = { teamId: String(sel), pick: null });
   const picked = ed?.pick ? side?.players.find((x) => String(x.id) === String(ed.pick)) : null;
   const rn = side ? ensureNews(side.players.map((p) => p.id), () => { if (state.tab === "roster") render(); }) : null;
@@ -4281,8 +4318,8 @@ function renderRoster() {
   const chips = [
     chip("news", ic("news"), "News", anyNews ? `<i class="er-dot"></i> New` : "Latest"),
     waiverPlace(sel) ? chip("waivers", ic("list-numbers"), "Waivers", waiverPlace(sel)) : "",
-    canEdit ? chip("claims", ic("clipboard-list"), "Claims", P ? `${claims} pending` : "…") : "",
-    canEdit ? chip("trades", ic("arrows-exchange"), "Trades", P ? `${offers} offer${offers === 1 ? "" : "s"}` : "…") : "",
+    canEdit && !lm ? chip("claims", ic("clipboard-list"), "Claims", P ? `${claims} pending` : "…") : "",
+    canEdit && !lm ? chip("trades", ic("arrows-exchange"), "Trades", P ? `${offers} offer${offers === 1 ? "" : "s"}` : "…") : "",
     deadline ? chip("deadline", ic("calendar"), "Trade deadline", new Date(deadline).toLocaleString(undefined, { month: "numeric", day: "numeric", hour: "numeric", minute: "2-digit" })) : "",
     chip("awards", ic("trophy"), "Awards", nAwards == null ? "View" : `${nAwards} award${nAwards === 1 ? "" : "s"}`),
   ].join("");
@@ -4294,7 +4331,8 @@ function renderRoster() {
       <div class="er-chips">${chips}</div></div>`;
   const viewLabel = ER_VIEWS.find(([k]) => k === erView())[1];
   const tools = side ? `<div class="er-tools">${canEdit ? `<button type="button" class="er-btn" id="er-quick">Quick Lineup</button>` : ""}<button type="button" class="er-btn" id="er-views">${viewLabel} <span class="caret">▾</span></button></div>` : "";
-  const moving = picked ? `<div class="er-moving"><span>Moving <strong>${esc(picked.name)}</strong>: tap a highlighted spot</span><span class="rh-edit-btns"><button type="button" class="mv-cancel" id="mv-drop">Drop</button><button type="button" class="mv-done" id="mv-done">Cancel</button></span></div>` : "";
+  const moving = picked ? `<div class="er-moving"><span>Moving <strong>${esc(picked.name)}</strong>: tap a highlighted spot</span><span class="rh-edit-btns">${lm ? "" : `<button type="button" class="mv-cancel" id="mv-drop">Drop</button>`}<button type="button" class="mv-done" id="mv-done">Cancel</button></span></div>`
+    : lm && canEdit ? `<div class="er-moving er-lm"><span>${ic("key")} Commissioner mode: changes to ${esc(team(sel).name)}'s lineup go to ESPN as the League Manager.</span></div>` : "";
   el.innerHTML = DESK.matches
     ? `<div class="er-layout"><div class="er-main">${moving}<div class="card er-table ev-desk">${table}</div>${side ? playoffSchedule(side) : ""}</div>
         <aside class="er-rail">${head}${canEdit && side ? `<button type="button" class="er-btn er-quick-btn" id="er-quick">Quick Lineup</button>` : ""}${rosterRail(sel, side)}</aside></div>${fcCredit()}${nvCredit()}${wxCredit()}`
@@ -4321,7 +4359,7 @@ function renderRoster() {
     }));
   });
   $("er-quick")?.addEventListener("click", () => {
-    if (state.lcMoves?.length) confirmLineup(sel, state.lcMoves);
+    if (state.lcMoves?.length) confirmLineup(sel, state.lcMoves, { lm });
     else showModal(`<div class="pm-head"><h2 id="pl-modal-title">Quick Lineup</h2></div><p>Your lineup is already the best one by ESPN's projections. ✓</p>`);
   });
   // The column area of every row scrolls together.
@@ -4341,13 +4379,16 @@ function renderRoster() {
   el.querySelectorAll("[data-sp]").forEach((b) => b.addEventListener("click", () => {
     const p = side.players.find((x) => String(x.id) === b.dataset.sp);
     if (!picked || b.classList.contains("on")) { state.lineupEdit.pick = picked ? null : p.id; renderRoster(); return; }
-    sendLineup(sel, [[picked, p.slotId], [p, picked.slotId]]);
+    if (lm) confirmLineup(sel, [[picked, p.slotId], [p, picked.slotId]], { lm });
+    else sendLineup(sel, [[picked, p.slotId], [p, picked.slotId]]);
   }));
   el.querySelectorAll("[data-empty]").forEach((b) => b.addEventListener("click", () => {
     const slot = Number(b.dataset.empty);
     const needDrop = slot === BENCH && picked.slotId === IR && side.players.filter((p) => p.slotId !== IR).length >= rosterSize();
     // Coming off IR onto a full roster still asks who to drop; any other move goes straight to ESPN.
+    if (needDrop && lm) { flash(`${esc(team(sel).name)}'s roster is full: a drop has to be made on ESPN first.`, "err", 5000); return; }
     if (needDrop) confirmLineup(sel, [[picked, slot]], { needDrop, side });
+    else if (lm) confirmLineup(sel, [[picked, slot]], { lm });
     else sendLineup(sel, [[picked, slot]]);
   }));
   $("mv-done")?.addEventListener("click", () => { state.lineupEdit.pick = null; renderRoster(); });
@@ -4787,6 +4828,8 @@ function openAccount() {
       <p>${mgr ? `Signed in as <strong>${esc(o.name || "a league manager")}</strong>` : o?.kind === "owner" ? "Signed in as the <strong>site owner</strong> (passphrase)" : "Signed in"}${t ? ` · ${teamName(t, 20)}` : ""}</p>
       ${mgr ? `<div class="ac-block"><strong>Sign in on another device</strong><p class="small muted">Get a one-time code, then on your phone open the site, tap the key at the top (Sign in), and type it (or scan the QR code with the phone's camera).</p>
         <button type="button" id="ac-code">Get a code</button><div id="ac-code-out"></div></div>` : ""}
+      ${o?.kind === "owner" && !state.demo ? `<div class="ac-block"><strong>${ic("key")} League Manager tools</strong><p class="small muted">Commissioner actions for ${esc(state.base.name || "this league")}: veto or approve pending trades, change any team's lineup.</p>
+        <button type="button" id="ac-lm">Open LM tools</button></div>` : ""}
       ${mgr ? "" : `<div class="ac-block"><strong>Connect your own ESPN account</strong><p class="small muted">Changes then go to ESPN as you, and you can sign your phone in with a code instead of the passphrase.</p>
         <button type="button" id="ac-connect">Connect ESPN</button></div>`}
       <div class="ac-actions"><button type="button" id="ac-out">Sign out on this device</button>
@@ -4795,6 +4838,7 @@ function openAccount() {
       <div class="cx-links"><a href="${esc($("espn-open")?.href || "https://fantasy.espn.com/football/")}" target="_blank" rel="noopener">${ic("external-link")} Open your team in ESPN</a></div>
     </div>`);
   $("ac-reconnect")?.addEventListener("click", openConnect);
+  $("ac-lm")?.addEventListener("click", openLmTools);
   $("ac-connect")?.addEventListener("click", openConnect);
   $("ac-out").addEventListener("click", () => signOutHere(false));
   $("ac-disc")?.addEventListener("click", () => { if (confirm("Disconnect your ESPN account from this site? Every device you signed in will be signed out.")) signOutHere(true); });
@@ -4810,6 +4854,39 @@ function openAccount() {
       loadQr().then((QR) => { if ($("ac-qr")) new QR($("ac-qr"), { text: link, width: 168, height: 168, correctLevel: QR.CorrectLevel.M }); }).catch(() => {});
     } catch (x) { out.innerHTML = `<p class="small neg">${esc(x.message)}</p>`; }
     e.target.disabled = false;
+  });
+}
+// League Manager tools (site owner): this league's pending trades with a veto, and a way into any
+// team's lineup. ESPN refuses these if the saved account isn't the league's manager.
+function openLmTools() {
+  const a = state.activity;
+  const head = `<div class="pm-head"><h2 id="pl-modal-title">${ic("key")} League Manager tools</h2><div class="muted">${esc(state.base.name || "")}</div></div>`;
+  if (!a || a === "loading") {
+    showModal(`${head}<div class="loading" id="lm-tools-wait"><span class="spinner"></span> Loading pending trades…</div>`);
+    if (!a) {
+      state.activity = "loading";
+      loadActivity().then((d) => { state.activity = d; }).catch((e) => { state.activity = { error: e.message }; })
+        .finally(() => { if (!$("pl-modal").hidden && $("lm-tools-wait")) openLmTools(); });
+    }
+    return;
+  }
+  const pname = (id) => esc(a.players?.[id]?.[0] || "Unknown player");
+  const trades = a.error ? `<p class="small neg">${esc(a.error)}</p>` : (a.pendingTrades || []).length
+    ? (a.pendingTrades || []).map((t) => `<div class="lm-trade">
+        ${t.sides.map((s) => `<div class="lm-side">${teamName(s.teamId, 20)}<span class="small muted">gets ${s.gets.map(pname).join(", ") || "nothing"}</span></div>`).join("")}
+        <div class="lm-trade-foot"><span class="small muted">Accepted ${new Date(t.acceptedDate).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</span>
+</div>${voteBtns(t, "lm")}</div>`).join("")
+    : `<p class="small muted">No trades waiting on league review.</p>`;
+  showModal(`${head}
+    <div class="lm-sec"><h3>Pending trades</h3>${trades}</div>
+    <div class="lm-sec"><h3>Lineups</h3><p class="small muted">Open any team on the Roster tab and move players: changes go to ESPN as the League Manager, with a confirmation.</p>
+      <select id="lm-team" aria-label="Team">${Object.values(state.base.teams).sort((x, y) => x.name.localeCompare(y.name)).map((t) => `<option value="${t.id}">${esc(t.name)}</option>`).join("")}</select>
+      <button type="button" id="lm-roster">Open roster</button></div>`);
+  if (!a.error) bindVotes($("pl-modal-body"), a, openLmTools);
+  $("lm-roster").addEventListener("click", () => {
+    state.rosterTeam = $("lm-team").value;
+    document.querySelector("#pl-modal .modal-close").click();
+    switchTab("roster");
   });
 }
 // QR codes: a small library, loaded only when a code is shown.
@@ -5590,8 +5667,9 @@ function confirmLineup(teamId, moves, opts = {}) {
   const dropPick = !opts.needDrop ? "" : `<div class="wv-sum">Your roster is full, so bringing him off IR means dropping someone.</div>
     <div class="dr-list">${(opts.side?.players || []).filter((x) => x.slotId !== IR && !moving.has(String(x.id))).sort((x, y) => (x.starter - y.starter) || (x.proj || 0) - (y.proj || 0))
       .map((x) => `<label class="dr-opt ${x.locked ? "off" : ""}"><input type="radio" name="dr" value="${esc(x.id)}" ${x.locked ? "disabled" : ""}><span><strong>${esc(x.name)}</strong> <span class="muted small">${esc(x.pos)} · ${x.starter ? esc(x.slot) : "Bench"} · proj ${f1(x.proj)}</span></span></label>`).join("")}</div>`;
-  showModal(`<div class="pm-head"><h2 id="pl-modal-title">Change lineup</h2></div>
+  showModal(`<div class="pm-head"><h2 id="pl-modal-title">${opts.lm ? `${ic("key")} Change lineup as League Manager` : "Change lineup"}</h2></div>
     <p class="small muted">${esc(team(teamId).name)} · week ${state.week.week}${state.week.week > state.base.current ? " (set ahead of time)" : ""}</p><ul class="mv-list">${rows}</ul>${dropPick}
+    ${opts.lm ? `<p class="small muted">This changes another manager's lineup. ESPN records it as a League Manager change.</p>` : ""}
     <div class="mv-actions"><button type="button" class="mv-go" id="mv-go">${state.demo ? "Try it (demo, not sent)" : "Send to ESPN"}</button><button type="button" class="mv-cancel" id="mv-cancel">Cancel</button></div>
     <p id="mv-msg" class="small"></p>`);
   const close = () => document.querySelector("#pl-modal .modal-close").click();
@@ -5605,7 +5683,7 @@ function confirmLineup(teamId, moves, opts = {}) {
         if (!drop) throw new Error("Pick someone to drop first.");
         await sendMove("transaction", { teamId: Number(teamId), drop: Number(drop) });
       }
-      await sendMove("lineup", { teamId: Number(teamId), sp: state.week.sp, items: moves.map(([p, to]) => ({ playerId: Number(p.id), from: p.slotId, to })) });
+      await sendMove("lineup", { teamId: Number(teamId), sp: state.week.sp, asLM: !!opts.lm, items: moves.map(([p, to]) => ({ playerId: Number(p.id), from: p.slotId, to })) });
       msg.innerHTML = `<span class="pos">✓ ${state.demo ? "Looks good (demo: nothing was sent)" : "Saved on ESPN"}.</span>`;
       state.lineupEdit = { teamId: String(teamId), pick: null };
       await refreshAfterMove();
@@ -6592,8 +6670,8 @@ function renderTransactions() {
   // Pending trades
   const pending = a.pendingTrades.length
     ? `<div class="grid">${a.pendingTrades.map((t) => `<div class="card trade-card">
-        <div class="trade-meta"><span class="badge inj">PENDING</span> <span class="muted small">Accepted ${fmtDate(t.acceptedDate)} · awaiting league review</span></div>
-        ${tradeSidesHtml(t.sides)}</div>`).join("")}</div>`
+        <div class="trade-meta"><span class="badge inj">PENDING</span> <span class="muted small">Accepted ${fmtDate(t.acceptedDate)} · ${t.processDate > Date.now() ? `goes through ${fmtDate(t.processDate)} unless vetoed` : "awaiting league review"}</span></div>
+        ${tradeSidesHtml(t.sides)}${voteBtns(t)}</div>`).join("")}</div>`
     : `<p class="muted">No pending trades right now.${a.signedIn || state.demo ? "" : " (ESPN only shows trades to signed-in members: add the ESPN_S2 and SWID settings in Netlify.)"}</p>`;
 
   // Completed moves
@@ -6637,6 +6715,59 @@ function renderTransactions() {
     : `${sideHtml}${mainHtml}${hasValues ? fcCredit() : ""}`;
   $("tx-team").addEventListener("change", (e) => { f.team = e.target.value; renderTransactions(); });
   $("tx-kind").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => { f.kind = b.dataset.k; renderTransactions(); }));
+  bindVotes(el, a, renderTransactions);
+}
+// Trade review votes. A manager whose team isn't in the trade votes to veto or uphold (it counts toward the
+// league's veto total); the site owner can also decide it as League Manager, which is final.
+function tradeVoters(t) {
+  const own = ensureOwner();
+  if (!own?.signedIn || state.demo) return { manager: false, lm: false };
+  const inTrade = new Set(t.sides.map((s) => String(s.teamId)));
+  return { manager: (own.teams || []).some((id) => !inTrade.has(String(id))), lm: own.kind === "owner" };
+}
+function voteBtns(t, only) {
+  const v = tradeVoters(t), need = state.base.raw.settings?.tradeSettings?.vetoVotesRequired;
+  const mgr = only !== "lm" && v.manager, lm = only !== "manager" && v.lm;
+  if (!mgr && !lm) return "";
+  return `<div class="tv-row">
+    ${mgr ? `<span class="tv-grp"><span class="small muted">Your vote${need ? ` · ${need} vetoes cancel it` : ""}</span>
+      <button type="button" class="tv-btn" data-tv="${esc(t.id)}" data-vote="veto">Veto</button><button type="button" class="tv-btn ok" data-tv="${esc(t.id)}" data-vote="uphold">Uphold</button></span>` : ""}
+    ${lm ? `<span class="tv-grp"><span class="small muted">${ic("key")} League Manager</span>
+      <button type="button" class="tv-btn" data-tv="${esc(t.id)}" data-vote="veto" data-lm="1">Veto</button><button type="button" class="tv-btn ok" data-tv="${esc(t.id)}" data-vote="uphold" data-lm="1">Approve</button></span>` : ""}
+  </div>`;
+}
+function bindVotes(root, a, back) {
+  root.querySelectorAll("[data-tv]").forEach((btn) => btn.addEventListener("click", () => {
+    const t = a.pendingTrades.find((x) => String(x.id) === btn.dataset.tv);
+    if (t) confirmTradeVote(t, btn.dataset.vote, !!btn.dataset.lm, back);
+  }));
+}
+function confirmTradeVote(t, vote, lm, back) {
+  const names = t.sides.map((s) => esc(team(s.teamId).name)).join(" and ");
+  const veto = vote === "veto";
+  const title = lm ? (veto ? "Veto this trade as League Manager?" : "Approve this trade as League Manager?") : veto ? "Vote to veto this trade?" : "Vote to uphold this trade?";
+  const what = lm
+    ? (veto ? `The trade between ${names} is cancelled for everyone. It can't be undone.` : `The trade between ${names} goes through now, without waiting for the review period.`)
+    : `Your vote on the trade between ${names} goes to ESPN as your team's.${veto ? " Enough veto votes cancel it." : ""}`;
+  showModal(`<div class="pm-head"><h2 id="pl-modal-title">${lm ? ic("key") + " " : ""}${title}</h2></div>
+    <p class="small muted">${what}</p>
+    ${lm ? `<label class="tv-note"><span class="small muted">Note to the league (optional)</span><textarea id="tv-comment" rows="3" maxlength="500"></textarea></label>` : ""}
+    <div class="mv-actions"><button type="button" class="mv-go ${veto ? "tv-go" : ""}" id="tv-go">${lm ? (veto ? "Veto trade" : "Approve trade") : veto ? "Vote veto" : "Vote uphold"}</button><button type="button" class="mv-cancel" id="tv-cancel">Cancel</button></div>
+    <p id="tv-msg" class="small"></p>`);
+  const close = () => document.querySelector("#pl-modal .modal-close").click();
+  const after = back === openLmTools ? openLmTools : close;
+  $("tv-cancel").addEventListener("click", after);
+  $("tv-go").addEventListener("click", async (e) => {
+    const msg = $("tv-msg");
+    e.target.disabled = true; msg.innerHTML = `<span class="spinner"></span> Sending to ESPN…`;
+    try {
+      await sendMove("tradevote", { txId: String(t.id), vote, asLM: lm, comment: $("tv-comment")?.value.trim() || "" });
+      msg.innerHTML = `<span class="pos">✓ ${lm ? (veto ? "Trade vetoed" : "Trade approved") : "Vote counted"} on ESPN.</span>`;
+      state.activity = null;
+      if (state.tab === "transactions") renderTransactions();
+      setTimeout(after, 900);
+    } catch (err) { msg.innerHTML = `<span class="neg">${esc(err.message)}</span>`; e.target.disabled = false; }
+  });
 }
 
 // ---------- Player popup: game log & scoring breakdown ----------

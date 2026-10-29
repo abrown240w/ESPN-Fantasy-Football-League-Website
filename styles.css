@@ -1897,13 +1897,6 @@ body.cmp-picking .modal-card.pm-full { height: calc(100dvh - 100px) !important; 
 .pts-line { font-size: .82rem; color: var(--ink-2); margin: 2px 0 8px; }
 .pts-link.pts-active, .pts-active { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
 
-/* Portrait only in the phone app: sideways shows a "turn it upright" screen (iPhones ignore the manifest lock) */
-#rotate-note { display: none; }
-@media (orientation: landscape) and (max-height: 500px) and (pointer: coarse) {
-  html.standalone #rotate-note { display: flex; position: fixed; inset: 0; z-index: 1000; align-items: center; justify-content: center; text-align: center; background: #3b4f6b; color: #fff; font-weight: 700; font-size: 1.1rem; }
-  html.standalone #rotate-note .rn-icon { display: block; font-size: 2.6rem; margin-bottom: 8px; transform: rotate(-90deg); }
-  html.standalone body { overflow: hidden; }
-}
 
 /* Computers: chat sits in a bar at the bottom right; the chat window slides up out of it */
 @media (min-width: 1000px) {
@@ -2215,7 +2208,6 @@ main.wrap, .footer { --ink: var(--page-ink); --ink-2: var(--page-ink-2); --muted
 main .fc-credit a, .footer a { color: var(--accent-ink); }
 main .card, main .pr-list, main .table-wrap { box-shadow: 0 1px 3px rgba(16,24,40,.08), 0 1px 2px rgba(16,24,40,.04); }
 .er-tools { background: var(--page-bg); }
-html.standalone #rotate-note { background: var(--brand); }
 
 /* Alternating row shading instead of gridlines. Highlights (your team, live, on the field) still win. */
 table.data th, table.data td { border-bottom: 0; }
@@ -2672,4 +2664,61 @@ button.mx-tds:hover, .mx-tds.pts-active { border-color: var(--accent); }
 .fo-strip { display: inline-grid; grid-template-columns: repeat(var(--n), 14px); gap: 2px; vertical-align: middle; }
 .fo-strip i { display: block; width: 14px; height: 14px; border-radius: 3px; background: color-mix(in srgb, var(--accent) calc(var(--p) * 100%), var(--surface-2)); }
 @media (max-width: 640px) { .fo-strip { grid-template-columns: repeat(var(--n), 9px); gap: 1px; } .fo-strip i { width: 9px; height: 12px; } }
+
+/* Roster: commissioner mode note */
+.er-moving.er-lm { background: rgba(200,16,46,.08); border-color: rgba(200,16,46,.3); }
+.er-moving.er-lm .ic { color: var(--brand); vertical-align: -2px; }
+
+/* Schedule: played games above the projections */
+.sch-sub { font-size: .74rem; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: var(--ink-2); padding: 10px 4px 4px; border-top: 1px solid var(--grid); }
+.sch-list > .sch-sub:first-child { border-top: 0; padding-top: 2px; }
+.sch-sub + .sch-row { border-top: 0; }
+.sch-row.past { cursor: pointer; }
+.sch-row.past:hover { background: var(--surface-2); }
+.sch-cell.done { opacity: .85; }
+.sch-grid th.sch-done-h { color: var(--muted); }
+
+/* League Manager tools panel */
+.lm-sec { margin-top: 14px; }
+.lm-sec h3 { font-size: .8rem; text-transform: uppercase; letter-spacing: .05em; color: var(--ink-2); margin: 0 0 8px; }
+.lm-sec select { margin: 6px 8px 0 0; }
+.lm-trade { border: 1px solid var(--grid); border-radius: 10px; padding: 10px; margin-bottom: 8px; display: grid; gap: 6px; }
+.lm-side { display: grid; gap: 2px; }
+.lm-trade-foot { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.tv-btn { background: none; border: 1px solid rgba(200,16,46,.45); color: var(--brand); border-radius: 8px; padding: 6px 12px; font-weight: 700; font-size: .85rem; cursor: pointer; }
+.tv-btn:hover { background: rgba(200,16,46,.08); }
+.tv-btn .ic { vertical-align: -2px; }
+.tv-note { display: grid; gap: 4px; margin: 12px 0; }
+.tv-note textarea { width: 100%; box-sizing: border-box; border: 1px solid var(--grid); border-radius: 8px; padding: 8px; font: inherit; background: var(--surface); color: var(--ink); resize: vertical; }
+.mv-go.tv-go { background: var(--brand); }
+
+/* Trade review votes */
+.tv-row { margin-top: 10px; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px 16px; }
+.tv-grp { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.tv-grp .ic { vertical-align: -2px; }
+.tv-btn.ok { border-color: rgba(22,128,60,.45); color: var(--pos, #16803c); }
+.tv-btn.ok:hover { background: rgba(22,128,60,.08); }
+
+/* Phones held sideways: height is scarce, width isn't. The tab bar becomes a slim rail down the left
+   side, the header gets thinner, and content stays clear of the notch and the home indicator. */
+@media (orientation: landscape) and (max-height: 500px) and (max-width: 999px) {
+  :root { --rail-w: calc(60px + env(safe-area-inset-left, 0px)); }
+  #tabs { top: 0; right: auto; bottom: 0; width: var(--rail-w); flex-direction: column; justify-content: center; gap: 2px;
+    padding: env(safe-area-inset-top, 0px) 0 env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+    border-top: 0; border-right: 1px solid var(--border); box-shadow: 2px 0 12px rgba(0,0,0,.10); }
+  #tabs button { flex: 0 0 auto; padding: 7px 0; font-size: .62rem; }
+  #tabs .tab-ic { font-size: 1.3rem; }
+  body { padding-left: var(--rail-w); padding-right: env(safe-area-inset-right, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
+  .topbar-inner { padding-top: 4px; padding-bottom: 5px; }
+  .topbar .hdr-btn, .topbar .chat-open { width: 30px; height: 30px; }
+  .subnav.seg { padding: 5px 10px; margin-bottom: 4px; }
+  /* Fixed bits that sat above the bottom bar */
+  .flash { bottom: calc(12px + env(safe-area-inset-bottom, 0px)); left: calc(50% + var(--rail-w) / 2); }
+  #cmp-bar { left: calc(var(--rail-w) + 8px); bottom: calc(env(safe-area-inset-bottom, 0px) + 8px); }
+  #cmp-stage { left: var(--rail-w); }
+  .upd-bar { left: calc(50% + var(--rail-w) / 2); }
+  /* Popups use the full height */
+  .modal { padding: 6px 12px; padding-left: calc(var(--rail-w) + 8px); }
+  .modal-card { max-height: calc(100dvh - 12px); }
+}
 
