@@ -2728,3 +2728,33 @@ button.mx-tds:hover, .mx-tds.pts-active { border-color: var(--accent); }
 .nm-table td, .nm-table th { padding-top: 5px; padding-bottom: 5px; }
 .nm-grid { align-items: start; }
 
+/* Players: Schedule view (week by week) */
+.pl-view button { padding-left: 12px; padding-right: 12px; }
+.pt-table th.wk-col, .pt-table td.wk-col { min-width: 58px; text-align: center; padding-left: 4px; padding-right: 4px; }
+.pt-table td.wk-past { background: color-mix(in srgb, var(--surface-2) 55%, transparent); }
+.pt-table th.wk-cur { color: var(--brand); box-shadow: inset 0 -2px 0 var(--brand), inset 0 -1px 0 var(--grid); }
+.pt-table td.wk-cur { background: color-mix(in srgb, var(--brand) 9%, var(--surface)); box-shadow: inset 1px 0 0 color-mix(in srgb, var(--brand) 35%, transparent), inset -1px 0 0 color-mix(in srgb, var(--brand) 35%, transparent); }
+.wc { display: inline-grid; justify-items: center; gap: 1px; line-height: 1.15; }
+.wc > span { font-size: .72rem; font-weight: 600; }
+.wc > b { font-size: .86rem; }
+.wc > b.wc-proj { font-weight: 500; color: var(--ink-2); font-style: italic; }
+.wc.bye > span { color: var(--muted); }
+
+/* Boom / bust: one square per game */
+.pm-bb { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 8px 0 4px; }
+.bb-strip { display: inline-flex; flex-wrap: wrap; gap: 3px; }
+.bb-strip i, .bb-key i { display: inline-block; width: 14px; height: 14px; border-radius: 3px; background: var(--surface-2); border: 1px solid var(--grid); }
+.bb-key i { width: 10px; height: 10px; margin: 0 3px 0 6px; vertical-align: -1px; }
+.bb-strip i.boom, .bb-key i.boom { background: #22a05a; border-color: #22a05a; }
+.bb-strip i.bust, .bb-key i.bust { background: #d0453a; border-color: #d0453a; }
+.bb-strip i.ok, .bb-key i.ok { background: color-mix(in srgb, var(--ink-2) 30%, var(--surface)); border-color: transparent; }
+
+/* Compare: projected weeks */
+.cmp-weeks tr.cmp-split td { text-align: left; font-size: .72rem; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: var(--ink-2); background: var(--surface-2); }
+.cmp-weeks tr.cmp-fut td i { font-style: italic; color: var(--ink-2); }
+.cmp-weeks tr.cmp-fut td.best i { color: inherit; font-weight: 700; }
+.cmp-weeks tr.cmp-fut .rk { font-size: .75rem; }
+.cmp-weeks tr.cmp-cur td { background: color-mix(in srgb, var(--brand) 9%, var(--surface)); }
+.cmp-weeks tr.cmp-cur td:first-child { color: var(--brand); }
+.cmp-po { font-size: .62rem; font-weight: 800; color: var(--brand); border: 1px solid currentColor; border-radius: 4px; padding: 0 3px; margin-left: 2px; }
+

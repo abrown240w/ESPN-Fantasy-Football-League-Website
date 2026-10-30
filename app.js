@@ -1453,6 +1453,8 @@ function renderPlayers() {
   const el = $("view-players"), f = state.players, w = state.week;
   f.mode ||= "avail";
   f.sort ||= { key: "proj", dir: -1 };
+  f.view ||= store.get("ffb.plview") === "sched" ? "sched" : "stats";
+  const WK = f.view === "sched" ? ensureWeekly() : null;
   const d = faData();
   if (!d) { el.innerHTML = `<div class="loading"><span class="spinner"></span> Loading players…</div>`; return; }
   if (d.error) { el.innerHTML = `<div class="banner">${esc(d.error)}</div>`; return; }
@@ -1484,6 +1486,7 @@ function renderPlayers() {
       <select id="pl-nfl" aria-label="NFL team"><option value="ALL">All teams</option>${Object.keys(NFL_NAMES).sort((a, b) => nick(a).localeCompare(nick(b))).map((t) => `<option value="${t}" ${f.nfl === t ? "selected" : ""}>${esc(nick(t))}</option>`).join("")}</select></div>
     ${playersNav(f.mode, me && !DESK.matches ? { on: !!f.mine && f.mode !== "all", off: f.mode === "all" } : null)}
     <div class="filters pl-filters">
+      <div class="seg pl-view" id="pl-view" role="group" aria-label="Table" ${desk ? "" : "hidden"}>${[["stats", "Stats"], ["sched", "Schedule"]].map(([k, l]) => `<button type="button" data-v="${k}" class="${f.view === k ? "active" : ""}">${l}</button>`).join("")}</div>
       ${posSeg("pl-pos", f.pos, true)}
       ${desk ? `<div class="seg" id="pl-inj" role="group" aria-label="Injuries">${[["all", "All"], ["injured", "Injured"], ["healthy", "Healthy"]].map(([k, l]) => `<button type="button" data-i="${k}" class="${f.inj === k ? "active" : ""}">${l}</button>`).join("")}</div>` : ""}
     </div>
@@ -1495,12 +1498,28 @@ function renderPlayers() {
     const rows = pool.filter((p) => posMatch(p.pos, f.pos) && (!f.nfl || f.nfl === "ALL" || PRO[p.proId] === f.nfl) && (!q || p.name.toLowerCase().includes(q))
       && (inj === "all" || (inj === "injured") === hurt(p)));
     if (inj === "healthy" && f.sort.key.startsWith("inj_")) f.sort = { key: "proj", dir: -1 };
+    if (f.view === "sched") {
+      // Week by week: opponent (colored by how tough that defense is on the position) and points, scored in
+      // past weeks, projected from now on. This week's column is highlighted and scrolled into view.
+      const cols = weekCols(WK);
+      if (!cols.some((c) => c.key === f.sort.key) && f.sort.key !== "name" && f.sort.key !== "pos") f.sort = { key: `wk${state.base.current}`, dir: -1 };
+      drawPlayerTable($("pl-list"), ["player", ...(actTeam() ? ["act"] : []), ...(W ? ["watch"] : []), "pos", ...cols], rows, f.sort, w.sp, "No players match those filters.");
+      const wrap = $("pl-list").querySelector(".table-wrap"), th = wrap?.querySelector("th.wk-cur"), name = wrap?.querySelector("th.pt-player");
+      if (wrap && th) wrap.scrollLeft = Math.max(0, th.offsetLeft - (name?.offsetWidth || 0) - th.offsetWidth * 2);
+      return;
+    }
+    if (f.sort.key.startsWith("wk")) f.sort = { key: "proj", dir: -1 };
     drawPlayerTable($("pl-list"), ["player", ...(actTeam() ? ["act"] : []), ...(W ? ["watch"] : []), "pos", "opp", "proj", "pts", "ppg", "seasonPts", "own", "snap", "tgt", "rush", "rz", "pprRank", "posRank", "value", ...(inj === "healthy" ? [] : injCols)], rows, f.sort, w.sp,
       desk && inj !== "all" && !D ? "Loading the injury report…" : "No players match those filters.");
   };
   bindSearch("pl-q", (v) => { f.q = v; draw(); });
   $("pl-nfl").addEventListener("change", (e) => { f.nfl = e.target.value; draw(); });
   bindPosSeg("pl-pos", (v) => (f.pos = v), draw);
+  $("pl-view").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => {
+    if (f.view === b.dataset.v) return;
+    f.view = b.dataset.v; store.set("ffb.plview", f.view);
+    renderPlayers();
+  }));
   $("pl-inj")?.querySelectorAll("button").forEach((b) => b.addEventListener("click", () => {
     f.inj = b.dataset.i;
     $("pl-inj").querySelectorAll("button").forEach((x) => x.classList.toggle("active", x === b));
@@ -1566,17 +1585,145 @@ function paintWatchCount() {
 const playersNav = (cur, mine) => {
   const c = watchCounts(), inj = !DESK.matches;
   return `<div class="pl-nav"><div class="seg pl-seg">${[["avail", "Available"], ["all", `<span class="nm-full">All players</span><span class="nm-short">All</span>`]].map(([k, l]) => `<button type="button" data-plm="${k}" class="${cur === k && !state.players.watch ? "active" : ""}">${l}</button>`).join("")}</div>
-  ${c || inj ? `<div class="pl-tools">${c ? `<button type="button" data-watchf class="pl-tool ${state.players.watch ? "active" : ""}" title="Your watch list: available / total">${ic("eye")} <b>${c.avail}/${c.total}</b></button>` : ""}${inj ? `<button type="button" data-injr class="pl-tool" title="Injury Report" aria-label="Injury Report">${ic("first-aid-kit")}</button>` : ""}</div>` : ""}
+  ${c || inj ? `<div class="pl-tools">${c ? `<button type="button" data-watchf class="pl-tool ${state.players.watch ? "active" : ""}" title="Your watch list: available / total">${ic("eye")} <b>${c.avail}/${c.total}</b></button>` : ""}${inj ? `<button type="button" data-injr class="pl-tool" title="Injury Report" aria-label="Injury Report">${ic("first-aid-kit")}</button>` : ""}${inj && cur && state.tab === "players" ? `<button type="button" data-plsched class="pl-tool ${state.players.view === "sched" ? "active" : ""}" aria-pressed="${state.players.view === "sched"}" title="Week-by-week schedule and points">${ic("calendar")} Schedule</button>` : ""}</div>` : ""}
   ${mine ? `<button type="button" data-plmine class="pl-tool pl-mine-btn ${mine.on ? "active" : ""}" aria-pressed="${mine.on}" ${mine.off ? "disabled" : ""} title="Include your own team's players">${ic("user")} My team</button>` : ""}</div>`;
 };
 document.addEventListener("click", (e) => {
   const m = e.target.closest(".pl-nav [data-plm]"), inj = e.target.closest(".pl-nav [data-injr]");
   const wf = e.target.closest(".pl-nav [data-watchf]"), mb = e.target.closest(".pl-nav [data-plmine]");
   if (mb) { state.players.mine = !state.players.mine; renderPlayers(); return; }
+  if (e.target.closest(".pl-nav [data-plsched]")) { state.players.view = state.players.view === "sched" ? "stats" : "sched"; store.set("ffb.plview", state.players.view); renderPlayers(); return; }
   if (wf) { state.players.watch = !state.players.watch; renderPlayers(); return; }
   if (m) { state.players.mode = m.dataset.plm; state.players.watch = false; if (state.tab === "players") renderPlayers(); else switchTab("players"); }
   else if (inj) openInjuryReport();
 });
+
+// ---------- Players tab: Schedule view ----------
+// Every week's points for the listed players (/api/weekly): scored in past weeks, ESPN's projection after.
+function ensureWeekly(onReady) {
+  const b = state.base, key = `${b.raw?.id || state.leagueId}:${b.season}:${b.current}`, c = state.weekly;
+  if (c?.key === key) return c.data;
+  if (onReady) (state.weeklyWaiters ||= []).push(onReady);
+  if (state.demo) { state.weekly = { key, data: { players: {} } }; return state.weekly.data; }
+  if (c?.loading !== key) {
+    state.weekly = { loading: key };
+    const last = Math.max(b.scoringPeriodFor(b.weeks), ...playoffPeriods().map((x) => x.sp));
+    fetch(`/api/weekly?${new URLSearchParams({ leagueId: String(b.raw?.id || state.leagueId || ""), season: String(b.season), last: String(Math.min(18, last)) })}`)
+      .then((r) => r.json()).then((d) => { state.weekly = { key, data: d.players ? d : { players: {} } }; })
+      .catch(() => { state.weekly = { key, data: { players: {} } }; })
+      .finally(() => {
+        const w = state.weeklyWaiters || [];
+        state.weeklyWaiters = [];
+        w.forEach((f) => { try { f(); } catch { /* a card that has closed */ } });
+        if (state.tab === "players") renderPlayers();
+      });
+  }
+  return null;
+}
+const weeklyReady = () => new Promise((res) => { const d = ensureWeekly(() => res(state.weekly?.data)); if (d) res(d); });
+
+// ---------- Boom or bust ----------
+// Judged against the league, week by week. At each position, N = the starters every team fields there (flex
+// spots shared out). A boom is a week in the top half of those starters (top N/2); a bust is a week outside
+// the top N, a score nobody would want in a lineup. The lines come from every listed player's real scores.
+function bbLines(WK) {
+  if (!WK?.players) return null;
+  if (state.bbFor === WK) return state.bb;
+  const b = state.base, teams = Object.keys(b.teams).length, n = (k) => b.slotCounts?.[k] || 0;
+  const N = { 1: teams * (n(0) + n(7)), 2: teams * (n(2) + n(3) / 2 + n(23) * 0.45), 3: teams * (n(4) + n(3) / 2 + n(5) / 2 + n(23) * 0.45),
+    4: teams * (n(6) + n(5) / 2 + n(23) * 0.1), 5: teams * n(17), 16: teams * n(16) };
+  const curSp = b.scoringPeriodFor(b.current), by = {};
+  for (const pl of Object.values(WK.players)) for (const [sp, pts] of Object.entries(pl.a || {})) if (Number(sp) < curSp) ((by[pl.p] ||= {})[sp] ||= []).push(pts);
+  const lines = {};
+  for (const [pos, weeks] of Object.entries(by)) {
+    const k = Math.max(2, Math.round(N[pos] || teams));
+    for (const [sp, list] of Object.entries(weeks)) {
+      if (list.length < k) continue;
+      list.sort((x, y) => y - x);
+      (lines[pos] ||= {})[sp] = { boom: list[Math.ceil(k / 2) - 1], bust: list[k - 1] };
+    }
+  }
+  state.bbFor = WK; state.bb = lines;
+  return lines;
+}
+// One player's games (scoring period -> points), each called boom / ok / bust.
+function boomBust(posId, byWeek, WK) {
+  const L = bbLines(WK)?.[posId];
+  if (!L) return null;
+  const list = Object.entries(byWeek || {}).map(([sp, pts]) => ({ sp: Number(sp), pts, line: L[sp] })).filter((w) => w.line && w.pts != null)
+    .map((w) => ({ ...w, k: w.pts >= w.line.boom ? "boom" : w.pts < w.line.bust ? "bust" : "ok" })).sort((a, b) => a.sp - b.sp);
+  if (!list.length) return null;
+  const c = (k) => list.filter((w) => w.k === k).length;
+  return { n: list.length, boom: c("boom") / list.length, bust: c("bust") / list.length, list };
+}
+const bbStrip = (bb) => `<div class="bb-strip">${bb.list.map((w) => `<i class="${w.k}" title="Week ${w.sp}: ${f1(w.pts)} (${w.k === "boom" ? "boom" : w.k === "bust" ? "bust" : "solid"}; boom ${f1(w.line.boom)}+, bust under ${f1(w.line.bust)})"></i>`).join("")}</div>`;
+// One column per fantasy week. Past weeks: points scored; this week: points so far once his game has
+// started, else the projection; later weeks: ESPN's projection.
+function weekCols(WK) {
+  const b = state.base, cur = b.current, nfl = state.week?.nfl || {};
+  const cell = (p, wk) => {
+    const sp = b.scoringPeriodFor(wk), sched = nfl.sched?.[p.proId], g = sched?.[sp];
+    const bye = !!sched && !g;
+    const opp = g ? g[0] : null, rank = opp != null ? nfl.oprk?.[p.posId]?.[opp]?.[0] : null;
+    const data = WK?.players?.[p.id];
+    let pts = null, kind = "proj";
+    if (wk < cur) { pts = data?.a?.[sp] ?? null; kind = "done"; }
+    else if (wk === cur && p.pts != null && (p.played || ["in", "post"].includes(gameStatusOf(p)?.state))) { pts = p.pts; kind = "done"; }
+    else pts = wk === cur ? p.proj ?? data?.j?.[sp] ?? null : data?.j?.[sp] ?? null;
+    return { bye, opp, home: g?.[1], rank, pts: bye ? null : pts, kind };
+  };
+  const lastWk = Math.max(b.weeks, ...playoffPeriods().map((x) => x.wk)); // through the fantasy playoffs
+  return Array.from({ length: lastWk }, (_, i) => i + 1).map((wk) => ({
+    key: `wk${wk}`, label: `Wk ${wk}`, num: true, cls: `wk-col ${wk === cur ? "wk-cur" : wk < cur ? "wk-past" : ""}`,
+    title: wk < cur ? "Opponent and points scored" : wk === cur ? "This week: opponent, and points (projected until his game starts)" : "Opponent and ESPN's projection",
+    sort: (p) => cell(p, wk).pts,
+    render: (p) => {
+      const x = cell(p, wk);
+      if (x.bye) return `<span class="wc bye"><span>BYE</span><b>–</b></span>`;
+      if (x.opp == null) return `<span class="wc"><span class="muted">–</span><b class="muted">${x.pts == null ? "–" : f1(x.pts)}</b></span>`;
+      return `<span class="wc"><span class="rk ${rkCls(x.rank)}" title="${x.rank ? `${ordinal(x.rank)} toughest vs ${esc(p.pos)}s` : ""}">${x.home ? "" : "@"}${esc(PRO[x.opp] || "")}</span><b class="${x.kind === "proj" ? "wc-proj" : ""}">${x.pts == null ? "–" : f1(x.pts)}</b></span>`;
+    },
+  }));
+}
+
+// ---------- Team strength (playoff odds, projected bracket, final standings) ----------
+// What a team is expected to score in a given week, from two views blended together:
+//  - results: its scoring in games finished by `cutoff`, pulled toward the league average early on;
+//  - roster: the best lineup its current roster can field that week (players' points per game, with byes,
+//    IR and players ruled out, as on the Schedule tab), scaled to the league's real scoring level.
+// The roster view gets 60%, so trades, pickups and injuries move the projections right away. Until this
+// week's rosters have loaded, results alone are used (and everything redraws once they arrive).
+const ROSTER_WEIGHT = 0.6;
+function strengthModel(cutoff = Infinity) {
+  const b = state.base, cur = ensureCurrentRosters();
+  const done = (m) => m.matchupPeriodId <= cutoff && m.winner && m.winner !== "UNDECIDED";
+  const reg = b.schedule.filter((m) => m.matchupPeriodId <= b.regWeeks && m.away && done(m));
+  const key = `${b.season}:${cutoff}:${reg.length}`;
+  const cache = (state.strength ||= {}), hit = cache[cutoff];
+  if (hit && hit.key === key && hit.cur === cur && hit.b === b) return hit;
+  const ids = Object.keys(b.teams);
+  const sc = Object.fromEntries(ids.map((id) => [id, []]));
+  for (const m of reg) for (const s of [m.home, m.away]) sc[s.teamId]?.push(s.totalPoints);
+  const all = Object.values(sc).flat(), lg = all.length ? sum(all) / all.length : 100;
+  const sd = all.length > 2 ? Math.sqrt(sum(all, (x) => (x - lg) ** 2) / (all.length - 1)) : 25;
+  const res = (id) => (sum(sc[id] || []) + 3 * lg) / ((sc[id] || []).length + 3);
+  let roster = null;
+  if (cur) {
+    const healthy = (p) => (p.slotId === IR || /INJURY_RESERVE|SUSPENSION/.test(p.injury || "") ? 0 : p.seasonAvg ?? p.proj ?? 0);
+    const full = Object.fromEntries(cur.sides.map((s) => [String(s.teamId), optimalLineup(s.players, b.slotCounts, healthy).points]));
+    const vals = Object.values(full).filter((x) => x > 0);
+    const k = all.length && vals.length ? lg / (sum(vals) / vals.length) : 1; // projections run high: match the league's real level
+    const byWeek = {};
+    for (const { wk, games } of schedOutlook()?.weeks || []) for (const g of games) { (byWeek[wk] ||= {})[g.home] = g.h.pts; byWeek[wk][g.away] = g.a.pts; }
+    roster = (id, wk) => { const v = byWeek[wk]?.[id] ?? full[id]; return v == null ? null : k * v; };
+  }
+  const exp = (id, wk) => {
+    const r = roster?.(String(id), wk);
+    if (r == null) return res(id);
+    return all.length ? ROSTER_WEIGHT * r + (1 - ROSTER_WEIGHT) * res(id) : r;
+  };
+  return (cache[cutoff] = { key, cur, b, exp, sd, rosters: !!roster });
+}
 
 // ---------- Playoff odds (Standings) ----------
 // Simulates the rest of the regular season 5,000 times. Each team's weekly score is drawn around its
@@ -1587,15 +1734,9 @@ function playoffOdds() {
   if (!spots) return null;
   const reg = b.schedule.filter((m) => m.matchupPeriodId <= b.regWeeks && m.away);
   const isDone = (m) => m.winner && m.winner !== "UNDECIDED";
-  const key = `${b.season}:${reg.filter(isDone).length}`;
-  if (state.odds?.key === key) return state.odds;
-  const ids = Object.keys(b.teams);
-  const scores = Object.fromEntries(ids.map((id) => [id, []]));
-  for (const m of reg.filter(isDone)) for (const t of [m.home, m.away]) scores[t.teamId]?.push(t.totalPoints);
-  const all = Object.values(scores).flat();
-  const lgMean = all.length ? sum(all) / all.length : 100;
-  const lgSd = all.length > 2 ? Math.sqrt(sum(all, (x) => (x - lgMean) ** 2) / (all.length - 1)) : 25;
-  const mean = Object.fromEntries(ids.map((id) => { const l = scores[id]; return [id, (sum(l) + 3 * lgMean) / (l.length + 3)]; }));
+  const key = `${b.season}:${reg.filter(isDone).length}`, M = strengthModel();
+  if (state.odds?.key === key && state.odds.M === M) return state.odds;
+  const ids = Object.keys(b.teams), lgSd = M.sd;
   const left = reg.filter((m) => !isDone(m));
   const bracket = 2 ** Math.ceil(Math.log2(spots)), byes = Math.min(spots, bracket - spots);
   let seed = 12345;
@@ -1607,7 +1748,7 @@ function playoffOdds() {
     const w = {}, pf = {};
     for (const id of ids) { const t = b.teams[id]; w[id] = t.wins + 0.5 * t.ties; pf[id] = t.pf; }
     for (const m of left) {
-      const h = mean[m.home.teamId] + lgSd * normal(), a = mean[m.away.teamId] + lgSd * normal();
+      const h = M.exp(m.home.teamId, m.matchupPeriodId) + lgSd * normal(), a = M.exp(m.away.teamId, m.matchupPeriodId) + lgSd * normal();
       pf[m.home.teamId] += h; pf[m.away.teamId] += a;
       if (h > a) w[m.home.teamId]++; else w[m.away.teamId]++;
     }
@@ -1621,7 +1762,7 @@ function playoffOdds() {
     });
   }
   const teams = Object.fromEntries(ids.map((id) => [id, { playoffs: tally[id].playoffs / N, bye: tally[id].bye / N, seed: tally[id].seedSum / N, wins: tally[id].winsSum / N }]));
-  state.odds = { key, spots, byes, weeksLeft: new Set(left.map((m) => m.matchupPeriodId)).size, teams };
+  state.odds = { key, M, spots, byes, weeksLeft: new Set(left.map((m) => m.matchupPeriodId)).size, teams };
   return state.odds;
 }
 const oddsPct = (x) => (x >= 0.995 && x < 1 ? ">99%" : x > 0 && x < 0.005 ? "<1%" : `${Math.round(x * 100)}%`);
@@ -2550,7 +2691,7 @@ function renderSchedule() {
 
 // ---------- Playoffs (League tab) ----------
 // Before the playoffs: an estimated bracket. Seeds come from the standings simulation (expected wins, then
-// points for), and each game shows the favorite's chance from the teams' season scoring. Once ESPN sets the
+// points for), and each game shows the favorite's chance from the teams' strength (strengthModel). Once ESPN sets the
 // bracket, the real seeds, matchups and scores take over; later rounds are projected until they're played.
 // Standard bracket order: 1 v 8 and 4 v 5 on top, 2 v 7 and 3 v 6 below; top seeds get any byes.
 // Everyone else plays ESPN's consolation "ladders" for final placement (see ladder() below).
@@ -2561,14 +2702,9 @@ function playoffBracket() {
   const done = (m) => m.winner && m.winner !== "UNDECIDED";
   const po = b.schedule.filter((m) => m.matchupPeriodId > b.regWeeks && m.playoffTierType && m.playoffTierType !== "NONE");
   const real = po.some((m) => m.playoffTierType === "WINNERS_BRACKET");
-  // Each team's strength: its season scoring pulled toward the league average (as in the playoff odds).
-  const reg = b.schedule.filter((m) => m.matchupPeriodId <= b.regWeeks && m.away && done(m));
-  const sc = {};
-  for (const m of reg) for (const s of [m.home, m.away]) (sc[s.teamId] ||= []).push(s.totalPoints);
-  const all = Object.values(sc).flat(), lg = all.length ? sum(all) / all.length : 100;
-  const sd = all.length > 2 ? Math.sqrt(sum(all, (x) => (x - lg) ** 2) / (all.length - 1)) : 25;
-  const str = (id) => { const l = sc[id] || []; return (sum(l) + 3 * lg) / (l.length + 3); };
-  const winP = (a, c) => normCdf((str(a) - str(c)) / (sd * Math.SQRT2));
+  // Each game's favorite: season scoring blended with current rosters (strengthModel, as in the playoff odds).
+  const M = strengthModel();
+  const winP = (a, c, wk) => normCdf((M.exp(a, wk) - M.exp(c, wk)) / (M.sd * Math.SQRT2));
   // Every team in seed order: ESPN's once the bracket is set, otherwise the projected finish.
   let order, chance = {};
   if (real) order = Object.values(b.teams).sort((x, y) => (x.seed || 99) - (y.seed || 99)).map((t) => String(t.id));
@@ -2590,7 +2726,7 @@ function playoffBracket() {
     const side = (id) => (g ? (String(g.home.teamId) === id ? g.home : g.away) : null);
     const sa = side(a), scc = side(c), final = !!g && done(g);
     const live = !!g && !final && ((sa.totalPointsLive ?? sa.totalPoints ?? 0) + (scc.totalPointsLive ?? scc.totalPoints ?? 0)) > 0;
-    const p = winP(a, c);
+    const p = winP(a, c, wk);
     const winner = final ? (g.winner === "HOME" ? String(g.home.teamId) : String(g.away.teamId)) : p >= 0.5 ? a : c;
     return { a, c, p, winner, loser: winner === a ? c : a, final, live, projected: !g,
       scoreA: sa ? sa.totalPointsLive ?? sa.totalPoints : null, scoreC: scc ? scc.totalPointsLive ?? scc.totalPoints : null };
@@ -2674,7 +2810,7 @@ function renderPlayoffs() {
   const ladderCols = (rounds) => `<div class="bk-wrap"><div class="bk bk-ladder">${rounds.map((rd) => `<div class="bk-col"><div class="bk-h">Week ${rd.wk}</div><div class="bk-games top">${rd.games.map(box).join("")}</div></div>`).join("")}</div></div>`;
   const bubble = B.bubble.length ? `<p class="small bk-bubble"><span class="muted">On the bubble:</span> ${B.bubble.map((id) => `<span data-tpop="${id}">${esc(team(id).name)} <span class="muted">${oddsPct(B.chance[id] || 0)}</span></span>`).join(" · ")}</p>` : "";
   el.innerHTML = `<div class="section-head"><h2>Championship bracket</h2>${B.real ? "" : `<span class="badge">PROJECTED</span>`}</div>
-    ${B.real ? "" : `<p class="muted small bk-note">Seeds by expected finish, the favorite advancing in each game. ESPN's real bracket replaces this once the regular season ends.</p>`}
+    ${B.real ? "" : `<p class="muted small bk-note">Seeds by expected finish, the favorite advancing in each game. Favorites come from each team's scoring so far and its current roster. ESPN's real bracket replaces this once the regular season ends.</p>`}
     <div class="bk-wrap"><div class="bk">${cols}${champ}</div></div>${bubble}
     ${B.consolation.length ? `<div class="section-head"><h2>Consolation bracket</h2><span class="muted small">Teams that missed the playoffs, playing for final place</span></div>${ladderCols(B.consolation)}` : ""}
     ${B.placement.length ? `<div class="section-head"><h2>Placement games</h2><span class="muted small">Teams knocked out of the playoffs, playing for 3rd, 5th and on</span></div>${ladderCols(B.placement)}` : ""}
@@ -2683,7 +2819,7 @@ function renderPlayoffs() {
 
 // ---------- Final standings outlook (Playoffs tab) ----------
 // Plays out the rest of the season many times: the regular season, the playoff bracket and both consolation
-// ladders (ESPN's pairing rule), with each game's scores drawn from the teams' season scoring. Every run
+// ladders (ESPN's pairing rule), with each game's scores drawn from the teams' strength (strengthModel). Every run
 // gives each team a final place (1st = champion, 2nd = runner-up, then the knocked-out teams by their
 // placement games, then the consolation ladder). Run again as of a week earlier to show who moved.
 function simulateFinish(cutoff, runs = 2000) {
@@ -2691,12 +2827,8 @@ function simulateFinish(cutoff, runs = 2000) {
   if (spots < 2) return null;
   const ids = Object.keys(b.teams), N = ids.length;
   const known = (m) => m.matchupPeriodId <= cutoff && m.winner && m.winner !== "UNDECIDED";
-  // Strength from the season scoring up to the cutoff, pulled toward the league average.
-  const sc = Object.fromEntries(ids.map((id) => [id, []]));
-  for (const m of b.schedule) if (m.matchupPeriodId <= b.regWeeks && m.away && known(m)) for (const s of [m.home, m.away]) sc[s.teamId]?.push(s.totalPoints);
-  const all = Object.values(sc).flat(), lg = all.length ? sum(all) / all.length : 100;
-  const sd = all.length > 2 ? Math.sqrt(sum(all, (x) => (x - lg) ** 2) / (all.length - 1)) : 25;
-  const mean = Object.fromEntries(ids.map((id) => [id, (sum(sc[id]) + 3 * lg) / (sc[id].length + 3)]));
+  // Strength: results up to the cutoff blended with today's rosters (strengthModel).
+  const M = strengthModel(cutoff), sd = M.sd;
   let seed = 98765 + cutoff;
   const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
   const normal = () => { let u = 0; while (!u) u = rnd(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * rnd()); };
@@ -2706,7 +2838,7 @@ function simulateFinish(cutoff, runs = 2000) {
   const play = (tier, wk, a, c) => {
     const g = tier && realGame(tier, wk, a, c);
     if (g) return g.winner === "HOME" ? String(g.home.teamId) : String(g.away.teamId);
-    return mean[a] + sd * normal() >= mean[c] + sd * normal() ? a : c;
+    return M.exp(a, wk) + sd * normal() >= M.exp(c, wk) + sd * normal() ? a : c;
   };
   const size = 2 ** Math.ceil(Math.log2(spots)), rounds = Math.log2(size);
   const listed = [...new Set(playoffPeriods().map((p) => p.wk))];
@@ -2719,7 +2851,7 @@ function simulateFinish(cutoff, runs = 2000) {
     for (const m of reg) {
       const h = String(m.home.teamId), a = String(m.away.teamId);
       if (known(m)) { pf[h] += m.home.totalPoints || 0; pf[a] += m.away.totalPoints || 0; if (m.winner === "HOME") w[h]++; else if (m.winner === "AWAY") w[a]++; else { w[h] += 0.5; w[a] += 0.5; } continue; }
-      const hs = mean[h] + sd * normal(), as = mean[a] + sd * normal();
+      const hs = M.exp(h, m.matchupPeriodId) + sd * normal(), as = M.exp(a, m.matchupPeriodId) + sd * normal();
       pf[h] += hs; pf[a] += as; w[hs >= as ? h : a]++;
     }
     const order = [...ids].sort((x, y) => w[y] - w[x] || pf[y] - pf[x]);
@@ -2782,9 +2914,10 @@ function finishOutlook() {
   const done = [...new Set(b.schedule.filter((m) => m.winner && m.winner !== "UNDECIDED").map((m) => m.matchupPeriodId))].sort((x, y) => x - y);
   const last = done.at(-1) || 0;
   const key = `${b.season}:${last}:${b.schedule.filter((m) => m.winner && m.winner !== "UNDECIDED").length}`;
-  if (state.finishOut?.key === key) return state.finishOut;
+  const M = strengthModel(last);
+  if (state.finishOut?.key === key && state.finishOut.M === M) return state.finishOut;
   const now = simulateFinish(last), before = last > 0 ? simulateFinish(done.at(-2) || 0) : null;
-  state.finishOut = { key, now, before, last };
+  state.finishOut = { key, M, now, before, last };
   return state.finishOut;
 }
 function finishHtml() {
@@ -2808,7 +2941,7 @@ function finishHtml() {
   }).join("");
   return `<div class="section-head"><h2>${settled ? "Final standings" : "Projected final standings"}</h2>${F.before ? `<span class="muted small">Change since before week ${F.last}</span>` : ""}</div>
     <div class="table-wrap"><table class="data fo-table"><thead><tr><th class="num">#</th><th>Team</th><th class="num" title="Average final place across the simulations">Avg finish</th><th class="num" title="Places gained or lost in the projected finish since a week ago">Week</th><th class="num" title="80% of the simulated seasons end in this range">Range</th><th title="Chance of each final place, 1st on the left">Odds by place (1st → ${ordinal(N)})</th><th class="num" title="Chance to win the championship">Title</th></tr></thead><tbody>${rows}</tbody></table></div>
-    <p class="muted small">From 2,000 simulations of the rest of the season, the playoffs and the consolation games, using each team's scoring this season. Darker squares are likelier places.</p>`;
+    <p class="muted small">From 2,000 simulations of the rest of the season, the playoffs and the consolation games, using each team's scoring this season and its current roster. Darker squares are likelier places.</p>`;
 }
 
 // ---------- Season ----------
@@ -5333,7 +5466,7 @@ async function openStage(ids) {
     const hit = cache[id];
     if (hit && Date.now() - hit.at < 60000) return;
     try { cache[id] = { at: Date.now(), data: await fetchPlayer(id) }; } catch { /* that card shows an error */ }
-  }));
+  }).concat(weeklyReady()));
   if (!stageOpen() || state.stageIds !== ids) return;
   ids.forEach((id, i) => {
     const el = $(i ? "stg-b" : "stg-a");
@@ -5353,7 +5486,7 @@ async function openCompare(ids) {
     const hit = cache[id];
     if (hit && Date.now() - hit.at < 60000) return;
     try { cache[id] = { at: Date.now(), data: await fetchPlayer(id) }; } catch { /* that column shows what it can */ }
-  }));
+  }).concat(weeklyReady()));
   if (state.cmpIds !== ids || $("cmp-modal").hidden) return;
   renderCompare(ids);
 }
@@ -5368,12 +5501,17 @@ function cmpModel(id, wk) {
   const posId = row.posId ?? pl.posId, weeks = d?.weeks || [], pts = weeks.map((w) => w.pts);
   const total = d?.seasonPts ?? (pts.length ? sum(pts) : row.seasonPts ?? null), gp = pts.length;
   const u = usageOf(Number(id)), cur = state.base.current, nfl = state.week?.nfl, proId = row.proId ?? pl.proId;
-  const sched = nfl?.sched?.[proId], next = [];
-  for (let w = cur; w < cur + 3 && w <= state.base.weeks; w++) {
-    const g = sched?.[state.base.scoringPeriodFor(w)];
-    next.push(g ? { opp: g[0], home: g[1], rank: nfl.oprk?.[posId]?.[g[0]]?.[0] } : { bye: true });
+  const sched = nfl?.sched?.[proId], WK = state.weekly?.data, poWk = new Set(playoffPeriods().map((x) => x.wk));
+  // This week through the fantasy playoffs: opponent, matchup and ESPN's projection (0 on a bye).
+  const future = [], lastWk = Math.max(state.base.weeks, ...poWk);
+  for (let w = cur; w <= lastWk; w++) {
+    const sp = state.base.scoringPeriodFor(w), g = sched?.[sp];
+    const proj = w === cur && row.proj != null ? row.proj : WK?.players?.[id]?.j?.[sp] ?? null;
+    future.push(g ? { wk: w, sp, opp: g[0], home: g[1], rank: nfl.oprk?.[posId]?.[g[0]]?.[0], proj } : { wk: w, sp, bye: !!sched, proj: sched ? 0 : proj });
   }
+  const next = future.slice(0, 3).map((f) => (f.opp != null ? f : { bye: true }));
   const byWeek = Object.fromEntries(weeks.map((w) => [w.sp, w.pts]));
+  const projSum = (list) => { const v = list.map((f) => f.proj).filter((x) => x != null); return v.length ? sum(v) : null; };
   return {
     id: String(id), name: row.name || pl.name || "Player", posId, pos: POS[posId] || "", proId, nfl: PRO[proId] || "",
     ownerId: row.ownerId ?? null, status: row.status || "", waiverDate: row.waiverDate || null, row, byWeek,
@@ -5383,7 +5521,9 @@ function cmpModel(id, wk) {
     snap: u ? u.avg?.pct ?? u.last.pct : null, tgt: u && u.pos !== "QB" ? u.avg?.share ?? u.last.share : null, rush: u ? u.avg?.rush ?? u.last.rush : null,
     rz: u && u.pos !== "QB" ? u.avg?.rz ?? u.last.rz : null,
     posRank: row.posRank ?? null, pprRank: row.pprRank ?? null, own: row.own ?? null, start: row.start ?? null, value: valueOf(Number(id)),
-    injury: row.injury || pl.injury || "", bye: pl.bye ?? null, next,
+    injury: row.injury || pl.injury || "", bye: pl.bye ?? null, next, future,
+    rosProj: projSum(future), poProj: poWk.size ? projSum(future.filter((f) => poWk.has(f.wk))) : null,
+    bb: boomBust(posId, byWeek, WK),
   };
 }
 const CMP_ELIG = { 1: [0, 7], 2: [2, 3, 23, 7], 3: [4, 3, 5, 23, 7], 4: [6, 5, 23, 7], 5: [17], 16: [16] };
@@ -5420,7 +5560,20 @@ function cmpFit(x, wk) {
       return { p, v, net: after - base.points, gap: (v - x.value) / x.value };
     }).filter((o) => o.v >= 0.6 * x.value && o.v <= 1.5 * x.value).sort((a, b) => (b.net - a.net) || (Math.abs(a.gap) - Math.abs(b.gap))).slice(0, 3);
   }
-  return { gain, slot, displaced, need, healthy, open, drops, offers, side, cand, startsNow: baseIds.has(x.id) };
+  // The rest of the season: the same comparison for every week left, with ESPN's weekly projections (byes
+  // count as zero, players it has no numbers for use their points per game). Fantasy playoff weeks count 1.5x.
+  const b = state.base, WK = state.weekly?.data, nfl = state.week?.nfl, poWk = new Set(playoffPeriods().map((q) => q.wk));
+  const wkProj = (id, proId, avg, sp) => WK?.players?.[id]?.j?.[sp] ?? (nfl?.sched?.[proId] && !nfl.sched[proId][sp] ? 0 : avg ?? 0);
+  const ros = [];
+  for (let w = b.current; w <= Math.max(b.weeks, ...poWk); w++) {
+    const sp = b.scoringPeriodFor(w);
+    const v = w === b.current ? val : (p) => (p.id === cand.id ? wkProj(x.id, x.proId, x.ppg, sp) : wkProj(p.id, p.proId, p.seasonAvg, sp));
+    ros.push({ w, po: poWk.has(w), g: optimalLineup([...active, cand], counts, v).points - optimalLineup(active, counts, v).points });
+  }
+  const wt = (q) => (q.po ? 1.5 : 1), po = ros.filter((q) => q.po);
+  const rosGain = ros.length ? sum(ros.map((q) => q.g * wt(q))) / sum(ros.map(wt)) : gain;
+  const poGain = po.length ? sum(po.map((q) => q.g)) / po.length : null;
+  return { gain, rosGain, poGain, ros, slot, displaced, need, healthy, open, drops, offers, side, cand, startsNow: baseIds.has(x.id) };
 }
 function renderCompare(ids, target) {
   const put = (h) => { if (target) target.innerHTML = h; else showCmp(h); };
@@ -5434,7 +5587,9 @@ function renderCompare(ids, target) {
     ["Status", (m) => (m.injury ? injuryInfo(m.injury)[1] : "Healthy"), null, null],
     ["Season pts", (m) => m.total, "hi", f1], ["Games", (m) => m.gp, null, String], ["PPG", (m) => m.ppg, "hi", f1],
     ["Best week", (m) => m.best, "hi", f1], ["Floor", (m) => m.floor, "hi", f1], ["Last 3 avg", (m) => m.last3, "hi", f1],
-    ["Proj this week", (m) => m.proj, "hi", f1], ["Season proj", (m) => m.seasonProj, "hi", f1],
+    ["Boom %", (m) => (m.bb ? m.bb.boom * 100 : null), "hi", pct0], ["Bust %", (m) => (m.bb ? m.bb.bust * 100 : null), "lo", pct0],
+    ["Proj this week", (m) => m.proj, "hi", f1], ["Proj rest of season", (m) => m.rosProj, "hi", f1], ["Proj playoff weeks", (m) => m.poProj, "hi", f1],
+    ["Season proj", (m) => m.seasonProj, "hi", f1],
     ["Snap %", (m) => m.snap, "hi", pct0], ["Target %", (m) => m.tgt, "hi", pct0], ["Rush %", (m) => m.rush, "hi", pct0], ["Red zone %", (m) => m.rz, "hi", pct0],
     ["Pos rank", (m) => m.posRank, "lo", (v) => `#${Math.round(v)}`], ["PPR rank", (m) => m.pprRank, "lo", (v) => `#${Math.round(v)}`],
     ["Rostered", (m) => m.own, "hi", pct0], ["Started", (m) => m.start, "hi", pct0], ["Trade value", (m) => m.value, "hi", fmtVal],
@@ -5452,15 +5607,29 @@ function renderCompare(ids, target) {
   const head = `<tr><th></th>${M.map((m) => `<th class="cmp-p">${headshot({ id: m.id, name: m.name, posId: m.posId, proId: m.proId }, 44)}<strong>${esc(m.name)}</strong></th>`).join("")}</tr>`;
   const season = spec.map((sp) => { const vals = M.map((m) => sp[1](m)); return `<tr><td>${sp[0]}</td>${M.map((m) => cell(m, sp, vals)).join("")}</tr>`; }).join("");
   // Weekly: points each week, the best of the group highlighted.
-  const weeksN = Math.max(1, state.base.current), wkRows = [];
+  const wkRows = [], cur = state.base.current, poWk = new Set(playoffPeriods().map((x) => x.wk));
   const wins = M.map(() => 0);
-  for (let w = 1; w <= weeksN; w++) {
+  for (let w = 1; w < cur; w++) {
     const v = M.map((m) => m.byWeek[w]), nums = v.filter((x) => x != null), top = nums.length > 1 ? Math.max(...nums) : null;
     if (top != null && new Set(nums).size > 1) v.forEach((x, i) => { if (x === top) wins[i]++; });
     if (!nums.length) continue;
     wkRows.push(`<tr><td>Wk ${w}</td>${v.map((x) => (x == null ? `<td class="muted">–</td>` : `<td class="${top != null && x === top && new Set(nums).size > 1 ? "best" : ""}">${f1(x)}</td>`)).join("")}</tr>`);
   }
-  const weekly = wkRows.length ? `<table class="cmp-table"><thead><tr><th>Week</th>${M.map((m) => `<th>${esc(shortName(m.name))}</th>`).join("")}</tr></thead><tbody>${wkRows.join("")}<tr class="cmp-sum"><td>Weeks won</td>${wins.map((n) => `<td>${n}</td>`).join("")}</tr></tbody></table>` : `<p class="muted small">No weekly stats yet.</p>`;
+  // This week and the rest of the season: opponent (colored by matchup) and ESPN's projection, or his real
+  // points once this week's game is done.
+  const futRows = [], futTot = M.map(() => 0);
+  (M[0]?.future || []).forEach((_, i) => {
+    const xs = M.map((m) => m.future[i]), wk = xs[0].wk;
+    const v = xs.map((f, j) => (f.wk === cur && M[j].byWeek[f.sp] != null ? M[j].byWeek[f.sp] : f.bye ? null : f.proj));
+    v.forEach((x, j) => { if (x != null) futTot[j] += x; });
+    const nums = v.filter((x) => x != null), top = nums.length > 1 && new Set(nums).size > 1 ? Math.max(...nums) : null;
+    futRows.push(`<tr class="cmp-fut ${wk === cur ? "cmp-cur" : ""}"><td>Wk ${wk}${poWk.has(wk) ? ` <span class="cmp-po" title="Fantasy playoffs">PO</span>` : ""}</td>${xs.map((f, j) => (f.bye ? `<td class="muted">BYE</td>`
+      : `<td class="${top != null && v[j] === top ? "best" : ""}">${f.opp != null ? `<span class="rk ${rkCls(f.rank)}" title="${f.rank ? `${ordinal(f.rank)} toughest vs ${esc(M[j].pos)}s` : ""}">${f.home ? "" : "@"}${esc(PRO[f.opp] || "")}</span> ` : ""}${v[j] == null ? "–" : `<i>${f1(v[j])}</i>`}</td>`)).join("")}</tr>`);
+  });
+  const weekly = wkRows.length || futRows.length ? `<table class="cmp-table cmp-weeks"><thead><tr><th>Week</th>${M.map((m) => `<th>${esc(shortName(m.name))}</th>`).join("")}</tr></thead><tbody>
+    ${wkRows.join("")}${wkRows.length ? `<tr class="cmp-sum"><td>Weeks won</td>${wins.map((n) => `<td>${n}</td>`).join("")}</tr>` : ""}
+    ${futRows.length ? `<tr class="cmp-split"><td colspan="${M.length + 1}">Projected by ESPN · this week highlighted</td></tr>${futRows.join("")}<tr class="cmp-sum"><td>Projected</td>${futTot.map((x) => `<td>${f1(x)}</td>`).join("")}</tr>` : ""}
+    </tbody></table>` : `<p class="muted small">No weekly stats yet.</p>`;
 
   // The verdict on each player who isn't already yours.
   const fits = M.map((m) => (String(m.ownerId) === me ? null : cmpFit(m, wk)));
@@ -5472,11 +5641,13 @@ function renderCompare(ids, target) {
       return `<div class="cmp-v"><div class="cmp-vh">${esc(m.name)} <span class="muted small">is on your team</span></div><p class="small">${me2 ? (me2.starter ? `Starting at ${esc(SLOT[me2.slotId] || me2.slot)}.` : me2.slotId === IR ? "On your IR." : "On your bench.") : ""}</p></div>`;
     }
     if (!f) return `<div class="cmp-v"><div class="cmp-vh">${esc(m.name)}</div><p class="muted small">Star your team (☆ on the Roster tab) or sign in to see how he'd fit your lineup.</p></div>`;
-    const [label, cls] = grade(f.gain), x = m;
+    const [label, cls] = grade(f.rosGain), x = m;
     const lines = [];
-    lines.push(f.slot != null && f.displaced ? `Would start at <strong>${esc(SLOT[f.slot])}</strong> over ${plinkNm(f.displaced, false)} (${f1(f.displaced.proj)} proj): <strong class="${cls}">+${f1(f.gain)} pts a week</strong>.`
-      : f.slot != null ? `Would fill an open <strong>${esc(SLOT[f.slot])}</strong> spot: <strong class="pos">+${f1(f.gain)} pts a week</strong>.`
-      : `Wouldn't crack your lineup right now; he'd be depth behind your ${esc(x.pos)}s.`);
+    const plus = (g) => `<strong class="${g >= 1 ? "pos" : g < 0.25 ? "neg" : ""}">+${f1(Math.max(0, g))} pts</strong>`;
+    lines.push(f.slot != null && f.displaced ? `This week he'd start at <strong>${esc(SLOT[f.slot])}</strong> over ${plinkNm(f.displaced, false)} (${f1(f.displaced.proj)} proj): ${plus(f.gain)}.`
+      : f.slot != null ? `This week he'd fill an open <strong>${esc(SLOT[f.slot])}</strong> spot: ${plus(f.gain)}.`
+      : `This week he wouldn't crack your lineup; he'd be depth behind your ${esc(x.pos)}s.`);
+    lines.push(`Rest of the season: ${plus(f.rosGain)} a week to your best lineup${f.poGain != null ? `, ${plus(f.poGain)} a week in the fantasy playoffs` : ""}.`);
     if (f.displaced && x.ppg != null && f.displaced.seasonAvg != null) lines.push(`${f1(x.ppg)} PPG this year vs ${f1(f.displaced.seasonAvg)} for ${esc(shortName(f.displaced.name))}.`);
     lines.push(f.healthy <= f.need ? `You're <strong>thin at ${esc(x.pos)}</strong>: ${f.healthy} healthy for ${f.need} lineup spot${f.need === 1 ? "" : "s"}.` : `You're set at ${esc(x.pos)} (${f.healthy} healthy for ${f.need} spot${f.need === 1 ? "" : "s"}).`);
     if (x.injury) lines.push(`Injury flag: ${esc(injuryInfo(x.injury)[1])}.`);
@@ -5493,16 +5664,17 @@ function renderCompare(ids, target) {
     return `<div class="cmp-v"><div class="cmp-vh">${esc(x.name)} <span class="cmp-badge ${cls}">${label}</span></div>${lines.map((l) => `<p class="small">${l}</p>`).join("")}${action}</div>`;
   }).join("");
   // The bottom line.
-  const best = M.map((m, i) => ({ m, f: fits[i] })).filter((o) => o.f).sort((a, b) => b.f.gain - a.f.gain);
-  const bottom = !best.length ? "" : best.length > 1 && best[0].f.gain - best[1].f.gain >= 0.25
-    ? `${esc(best[0].m.name)} is the better fit for your lineup (+${f1(best[0].f.gain)} vs +${f1(best[1].f.gain)} pts a week).`
-    : best.length > 1 ? `They'd help your lineup about the same (+${f1(best[0].f.gain)} and +${f1(best[1].f.gain)} pts a week).`
-    : `${esc(best[0].m.name)}: ${grade(best[0].f.gain)[0].toLowerCase()} for your lineup (+${f1(best[0].f.gain)} pts a week).`;
+  const best = M.map((m, i) => ({ m, f: fits[i] })).filter((o) => o.f).sort((a, b) => b.f.rosGain - a.f.rosGain);
+  const rg = (o) => f1(Math.max(0, o.f.rosGain));
+  const bottom = !best.length ? "" : best.length > 1 && best[0].f.rosGain - best[1].f.rosGain >= 0.25
+    ? `${esc(best[0].m.name)} is the better fit for your lineup the rest of the way (+${rg(best[0])} vs +${rg(best[1])} pts a week).`
+    : best.length > 1 ? `They'd help your lineup about the same the rest of the way (+${rg(best[0])} and +${rg(best[1])} pts a week).`
+    : `${esc(best[0].m.name)}: ${grade(best[0].f.rosGain)[0].toLowerCase()} for your lineup (+${rg(best[0])} pts a week the rest of the way).`;
   put(`<div class="pm-head"><div><h2 id="cmp-title">${ic("scale")} Compare players</h2>${bottom ? `<div class="cmp-bottom">${bottom}</div>` : ""}<button type="button" class="cmp-other sm" data-cmp-other="${esc(ids[0])}">Compare other</button></div></div>
     <h3 class="pm-sub">Fit with your team</h3><div class="cmp-vs cols-${cols}">${verdicts}</div>
     <h3 class="pm-sub">Season</h3><div class="table-wrap"><table class="cmp-table"><thead>${head}</thead><tbody>${season}</tbody></table></div>
     <h3 class="pm-sub">Week by week</h3><div class="table-wrap">${weekly}</div>
-    <p class="muted small">Fit uses ESPN's projections for this week and the best lineup your roster can field. It's an estimate, not a promise.</p>`);
+    <p class="muted small">Fit uses ESPN's projections for this week and every week left, and the best lineup your roster can field each week; the grade is the rest-of-season gain, with the fantasy playoffs counting 1.5x. Boom: a top-half starter's week at his position; bust: outside the league's starters. It's an estimate, not a promise.</p>`);
   const body = target || $("cmp-body");
   body.querySelectorAll("[data-cmp-add]").forEach((b) => b.addEventListener("click", () => {
     const m = M.find((q) => q.id === b.dataset.cmpAdd);
@@ -7334,9 +7506,11 @@ function renderPlayerModal(d, focusSp, ctx) {
     // Stat sheet: label over value, four to a row; season totals; this week; the last three games.
     const totals = {};
     for (const w of weeks) for (const [k, v] of Object.entries(w.stats || {})) if (typeof v === "number") totals[k] = (totals[k] || 0) + v;
+    const bb = boomBust(p.posId, Object.fromEntries(weeks.map((w) => [w.sp, w.pts])), ensureWeekly(rerender));
     const seasonLine = weeks.length ? gameLine(p.posId, totals) : "";
     const cells = [
       ["Pts", f1(total)], ["GP", games], ["PPG", games ? f1(total / games) : "–"], ["Best", best ? `${f1(best.pts)}<small>wk ${best.sp}</small>` : "–"],
+      ...(bb ? [["Boom", `${pct(bb.boom)}<small>${bb.list.filter((w) => w.k === "boom").length} of ${bb.n}</small>`], ["Bust", `${pct(bb.bust)}<small>${bb.list.filter((w) => w.k === "bust").length} of ${bb.n}</small>`]] : []),
       d.seasonProj ? ["Proj", f1(d.seasonProj)] : null,
       uAvg?.avg ? ["Snap %", pctTxt(uAvg.avg.pct)] : null,
       uAvg?.avg && uAvg.pos !== "QB" ? ["Tgt %", pctTxt(uAvg.avg.share)] : null,
@@ -7358,6 +7532,7 @@ function renderPlayerModal(d, focusSp, ctx) {
     const newsBox = !nd ? "" : !all.length ? "" : `<h3 class="pm-sub">${fresh.length ? `News <span class="badge live">${fresh.length} new</span>` : "Latest news"}</h3>
       <div class="news">${shown.map((n) => newsItem(n)).join("")}</div>${all.length > shown.length ? `<button type="button" class="link-btn pm-allnews" data-pmtab="news">All news (${all.length}) ›</button>` : ""}`;
     pane = `<div class="pm-sheet">${cells.map(([l, v]) => `<div><span>${l}</span><strong>${v}</strong></div>`).join("")}</div>
+      ${bb ? `<div class="pm-bb"><span class="small muted" title="Boom: a top-half starter's week at his position. Bust: a week outside the league's starters at his position.">Boom / bust by week</span>${bbStrip(bb)}<span class="bb-key small muted"><i class="boom"></i>boom <i class="ok"></i>solid <i class="bust"></i>bust</span></div>` : ""}
       ${seasonLine ? `<p class="pm-season small"><span class="muted">Season:</span> ${esc(seasonLine)}</p>` : ""}
       ${newsBox}
       ${gameSection()}
