@@ -965,7 +965,7 @@ table.data.bx-table th, table.data.bx-table td { padding: 6px 6px; font-size: .8
   .field-caption { font-size: .72rem; margin-top: 3px; gap: 2px 6px; white-space: nowrap; overflow: hidden; }
   .field-caption .muted { overflow: hidden; text-overflow: ellipsis; }
   .g-sit { padding: 4px 10px 0; font-size: .75rem; }
-  .g-last { padding: 3px 10px 0; font-size: .7rem; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .g-last { padding: 3px 10px 0; font-size: .7rem; line-height: 1.35; overflow-wrap: anywhere; } /* the whole play, however long */
   .card.game .g-top { padding-bottom: 7px; }
   .g-to { margin-top: 2px; }
   .g-to i { width: 6px; height: 6px; }
@@ -2793,8 +2793,10 @@ button.mx-tds:hover, .mx-tds.pts-active { border-color: var(--accent); }
 .field .td-ez { animation: td-ez-flash 1.4s ease-in-out var(--td-ago, 0s) infinite; }
 .field .td-word { fill: #fff; paint-order: stroke; stroke: rgba(0,0,0,.35); stroke-width: 3px; letter-spacing: 2px;
   animation: td-word-in 1.1s cubic-bezier(.2,.8,.25,1.15) var(--td-ago, 0s) both, td-word-pulse 1.4s ease-in-out calc(var(--td-ago, 0s) + 1.1s) infinite; }
-.field .td-streak { stroke-dasharray: 16 120; animation: td-streak 1.6s linear var(--td-ago, 0s) infinite; filter: drop-shadow(0 0 4px #fff3b0); }
-.field .lp-td { fill: #ffd54a; stroke: rgba(0,0,0,.6); animation: td-tag 1.4s ease-in-out var(--td-ago, 0s) infinite; }
+.field .td-streak { display: none; }
+.field.is-td .td-streak { display: inline; stroke-dasharray: 16 120; animation: td-streak 1.6s linear var(--td-ago, 0s) infinite; filter: drop-shadow(0 0 4px #fff3b0); }
+.field .lp-td { fill: #ffd54a; stroke: rgba(0,0,0,.6); }
+.field.is-td .lp-td { animation: td-tag 1.4s ease-in-out var(--td-ago, 0s) infinite; }
 @keyframes td-ez-flash { 0%, 100% { fill-opacity: 1; } 18% { fill: #fff; fill-opacity: .95; } 45% { fill-opacity: .65; } }
 @keyframes td-word-in { 0% { transform: translateX(-260px); opacity: 0; } 70% { transform: translateX(10px); opacity: 1; } 100% { transform: translateX(0); opacity: 1; } }
 @keyframes td-word-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.12); } }
@@ -2802,3 +2804,28 @@ button.mx-tds:hover, .mx-tds.pts-active { border-color: var(--accent); }
 @keyframes td-tag { 0%, 100% { opacity: 1; } 50% { opacity: .75; } }
 @media (prefers-reduced-motion: reduce) { .field .td-ez, .field .td-word, .field .td-streak, .field .lp-td { animation: none; } .field .td-streak { display: none; } }
 
+/* Boom / bust: weeks he didn't play (hollow, dashed, with an X) and byes (a B) */
+.bb-strip i.dnp, .bb-key i.dnp, .bb-strip i.bye, .bb-key i.bye { display: inline-grid; place-items: center; font-style: normal; font-weight: 800; line-height: 1; }
+.bb-strip i.dnp, .bb-key i.dnp { background: transparent; border: 1.5px dashed #d0453a; color: #d0453a; font-size: 9px; }
+.bb-strip i.bye, .bb-key i.bye { background: transparent; border: 1.5px solid var(--grid); color: var(--muted); font-size: 9px; }
+.bb-key i.dnp, .bb-key i.bye { font-size: 7px; }
+.bb-missed { flex-basis: 100%; color: #b3261e; font-weight: 600; }
+
+/* Live games: Player stats and Scoring feed buttons side by side; the feed scrolls inside the card */
+.bx-btns { display: flex; gap: 8px; }
+.bx-btns .bx-toggle { flex: 1 1 0; min-width: 0; }
+.lf-panel .lf-note { margin: 0 0 6px; }
+.lf-list { max-height: 460px; overflow-y: auto; overscroll-behavior: contain; }
+
+.lf-panel .mf-item { padding: 8px 4px; border-top: 1px solid var(--grid); }
+.lf-panel .mf-item:first-child { border-top: 0; }
+.lf-panel .mf-item.my-row { border-radius: 6px; }
+.lf-panel .mf-top { font-size: .72rem; font-variant-numeric: tabular-nums; }
+.lf-panel .mf-who { display: flex; align-items: center; gap: 6px; font-weight: 700; font-size: .88rem; margin-top: 4px; min-width: 0; }
+.lf-panel .mf-who .pl-link { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lf-panel .mf-who .nm-short { display: none; } .lf-panel .mf-who .nm-full { display: inline; }
+.lf-panel .mf-pts { margin-left: auto; flex: none; font-size: .8rem; font-weight: 800; font-variant-numeric: tabular-nums; border-radius: 8px; padding: 1px 7px; }
+.lf-panel .mf-pts.pos { color: #15803d; background: rgba(22,163,74,.12); }
+.lf-panel .mf-pts.neg { color: #b91c1c; background: rgba(220,38,38,.1); }
+.lf-panel .mf-what { font-size: .8rem; color: var(--ink-2); padding-left: 24px; }
+.lf-panel .mf-text { font-size: .74rem; line-height: 1.35; margin-top: 2px; overflow-wrap: anywhere; }

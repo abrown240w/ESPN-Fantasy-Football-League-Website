@@ -1157,6 +1157,24 @@ function playName(name, mates = [], text = "") {
   for (let k = me.first.length; k >= 2; k--) if (new RegExp(exact(me.first.slice(0, k))).test(text)) return exact(me.first.slice(0, k));
   return exact(me.first[0]);
 }
+// ESPN sometimes swaps a scoring play's play-by-play text for its scoring-summary line, with full names:
+// "Darren Waller 50 Yd pass from Bryce Young (Ryan Fitzgerald PAT blocked)". Rewritten in play-by-play form
+// so the reader below handles it: "B.Young pass to D.Waller for 50 yards, TOUCHDOWN. R.Fitzgerald extra point is BLOCKED."
+const abbrName = (n) => { const ps = n.trim().split(/\s+/); return ps.length < 2 ? n.trim() : `${ps[0][0]}.${ps.slice(1).join(" ")}`; };
+function fromSummary(text) {
+  const m = /^(.+?) (\d+) Yds? (pass from (.+?)|Run|Field Goal)(?: \((.*)\))?\.?$/i.exec(String(text || "").trim());
+  if (!m) return text;
+  const [, who, n, kind, qb, after = ""] = m;
+  let out = /^pass/i.test(kind) ? `${abbrName(qb)} pass to ${abbrName(who)} for ${n} yards, TOUCHDOWN.`
+    : /^run/i.test(kind) ? `${abbrName(who)} rush for ${n} yards, TOUCHDOWN.`
+    : `${abbrName(who)} ${n} yard field goal is GOOD.`;
+  const k = /^(.+?) (Kick|PAT blocked|PAT failed)$/i.exec(after);
+  if (k) out += ` ${abbrName(k[1])} extra point is ${/kick/i.test(k[2]) ? "GOOD" : /blocked/i.test(k[2]) ? "BLOCKED" : "No Good"}.`;
+  const tp = /^(.+?) Pass to (.+?) for Two-Point Conversion$/i.exec(after), tr = /^(.+?) (?:Run|Rush) for Two-Point Conversion$/i.exec(after);
+  if (tp) out += ` TWO-POINT CONVERSION ATTEMPT. ${abbrName(tp[1])} pass to ${abbrName(tp[2])}. ATTEMPT SUCCEEDS.`;
+  else if (tr) out += ` TWO-POINT CONVERSION ATTEMPT. ${abbrName(tr[1])} rushes. ATTEMPT SUCCEEDS.`;
+  return out;
+}
 function playPoints(box, starters, items) {
   const T = box?.teams || {}, home = T.home?.proId, away = T.away?.proId;
   if (!box?.plays?.length || home == null) return [];
@@ -1175,9 +1193,10 @@ function playPoints(box, starters, items) {
     .map((s) => ({ ...s, re: s.p.posId === 16 ? null : playName(s.p.name, mates(s.p.proId), allText), run: { pass: 0, rush: 0, rec: 0, kr: 0, pr: 0, pa: 0, ya: 0 } }));
   const out = [];
   for (const pl of box.plays) {
-    // Drop formation notes, "L.Newman reported in as eligible." and "Direct snap to R.Harvey." from the front.
-    const lead = (s) => s.trim().replace(/^((\([^)]*\)|\S+ reported in as eligible\.|Direct snap to \S+?\.(?=\s))\s*)+/, "");
-    let t = lead(pl.text);
+    // Drop formation notes, "L.Newman reported in as eligible." (or "L.Borom and S.Gill-Howard reported in as
+    // eligible.") and "Direct snap to R.Harvey." from the front.
+    const lead = (s) => s.trim().replace(/^((\([^)]*\)|\S+(?:,? (?:and )?\S+)*? reported in as eligible\.|Direct snap to \S+?\.(?=\s))\s*)+/, "");
+    let t = lead(fromSummary(pl.text));
     const rev = t.lastIndexOf("REVERSED.");
     if (rev >= 0) t = lead(t.slice(rev + 9));
     const noPlay = /No Play/i.test(t);
@@ -1185,7 +1204,7 @@ function playPoints(box, starters, items) {
     const twoOk = /ATTEMPT SUCCEEDS/i.test(two);
     const kick = /^\S+ (kicks|punts)\b/.test(main) ? (/^\S+ punts/.test(main) ? "punt" : "kick") : null;
     const hasBall = kick ? (pl.off === home ? away : home) : pl.off; // who runs the play (receives a kick)
-    const turnAt = main.search(/INTERCEPTED|FUMBLES/), tdAt = main.search(/TOUCHDOWN/);
+    const turnAt = main.search(/INTERCEPTED|FUMBLES/), tdAt = main.search(/TOUCHDOWN(?! NULLIFIED)/);
     const lostTo = main.match(/FUMBLES[^]*?recovered by ([A-Z]{2,3})-/i)?.[1];
     const fumLost = /FUMBLES/.test(main) && lostTo && lostTo !== abbr[hasBall];
     const turnover = /INTERCEPTED/.test(main) || fumLost;
@@ -1198,6 +1217,10 @@ function playPoints(box, starters, items) {
     const play = act && (!act[1] || act[1] === abbr[hasBall]) ? act[2] : main;
     const playYds = (() => {
       const y = yds(play), own = abbr[hasBall];
+      // "for 44 yards, TOUCHDOWN NULLIFIED by Penalty ... Offensive Holding ... enforced at CIN 39": the run
+      // started 44 yards from the goal line, so he's credited with the yards up to the foul (5 here).
+      const nul = play.match(/for (\d+) yards?, TOUCHDOWN NULLIFIED[^]*?PENALTY on ([A-Z]{2,3})-[^]*?enforced at (?:([A-Z]{2,3}) )?(\d+)/);
+      if (nul && nul[2] === own) { const toGoal = nul[3] === own ? 100 - Number(nul[4]) : Number(nul[4]); return Math.max(0, Number(nul[1]) - toGoal); }
       const pen = play.match(/PENALTY on ([A-Z]{2,3})-.*?enforced at (?:([A-Z]{2,3}) )?(\d+)/);
       const end = play.match(/(?:to|at) (?:([A-Z]{2,3}) )?(\d+) for (-?\d+) yards?/);
       if (!pen || pen[1] !== own || !end) return y;
@@ -1230,7 +1253,8 @@ function playPoints(box, starters, items) {
             if (/FUMBLES \((?!Aborted)/.test(main)) { add(106); what.push("Forced fumble"); }
             if (fumLost && lostTo === abbr[D]) { add(96); what.push("Fumble recovery"); if (defTD) { add(104); what.push("Return TD"); } }
           }
-          if (pl.off === opp && /BLOCKED/i.test(main)) { add(97); what.push("Blocked kick"); if (tdAt >= 0) { add(93); what.push("Return TD"); } }
+          // A return TD only if it comes after the block (not the touchdown before a blocked extra point).
+          if (pl.off === opp && /BLOCKED/i.test(main)) { add(97); what.push("Blocked kick"); if (tdAt > main.search(/BLOCKED/i)) { add(93); what.push("Return TD"); } }
           if (kick && hasBall === D && !/BLOCKED/i.test(main)) {
             const k = kick === "punt" ? "pr" : "kr", y = playYds, per = (n) => Math.floor(n / 25);
             const before = run[k]; run[k] += y;
@@ -1260,16 +1284,20 @@ function playPoints(box, starters, items) {
           if (/INTERCEPTED/.test(main)) { add(20); what.push("Interception thrown"); }
           else if (!/incomplete/.test(main) && / to /.test(main)) {
             add(3, y + latY); const b = run.pass; run.pass += y + latY; bonus("pass", b, run.pass);
-            if (offTD) { add(4); if (y >= 40) add(15); if (y >= 50) add(16); }
-            what.unshift(`${offTD ? "TD pass" : "Completion"}, ${y} yds`);
+            if (offTD) { add(4); if (y + latY >= 40) add(15); if (y + latY >= 50) add(16); }
+            what.unshift(`${offTD ? "TD pass" : "Completion"}, ${y + latY} yds`);
           }
         }
         if (has(`pass [^.]*?to ${N}`) && !/incomplete|INTERCEPTED/.test(main)) {
           add(53); add(42, y); const b = run.rec; run.rec += y; bonus("rec", b, run.rec);
-          if (offTD) { add(43); if (y >= 40) add(45); if (y >= 50) add(46); }
-          what.unshift(`${offTD ? "TD catch" : "Catch"}, ${y} yds`);
+          if (offTD && !lat) { add(43); if (y >= 40) add(45); if (y >= 50) add(46); }
+          what.unshift(`${offTD && !lat ? "TD catch" : "Catch"}, ${y} yds`);
         }
-        if (lat && new RegExp(N).test(lat[1]) && !/incomplete|INTERCEPTED/.test(play)) { add(42, latY); const b = run.rec; run.rec += latY; bonus("rec", b, run.rec); what.push(`Lateral, ${latY} yds`); }
+        if (lat && new RegExp(N).test(lat[1]) && !/incomplete|INTERCEPTED/.test(play)) {
+          add(42, latY); const b = run.rec; run.rec += latY; bonus("rec", b, run.rec);
+          if (offTD) { add(43); if (latY >= 40) add(45); if (latY >= 50) add(46); }
+          what.push(`${offTD ? "TD on a lateral" : "Lateral"}, ${latY} yds`);
+        }
         if (scrimmage && has(`^${N} (?!pass|sacked|spiked)`)) {
           add(24, y); const b = run.rush; run.rush += y; bonus("rush", b, run.rush);
           if (offTD) { add(25); if (y >= 40) add(35); if (y >= 50) add(36); }
@@ -1284,7 +1312,8 @@ function playPoints(box, starters, items) {
         if (fg) { const d = Number(fg[1]); if (/GOOD/i.test(fg[2]) && !/no good/i.test(fg[2])) { add(fgId(d)); what.push(`${d}-yd field goal`); } else { add(85); what.push(`Missed ${d}-yd field goal`); } }
         const xp = main.match(new RegExp(`${N} extra point is (GOOD|No Good|BLOCKED|Aborted)`, "i"));
         if (xp) { if (/^good$/i.test(xp[1])) { add(86); what.push("Extra point"); } else { add(88); what.push("Missed extra point"); } }
-        if (kick && hasBall === p.proId && tdAt >= 0 && has(`\\. ${N} `)) { add(kick === "punt" ? 102 : 101); what.push("Return TD"); }
+        // The returner is the one who goes "for 86 yards, TOUCHDOWN" (not the kicker in the extra point after it).
+        if (kick && hasBall === p.proId && tdAt >= 0 && has(`\\. ${N} [^.]*?for \\d+ yards?, TOUCHDOWN`)) { add(kick === "punt" ? 102 : 101); what.push("Return TD"); }
         if (twoOk) {
           if (new RegExp(`^\\s*${N} pass`).test(two)) { add(19); what.push("Two-point pass"); }
           else if (new RegExp(`to ${N}`).test(two)) { add(44); what.push("Two-point catch"); }
@@ -1294,6 +1323,29 @@ function playPoints(box, starters, items) {
       if (Math.abs(pts) >= 0.005) gained.push({ p, t: s.t, pts, what: what.join(" · ") });
     }
     if (gained.length) out.push({ pl, who: gained });
+  }
+  // D/ST yards allowed: the play-by-play tally drifts a little from ESPN's official total (penalties, laterals,
+  // aborted snaps) and the tier is scored on the official number, so settle up against the box score's total.
+  const ty = (box.teamStats || []).find((x) => x.label === "Total yards"), lastPl = box.plays[box.plays.length - 1];
+  for (const s of who) {
+    if (s.p.posId !== 16 || !ty || !s.run.started) continue;
+    const official = Number(ty[s.p.proId === home ? "away" : "home"]);
+    if (!Number.isFinite(official)) continue;
+    const a = tierOf(YA_TIER_IDS, s.run.ya), b = tierOf(YA_TIER_IDS, official);
+    if (a !== b) out.push({ pl: lastPl, who: [{ p: s.p, t: s.t, pts: val(b, s.p) - val(a, s.p), what: `Yards allowed: ${official} (official total)` }] });
+  }
+  // Kick and punt return yards the same way (a holding call during a return, a muff), from the box score's
+  // return totals for the D/ST's team: a point per 25 yards.
+  for (const s of who) {
+    if (s.p.posId !== 16 || !s.run.started) continue;
+    for (const [key, statId, k, label] of [["kickReturns", 117, "kr", "Kick"], ["puntReturns", 119, "pr", "Punt"]]) {
+      const cat = (box.players?.[s.p.proId === home ? "home" : "away"] || []).find((c) => c.key === key);
+      const yi = cat?.labels?.indexOf("YDS") ?? -1;
+      if (!cat || yi < 0) continue;
+      const official = cat.rows.reduce((n, x) => n + (Number(x.stats?.[yi]) || 0), 0);
+      const steps = Math.floor(official / 25) - Math.floor(s.run[k] / 25);
+      if (steps) out.push({ pl: lastPl, who: [{ p: s.p, t: s.t, pts: val(statId, s.p) * steps, what: `${label} return yards: ${official} (official total)` }] });
+    }
   }
   return out;
 }
@@ -1306,14 +1358,42 @@ function scoringFeed(m, maxRows) {
   if (!started) return `${head}<p class="muted small">No starters have played yet this week.</p>`;
   if (!rows.length) return `${head}${loading ? `<div class="loading small"><span class="spinner"></span> Loading plays…</div>` : `<p class="muted small">No points scored by these starters yet.</p>`}`;
   const max = maxRows || state.feedMax || 60;
+  return `${head}<div class="mf-list">${rows.slice(0, max).map(feedItem).join("")}</div>${rows.length > max ? `<button type="button" class="linkish mf-more" id="mf-more">Show more</button>` : ""}`;
+}
+// One play in a scoring feed: when, the score, each starter's points from it and why, and ESPN's play text.
+function feedItem({ pl, who, d }) {
+  const A = d.teams.away, H = d.teams.home;
   const pts = (n) => `<span class="mf-pts ${n < 0 ? "neg" : "pos"}">${n < 0 ? "−" : "+"}${f2(Math.abs(n))}</span>`;
-  return `${head}<div class="mf-list">${rows.slice(0, max).map(({ pl, who, d }) => {
-    const A = d.teams.away, H = d.teams.home;
-    return `<div class="mf-item ${who.some((x) => myRow(x.t.id)) ? "my-row" : ""}">
-      <div class="mf-top muted">${qtr(pl.period)} ${esc(pl.clock)} · ${esc(A.abbr)} ${pl.away ?? ""} @ ${esc(H.abbr)} ${pl.home ?? ""}</div>
-      ${who.map(({ p, t, pts: n, what }) => `<div class="mf-who">${logoImg(t, 18)}${plinkNm(p)}${pts(n)}</div><div class="mf-what">${esc(what)}</div>`).join("")}
-      <div class="mf-text small muted">${esc(pl.text)}</div></div>`;
-  }).join("")}</div>${rows.length > max ? `<button type="button" class="linkish mf-more" id="mf-more">Show more</button>` : ""}`;
+  return `<div class="mf-item ${who.some((x) => myRow(x.t.id)) ? "my-row" : ""}">
+    <div class="mf-top muted">${qtr(pl.period)} ${esc(pl.clock)} · ${esc(A.abbr)} ${pl.away ?? ""} @ ${esc(H.abbr)} ${pl.home ?? ""}</div>
+    ${who.map(({ p, t, pts: n, what }) => `<div class="mf-who">${logoImg(t, 18)}${plinkNm(p)}${pts(n)}</div><div class="mf-what">${esc(what)}</div>`).join("")}
+    <div class="mf-text small muted">${esc(pl.text)}</div></div>`;
+}
+// Live games: every play that changed points for a fantasy starter in this game (any team in the league),
+// newest first. It refreshes with the box score while the game is on; once it's over, anything the plays
+// don't account for shows as one adjustment line per player, as on the Matchup tab.
+function liveFeedPanel(g, L) {
+  const wrap = (html) => `<div class="bx-panel lf-panel">${html}</div>`;
+  ensureBox(g);
+  const d = state.boxes?.[g.id];
+  if (!d || d === "loading") return wrap(`<div class="loading small"><span class="spinner"></span> Loading plays…</div>`);
+  if (d.error) return wrap(`<p class="small muted">${esc(d.error)}</p>`);
+  const pros = [g.home.proId, g.away.proId];
+  const starters = L.players.filter((p) => p.teamId && p.slotId != null && p.slotId !== BENCH && p.slotId !== IR && pros.includes(p.proId)).map((p) => ({ p, t: team(p.teamId) }));
+  if (!starters.length) return wrap(`<p class="small muted">No fantasy starters in this game.</p>`);
+  const found = playPoints(d, starters, state.base.raw.settings?.scoringSettings?.scoringItems || []);
+  const rows = found.map((x) => ({ ...x, d })).reverse();
+  if (g.state === "post") {
+    const last = d.plays?.[d.plays.length - 1] || { period: 4, clock: "0:00" }, adj = [];
+    for (const { p, t } of starters) {
+      if (p.pts == null) continue;
+      const rest = Math.round((p.pts - sum(found.flatMap((x) => x.who.filter((w) => w.p.id === p.id)), (w) => w.pts)) * 100) / 100;
+      if (Math.abs(rest) >= 0.05) adj.push({ p, t, pts: rest, what: "Official scoring adjustment" });
+    }
+    if (adj.length) rows.unshift({ pl: { ...last, text: "After the game: ESPN's official points differ from the plays below (a stat correction, or a play the feed couldn't read)." }, who: adj, d });
+  }
+  if (!rows.length) return wrap(`<p class="small muted">No fantasy points scored by starters in this game yet.</p>`);
+  return wrap(`<p class="small muted lf-note">Every play that changed a fantasy starter's points in this game, newest first.</p><div class="mf-list lf-list">${rows.map(feedItem).join("")}</div>`);
 }
 const qtr = (n) => (n > 4 ? "OT" : `Q${n}`);
 // Every play that changed a starter's points in matchup `m`, newest first (the box scores load in the
@@ -1335,11 +1415,24 @@ function feedRows(m, byPro) {
     if (!d || d === "loading") { loading = true; continue; }
     // Opponent and score from this player's side, as on the game line ("@DAL 21-17").
     const side = (proId) => (d.teams?.home?.proId === proId ? "home" : "away");
-    playPoints(d, starters, items).forEach((x, i) => {
+    const found = playPoints(d, starters, items);
+    let lastAt = 0;
+    found.forEach((x, i) => {
       const [mm, ss] = (x.pl.clock || "0:00").split(":").map(Number);
       const at = Date.parse(x.pl.wall) || Date.parse(g.date) + ((x.pl.period - 1) * 15 + (15 - (mm || 0) - (ss || 0) / 60)) * 3 * 60e3;
+      lastAt = Math.max(lastAt, at);
       rows.push({ ...x, at, i, d, side });
     });
+    // Once the game is over, anything the plays above don't account for (a stat correction, a play the reader
+    // couldn't follow) shows as one line per player, so the feed adds up to ESPN's official score.
+    if (g.state === "post") for (const { p, t } of starters) {
+      if (p.actual == null) continue;
+      const rest = Math.round((p.actual - sum(found.flatMap((x) => x.who.filter((w) => w.p.id === p.id)), (w) => w.pts)) * 100) / 100;
+      if (Math.abs(rest) < 0.05) continue;
+      const last = d.plays?.[d.plays.length - 1] || { period: 4, clock: "0:00" };
+      rows.push({ pl: { ...last, text: "After the game: ESPN's official points for this player differ from the plays above (a stat correction, or a play the feed couldn't read)." },
+        who: [{ p, t, pts: rest, what: "Official scoring adjustment" }], at: lastAt + 1, i: 1e6, d, side });
+    }
   }
   rows.sort((a, b) => b.at - a.at || b.i - a.i);
   return { rows, loading, started: games.size > 0 };
@@ -1502,8 +1595,8 @@ function renderPlayers() {
       // Week by week: opponent (colored by how tough that defense is on the position) and points, scored in
       // past weeks, projected from now on. This week's column is highlighted and scrolled into view.
       const cols = weekCols(WK);
-      if (!cols.some((c) => c.key === f.sort.key) && f.sort.key !== "name" && f.sort.key !== "pos") f.sort = { key: `wk${state.base.current}`, dir: -1 };
-      drawPlayerTable($("pl-list"), ["player", ...(actTeam() ? ["act"] : []), ...(W ? ["watch"] : []), "pos", ...cols], rows, f.sort, w.sp, "No players match those filters.");
+      if (!cols.some((c) => c.key === f.sort.key) && !["name", "pos", "posRank"].includes(f.sort.key)) f.sort = { key: `wk${state.base.current}`, dir: -1 };
+      drawPlayerTable($("pl-list"), ["player", ...(actTeam() ? ["act"] : []), ...(W ? ["watch"] : []), "pos", "posRank", ...cols], rows, f.sort, w.sp, "No players match those filters.");
       const wrap = $("pl-list").querySelector(".table-wrap"), th = wrap?.querySelector("th.wk-cur"), name = wrap?.querySelector("th.pt-player");
       if (wrap && th) wrap.scrollLeft = Math.max(0, th.offsetLeft - (name?.offsetWidth || 0) - th.offsetWidth * 2);
       return;
@@ -1656,7 +1749,24 @@ function boomBust(posId, byWeek, WK) {
   const c = (k) => list.filter((w) => w.k === k).length;
   return { n: list.length, boom: c("boom") / list.length, bust: c("bust") / list.length, list };
 }
-const bbStrip = (bb) => `<div class="bb-strip">${bb.list.map((w) => `<i class="${w.k}" title="Week ${w.sp}: ${f1(w.pts)} (${w.k === "boom" ? "boom" : w.k === "bust" ? "bust" : "solid"}; boom ${f1(w.line.boom)}+, bust under ${f1(w.line.bust)})"></i>`).join("")}</div>`;
+// One square per week so far: boom / solid / bust for games he played, a hollow X for a game his team
+// played without him (injured, inactive, benched), and a "B" for his team's bye.
+const bbWeeks = (bb, proId, played) => {
+  const b = state.base, last = b.scoringPeriodFor(b.current) - 1, sched = state.week?.nfl?.sched?.[proId];
+  const byWk = new Map(bb.list.map((w) => [w.sp, w])), on = new Set(played.map(Number)), out = [];
+  for (let sp = 1; sp <= last; sp++) {
+    const w = byWk.get(sp);
+    if (w) out.push({ sp, k: w.k, w });
+    else if (on.has(sp)) out.push({ sp, k: "ok" });
+    else if (sched && !sched[sp]) out.push({ sp, k: "bye" });
+    else out.push({ sp, k: "dnp" });
+  }
+  return out;
+};
+const bbStrip = (bb, proId, played) => `<div class="bb-strip">${bbWeeks(bb, proId, played).map(({ sp, k, w }) =>
+  k === "bye" ? `<i class="bye" title="Week ${sp}: bye">B</i>`
+  : k === "dnp" ? `<i class="dnp" title="Week ${sp}: didn't play">✕</i>`
+  : `<i class="${k}" title="Week ${sp}: ${w ? `${f1(w.pts)} (${k === "boom" ? "boom" : k === "bust" ? "bust" : "solid"}; boom ${f1(w.line.boom)}+, bust under ${f1(w.line.bust)})` : "played"}"></i>`).join("")}</div>`;
 // One column per fantasy week. Past weeks: points scored; this week: points so far once his game has
 // started, else the projection; later weeks: ESPN's projection.
 function weekCols(WK) {
@@ -1691,16 +1801,27 @@ function weekCols(WK) {
 //  - results: its scoring in games finished by `cutoff`, pulled toward the league average early on;
 //  - roster: the best lineup its current roster can field that week (players' points per game, with byes,
 //    IR and players ruled out, as on the Schedule tab), scaled to the league's real scoring level.
-// The roster view gets 60%, so trades, pickups and injuries move the projections right away. Until this
-// week's rosters have loaded, results alone are used (and everything redraws once they arrive).
-const ROSTER_WEIGHT = 0.6;
+// Until this week's rosters have loaded, results alone are used (and everything redraws once they arrive).
+//
+// How sure to be: each game is a normal draw around those expectations. The settings below were fitted by
+// replaying the 2024 and 2025 Brown League and 2025 Luxa League seasons week by week (only what was known at
+// the time) and scoring the predictions against what happened:
+//  - roster weight 0.5 (anywhere from 0.3 to 0.6 did about as well);
+//  - the spread starts at 0.85x the league's weekly scoring SD for the next game and grows 60% for each week
+//    further out: next week's games are fairly predictable, a month out they're close to coin flips;
+//  - part of that spread (12 points) is a team-strength error shared by all of a team's games in a simulated
+//    season, so a team that's better or worse than expected stays that way.
+// Before this, the model was more confident than a coin flip warranted on single games, and these settings
+// predicted who made the playoffs about 13% better (Brier 0.144 -> 0.125).
+const MODEL = { rosterWeight: 0.5, spread: 0.85, growth: 0.6, tau: 12 };
+const ROSTER_WEIGHT = MODEL.rosterWeight;
 function strengthModel(cutoff = Infinity) {
   const b = state.base, cur = ensureCurrentRosters();
   const done = (m) => m.matchupPeriodId <= cutoff && m.winner && m.winner !== "UNDECIDED";
   const reg = b.schedule.filter((m) => m.matchupPeriodId <= b.regWeeks && m.away && done(m));
   const key = `${b.season}:${cutoff}:${reg.length}`;
   const cache = (state.strength ||= {}), hit = cache[cutoff];
-  if (hit && hit.key === key && hit.cur === cur && hit.b === b) return hit;
+  if (hit && hit.key === key && hit.cur === cur && hit.b === b && hit.wkd === state.weekly?.data && hit.inj === state.injuries) return hit;
   const ids = Object.keys(b.teams);
   const sc = Object.fromEntries(ids.map((id) => [id, []]));
   for (const m of reg) for (const s of [m.home, m.away]) sc[s.teamId]?.push(s.totalPoints);
@@ -1713,16 +1834,28 @@ function strengthModel(cutoff = Infinity) {
     const full = Object.fromEntries(cur.sides.map((s) => [String(s.teamId), optimalLineup(s.players, b.slotCounts, healthy).points]));
     const vals = Object.values(full).filter((x) => x > 0);
     const k = all.length && vals.length ? lg / (sum(vals) / vals.length) : 1; // projections run high: match the league's real level
-    const byWeek = {};
-    for (const { wk, games } of schedOutlook()?.weeks || []) for (const g of games) { (byWeek[wk] ||= {})[g.home] = g.h.pts; byWeek[wk][g.away] = g.a.pts; }
-    roster = (id, wk) => { const v = byWeek[wk]?.[id] ?? full[id]; return v == null ? null : k * v; };
+    // Any week, playoffs included, the Schedule tab's way (ESPN's weekly numbers, byes, injury returns),
+    // worked out once per team and week: the simulations ask thousands of times.
+    const O = schedOutlook(), memo = new Map();
+    roster = (id, wk) => {
+      if (wk == null || !O) return full[id] == null ? null : k * full[id];
+      const key2 = `${id}:${wk}`;
+      if (!memo.has(key2)) memo.set(key2, O.teamWeek(id, wk).pts);
+      return k * memo.get(key2);
+    };
   }
   const exp = (id, wk) => {
     const r = roster?.(String(id), wk);
     if (r == null) return res(id);
     return all.length ? ROSTER_WEIGHT * r + (1 - ROSTER_WEIGHT) * res(id) : r;
   };
-  return (cache[cutoff] = { key, cur, b, exp, sd, rosters: !!roster });
+  // The first week not yet played (as of the cutoff); spreads grow with the distance from it.
+  const open = b.schedule.filter((m) => m.matchupPeriodId > (cutoff === Infinity ? 0 : cutoff) && !(m.winner && m.winner !== "UNDECIDED")).map((m) => m.matchupPeriodId);
+  const nextWk = open.length ? Math.min(...open) : b.current;
+  const spread = (wk) => MODEL.spread * sd * (1 + MODEL.growth * Math.max(0, (wk ?? nextWk) - nextWk)); // a team's total spread that week
+  const tau = Math.min(MODEL.tau, MODEL.spread * sd * 0.9);
+  const noise = (wk) => Math.sqrt(Math.max(1, spread(wk) ** 2 - tau ** 2)); // the part that's fresh each game
+  return (cache[cutoff] = { key, cur, b, exp, sd, spread, noise, tau, rosters: !!roster, wkd: state.weekly?.data, inj: state.injuries });
 }
 
 // ---------- Playoff odds (Standings) ----------
@@ -1736,7 +1869,7 @@ function playoffOdds() {
   const isDone = (m) => m.winner && m.winner !== "UNDECIDED";
   const key = `${b.season}:${reg.filter(isDone).length}`, M = strengthModel();
   if (state.odds?.key === key && state.odds.M === M) return state.odds;
-  const ids = Object.keys(b.teams), lgSd = M.sd;
+  const ids = Object.keys(b.teams);
   const left = reg.filter((m) => !isDone(m));
   const bracket = 2 ** Math.ceil(Math.log2(spots)), byes = Math.min(spots, bracket - spots);
   let seed = 12345;
@@ -1747,8 +1880,10 @@ function playoffOdds() {
   for (let n = 0; n < N; n++) {
     const w = {}, pf = {};
     for (const id of ids) { const t = b.teams[id]; w[id] = t.wins + 0.5 * t.ties; pf[id] = t.pf; }
+    const off = Object.fromEntries(ids.map((id) => [id, M.tau * normal()])); // this season's "really better/worse than expected"
     for (const m of left) {
-      const h = M.exp(m.home.teamId, m.matchupPeriodId) + lgSd * normal(), a = M.exp(m.away.teamId, m.matchupPeriodId) + lgSd * normal();
+      const wk = m.matchupPeriodId;
+      const h = M.exp(m.home.teamId, wk) + off[m.home.teamId] + M.noise(wk) * normal(), a = M.exp(m.away.teamId, wk) + off[m.away.teamId] + M.noise(wk) * normal();
       pf[m.home.teamId] += h; pf[m.away.teamId] += a;
       if (h > a) w[m.home.teamId]++; else w[m.away.teamId]++;
     }
@@ -2578,18 +2713,50 @@ function schedOutlook() {
   for (const [pos, m] of Object.entries(oprk)) { const v = Object.values(m).map((x) => x?.[1]).filter(Number.isFinite); posAvg[pos] = v.length ? sum(v) / v.length : null; }
   const weeks = [];
   const decided = (m) => m.winner && m.winner !== "UNDECIDED";
+  // The league's weekly scoring spread so far (how sure to be about each game; see MODEL).
+  const played = b.schedule.filter((m) => m.matchupPeriodId <= b.regWeeks && m.away && decided(m)).flatMap((m) => [m.home.totalPoints, m.away.totalPoints]);
+  const lgAvg = played.length ? sum(played) / played.length : 100;
+  const lgSd = played.length > 2 ? Math.sqrt(sum(played.map((x) => (x - lgAvg) ** 2)) / (played.length - 1)) : 25;
   for (let wk = b.current; wk <= b.regWeeks; wk++) {
     const ms = b.schedule.filter((m) => m.matchupPeriodId === wk && m.away);
     if (ms.length && !ms.every(decided)) weeks.push(wk);
   }
+  // ESPN's week-by-week projections and the Injury Report's return estimates, both loaded in the background
+  // (everything that uses this redraws when they arrive).
+  const WK = ensureWeekly(() => { if (["schedule", "playoffs", "season"].includes(state.tab)) render(); });
+  const D = ensureInjuries();
+  ensureUsage(); // games missed so far, for the IR estimate
+  const K = D && !D.error ? injuryKit(D, cur) : null, retMemo = new Map();
+  // The fantasy week an injured player should be back (a number), "season", null if there's no estimate,
+  // undefined if he isn't on the injury report.
+  const back = (p) => {
+    const id = String(p.id);
+    if (!K?.byId.has(id)) return undefined;
+    if (!retMemo.has(id)) retMemo.set(id, K.enrich(K.byId.get(id)).ret ?? null);
+    return retMemo.get(id);
+  };
   // One player's expected points in a week, and why it's zero when it is.
+  //  - Injured: zero until his estimated return week, then full value. On IR with no estimate: zero.
+  //  - Healthy: 70% ESPN's projection for that week, 30% his points per game adjusted for the opponent
+  //    (how many points that defense allows to his position, within ±20%). Without an ESPN number, all his own.
   const expect = (p, wk) => {
-    if (p.slotId === IR || /INJURY_RESERVE|SUSPENSION/.test(p.injury || "")) return { pts: 0, why: "IR" };
-    if (wk === b.current && WONT_PLAY.test(p.injury || "")) return { pts: 0, why: "out" };
     const sp = b.scoringPeriodFor(wk), sched = nfl.sched?.[p.proId], g = sched?.[sp];
     if (sched && !g) return { pts: 0, why: "bye" };
+    const r = back(p), onIR = p.slotId === IR || /INJURY_RESERVE/.test(p.injury || "");
+    const backBy = typeof r === "number" && r <= wk;
+    const e = WK?.players?.[p.id]?.j?.[sp];
+    if (r === "season") return { pts: 0, why: "IR" };
+    if (typeof r === "number" && wk < r) return { pts: 0, why: onIR ? "IR" : "out", back: r };
+    // On IR with no return estimate: out, unless ESPN projects him to play that week.
+    if (r == null && (onIR || /SUSPENSION/.test(p.injury || "")) && !(e > 0)) return { pts: 0, why: "IR" };
+    if (wk === b.current && WONT_PLAY.test(p.injury || "") && !backBy) return { pts: 0, why: "out" };
     const ppg = p.seasonAvg ?? p.proj ?? 0, o = g ? oprk[p.posId]?.[g[0]] : null, avg = posAvg[p.posId];
-    return { pts: ppg * (o && avg ? Math.max(0.8, Math.min(1.2, o[1] / avg)) : 1) };
+    const own = ppg * (o && avg ? Math.max(0.8, Math.min(1.2, o[1] / avg)) : 1);
+    if (e == null) return { pts: own };
+    // ESPN projecting zero on a game week means it expects him out: trusted for the next two weeks only.
+    // (It projects zero for the rest of the season for anyone on IR, so a return estimate overrides it.)
+    if (e === 0) return wk <= b.current + 1 && !backBy ? { pts: 0, why: "out" } : { pts: own };
+    return { pts: 0.7 * e + 0.3 * own };
   };
   const sides = Object.fromEntries(cur.sides.map((s) => [String(s.teamId), s]));
   // Who'd normally start (season points per game): the ones whose absence is worth pointing out.
@@ -2607,11 +2774,11 @@ function schedOutlook() {
     games: b.schedule.filter((m) => m.matchupPeriodId === wk && m.away).map((m) => {
       const h = teamWeek(String(m.home.teamId), wk), a = teamWeek(String(m.away.teamId), wk);
       // Less certain the further out it is (rosters change), and never a sure thing.
-      const wp = Math.max(0.03, Math.min(0.97, normCdf((h.pts - a.pts) / (38 + 3 * (wk - b.current)))));
+      const wp = Math.max(0.03, Math.min(0.97, normCdf((h.pts - a.pts) / (Math.SQRT2 * MODEL.spread * lgSd * (1 + MODEL.growth * (wk - weeks[0]))))));
       return { home: String(m.home.teamId), away: String(m.away.teamId), h, a, wp };
     }),
   }));
-  return { weeks: out };
+  return { weeks: out, teamWeek };
 }
 const schCls = (wp) => (wp >= 0.6 ? "easy" : wp <= 0.4 ? "tough" : "");
 function renderSchedule() {
@@ -2674,7 +2841,7 @@ function renderSchedule() {
         ${done.map((x) => (x.bye ? `<td class="num muted">–</td>` : `<td class="num"><span class="sch-cell done ${resCls(x.res)}" title="Week ${x.wk} vs ${esc(team(x.opp).name)}: ${f2(x.ms)}–${f2(x.os)}">${esc(team(x.opp).abbrev || team(x.opp).name.slice(0, 4))}<small>${x.res} ${Math.round(x.ms)}–${Math.round(x.os)}</small></span></td>`)).join("")}
         ${list.map((x) => (x.bye ? `<td class="num muted">–</td>` : `<td class="num"><span class="sch-cell ${schCls(x.wp)}" title="Week ${x.wk} vs ${esc(team(x.opp).name)}: ${f1(x.me.pts)}–${f1(x.them.pts)}${x.me.missing.length ? ` · without ${x.me.missing.map((m) => shortName(m.p.name)).join(", ")}` : ""}">${esc(team(x.opp).abbrev || team(x.opp).name.slice(0, 4))}<small>${pct(x.wp)}</small></span></td>`)).join("")}
         <td class="num"><strong>${f1(expW(list))}</strong></td></tr>`).join("")}</tbody></table></div>
-    <p class="muted small">Expected scores use each player's points per game this season, adjusted for how that week's NFL opponent defends his position, and the best lineup his team can field without players on bye or on IR.</p>`;
+    <p class="muted small">Expected scores come from the best lineup each team can field that week: each player counts 70% ESPN's projection for that week and 30% his points per game this season, adjusted for how that NFL opponent defends his position. Players on bye count zero, and injured players count zero until the week the Injury Report expects them back.</p>`;
   $("sch-team").addEventListener("change", (e) => { state.schedTeam = e.target.value; renderSchedule(); });
   el.querySelectorAll("[data-schgame]").forEach((r) => r.addEventListener("click", async (e) => {
     if (e.target.closest("[data-tpop]")) return;
@@ -2704,7 +2871,7 @@ function playoffBracket() {
   const real = po.some((m) => m.playoffTierType === "WINNERS_BRACKET");
   // Each game's favorite: season scoring blended with current rosters (strengthModel, as in the playoff odds).
   const M = strengthModel();
-  const winP = (a, c, wk) => normCdf((M.exp(a, wk) - M.exp(c, wk)) / (M.sd * Math.SQRT2));
+  const winP = (a, c, wk) => normCdf((M.exp(a, wk) - M.exp(c, wk)) / (M.spread(wk) * Math.SQRT2));
   // Every team in seed order: ESPN's once the bracket is set, otherwise the projected finish.
   let order, chance = {};
   if (real) order = Object.values(b.teams).sort((x, y) => (x.seed || 99) - (y.seed || 99)).map((t) => String(t.id));
@@ -2828,7 +2995,8 @@ function simulateFinish(cutoff, runs = 2000) {
   const ids = Object.keys(b.teams), N = ids.length;
   const known = (m) => m.matchupPeriodId <= cutoff && m.winner && m.winner !== "UNDECIDED";
   // Strength: results up to the cutoff blended with today's rosters (strengthModel).
-  const M = strengthModel(cutoff), sd = M.sd;
+  const M = strengthModel(cutoff);
+  let off = {}; // per simulated season: each team's shared strength error
   let seed = 98765 + cutoff;
   const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
   const normal = () => { let u = 0; while (!u) u = rnd(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * rnd()); };
@@ -2838,7 +3006,7 @@ function simulateFinish(cutoff, runs = 2000) {
   const play = (tier, wk, a, c) => {
     const g = tier && realGame(tier, wk, a, c);
     if (g) return g.winner === "HOME" ? String(g.home.teamId) : String(g.away.teamId);
-    return M.exp(a, wk) + sd * normal() >= M.exp(c, wk) + sd * normal() ? a : c;
+    return M.exp(a, wk) + off[a] + M.noise(wk) * normal() >= M.exp(c, wk) + off[c] + M.noise(wk) * normal() ? a : c;
   };
   const size = 2 ** Math.ceil(Math.log2(spots)), rounds = Math.log2(size);
   const listed = [...new Set(playoffPeriods().map((p) => p.wk))];
@@ -2848,10 +3016,11 @@ function simulateFinish(cutoff, runs = 2000) {
   for (let n = 0; n < runs; n++) {
     // Regular season: record, then points for (the leagues' tiebreaker).
     const w = Object.fromEntries(ids.map((id) => [id, 0])), pf = Object.fromEntries(ids.map((id) => [id, 0]));
+    off = Object.fromEntries(ids.map((id) => [id, M.tau * normal()]));
     for (const m of reg) {
       const h = String(m.home.teamId), a = String(m.away.teamId);
       if (known(m)) { pf[h] += m.home.totalPoints || 0; pf[a] += m.away.totalPoints || 0; if (m.winner === "HOME") w[h]++; else if (m.winner === "AWAY") w[a]++; else { w[h] += 0.5; w[a] += 0.5; } continue; }
-      const hs = M.exp(h, m.matchupPeriodId) + sd * normal(), as = M.exp(a, m.matchupPeriodId) + sd * normal();
+      const wk = m.matchupPeriodId, hs = M.exp(h, wk) + off[h] + M.noise(wk) * normal(), as = M.exp(a, wk) + off[a] + M.noise(wk) * normal();
       pf[h] += hs; pf[a] += as; w[hs >= as ? h : a]++;
     }
     const order = [...ids].sort((x, y) => w[y] - w[x] || pf[y] - pf[x]);
@@ -3143,7 +3312,7 @@ function playKind(type, text) {
 }
 // A touchdown that counted (not one wiped out by a penalty).
 const isTdPlay = (lp, text) => !!lp && (/touchdown/i.test(lp.type || "") || /TOUCHDOWN/.test(text || "")) && !/NULLIFIED|REVERSED/i.test(text || "");
-const TD_HOLD_MS = 15000;
+const TD_HOLD_MS = 15000, TD_CELEBRATE_MS = 45000;
 // The play to draw for a game: the latest one, or the last real one if play is stopped. A touchdown stays
 // up for 15 seconds after the next play (the extra point, the kickoff) comes in, so it isn't missed.
 function shownPlay(g) {
@@ -3230,9 +3399,19 @@ function fieldGraphic(g) {
   // Sized to fit (about 100 of the end zone's 120 units long, 60% of its width) and clipped to it.
   // A touchdown: which end zone it was scored in (0 = home goal line, drawn on the right), and how long ago
   // it first showed, so the animation carries on where it was when the graphic redraws.
-  const tdShown = shown?.td && isTdPlay(shown.lp, shown.text) ? shown.td : null;
+  // The celebration runs for 45 seconds from when the touchdown first showed. ESPN often keeps a touchdown as
+  // the last play for minutes (the TV break, the extra point, halftime), and the screen only redraws when new
+  // data comes in, so a redraw is set for when it ends; after that it's drawn as a plain (gold) touchdown.
+  const tdHeld = shown?.td && isTdPlay(shown.lp, shown.text) ? shown.td : null;
+  const tdAgo = tdHeld ? Date.now() - tdHeld.at : 0;
+  const tdShown = tdHeld && tdAgo < TD_CELEBRATE_MS ? tdHeld : null;
   const tdEz = tdShown ? (shown.lp.end <= 50 ? "h" : "a") : null;
-  const tdAgo = tdShown ? Date.now() - tdShown.at : 0;
+  if (tdShown && !(state.tdRedraw ||= {})[g.id]) {
+    state.tdRedraw[g.id] = setTimeout(() => {
+      delete state.tdRedraw[g.id];
+      if (state.tab === "live") keepState($("view-live"), renderLive);
+    }, TD_CELEBRATE_MS - tdAgo + 250);
+  }
   const ezText = (cx, abbr, flip, x0) => {
     const [mx, my] = P(cx, 90), s = flip ? -1 : 1;
     const [ax, ay] = P(cx, 90 - s), [bx, by] = P(cx + s, 90); // one unit along the text, one unit "down" the letters
@@ -3773,7 +3952,8 @@ function renderLive() {
       ${pinned ? "" : stickBar(`<span class="sb-team"><img src="${esc(g.away.logo)}" alt="" width="18" height="18">${esc(g.away.abbr)}</span><strong>${sbScore(g.away)}</strong><span class="sb-mid">${g.state === "in" ? esc(g.detail) : g.state === "post" ? "Final" : esc(kickoff(g))}${g.state === "in" && g.downDistance ? ` · ${esc(g.downDistance.replace(/ at .*/, ""))}` : ""}</span><strong>${sbScore(g.home)}</strong><span class="sb-team">${esc(g.home.abbr)}<img src="${esc(g.home.logo)}" alt="" width="18" height="18"></span>`)}
       <div class="collapse ${open ? "open" : ""}" ${open ? "" : "inert"}><div class="collapse-inner">
       ${pinned ? "" : `${graphic}${sit}${lastPlay}`}
-      ${g.state === "pre" ? "" : `<button type="button" class="bx-toggle ${state.boxUi[g.id]?.open ? "open" : ""}" data-bx="${esc(g.id)}" data-toggle="1" aria-expanded="${!!state.boxUi[g.id]?.open}">${ic("chart-bar")} Player stats <span class="caret">▾</span></button>`}
+      ${g.state === "pre" ? "" : `<div class="bx-btns"><button type="button" class="bx-toggle ${state.boxUi[g.id]?.open ? "open" : ""}" data-bx="${esc(g.id)}" data-toggle="1" aria-expanded="${!!state.boxUi[g.id]?.open}">${ic("chart-bar")} Player stats <span class="caret">▾</span></button><button type="button" class="bx-toggle ${state.liveFeedOpen?.[g.id] ? "open" : ""}" data-lfeed="${esc(g.id)}" aria-expanded="${!!state.liveFeedOpen?.[g.id]}">${ic("clipboard-list")} Scoring feed <span class="caret">▾</span></button></div>`}
+      ${state.liveFeedOpen?.[g.id] ? liveFeedPanel(g, L) : ""}
       ${state.boxUi[g.id]?.open ? boxPanel(g, rosteredBy) : ""}
       ${g.state === "post" ? "" : wxLine(wxGame(g.home.proId, L.sp))}
       <div class="lv-players mx">${playerRows(g)}</div>
@@ -3830,6 +4010,11 @@ function renderLive() {
     b.addEventListener("click", go);
     b.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); } });
   });
+  el.querySelectorAll("[data-lfeed]").forEach((b) => b.addEventListener("click", () => {
+    const open = (state.liveFeedOpen ||= {});
+    open[b.dataset.lfeed] = !open[b.dataset.lfeed];
+    keepState(el, renderLive);
+  }));
   // Box score: open/close, Player/Team stats, and which team's players.
   el.querySelectorAll("[data-bx]").forEach((b) => b.addEventListener("click", () => {
     const ui = (state.boxUi[b.dataset.bx] ||= { open: false, view: "players", side: "away" });
@@ -6289,7 +6474,7 @@ function ensureInjuries() {
     fetchInjuries()
       .then((x) => { if (state.base === base) state.injuries = { ...x, at: Date.now() }; })
       .catch((e) => { if (state.base === base) state.injuries = { error: e.message, at: Date.now(), players: [], depth: {} }; })
-      .finally(() => { if (state.base === base && (state.tab === "injuries" || state.tab === "players")) render(); });
+      .finally(() => { if (state.base === base && ["injuries", "players", "schedule", "playoffs", "season"].includes(state.tab)) render(); });
   }
   return d && d !== "loading" ? d : null;
 }
@@ -7148,8 +7333,12 @@ async function fetchPlayer(id, season) {
     throw new ApiError("no_function", "Couldn't reach the player function. Make sure netlify/functions/player.mjs is uploaded.");
   }
   if (!res.ok) throw new ApiError(body.error, body.message || `Request failed (${res.status})`);
-  return body;
+  return playedOnly(body);
 }
+// ESPN lists a week he sat out (injured, inactive) as a game with 0 points and no stats at all. Those are
+// dropped, so they count as missed games everywhere (game log, games played, points per game, boom/bust,
+// compare) instead of as 0-point games.
+const playedOnly = (d) => ({ ...d, weeks: (d.weeks || []).filter((w) => Object.keys(w.stats || {}).length > 0) });
 
 // A player's game log from an earlier season. ESPN only has it through a league that existed that year, so
 // this tries the league on screen, then the others (they all score the same way).
@@ -7159,7 +7348,7 @@ async function fetchPastPlayer(id, season) {
   for (const lid of ids) {
     try {
       const res = await fetch(`/api/player?${new URLSearchParams({ id, leagueId: lid, season })}`);
-      if (res.ok) return await res.json();
+      if (res.ok) return playedOnly(await res.json());
     } catch { /* try the next league */ }
   }
   throw new Error(`No ${season} game log for him.`);
@@ -7611,7 +7800,7 @@ function renderPlayerModal(d, focusSp, ctx) {
     const newsBox = !nd ? "" : !all.length ? "" : `<h3 class="pm-sub">${fresh.length ? `News <span class="badge live">${fresh.length} new</span>` : "Latest news"}</h3>
       <div class="news">${shown.map((n) => newsItem(n)).join("")}</div>${all.length > shown.length ? `<button type="button" class="link-btn pm-allnews" data-pmtab="news">All news (${all.length}) ›</button>` : ""}`;
     pane = `<div class="pm-sheet">${cells.map(([l, v]) => `<div><span>${l}</span><strong>${v}</strong></div>`).join("")}</div>
-      ${bb ? `<div class="pm-bb"><span class="small muted" title="Boom: a top-half starter's week at his position. Bust: a week outside the league's starters at his position.">Boom / bust by week</span>${bbStrip(bb)}<span class="bb-key small muted"><i class="boom"></i>boom <i class="ok"></i>solid <i class="bust"></i>bust</span></div>` : ""}
+      ${bb ? `<div class="pm-bb"><span class="small muted" title="Boom: a top-half starter's week at his position. Bust: a week outside the league's starters at his position.">Boom / bust by week</span>${bbStrip(bb, p.proId, weeks.map((w) => w.sp))}<span class="bb-key small muted"><i class="boom"></i>boom <i class="ok"></i>solid <i class="bust"></i>bust <i class="dnp">✕</i>didn't play <i class="bye">B</i>bye</span>${(() => { const n = bbWeeks(bb, p.proId, weeks.map((w) => w.sp)).filter((x) => x.k === "dnp").length; return n ? `<span class="small bb-missed">Missed ${n} game${n === 1 ? "" : "s"} · boom/bust % counts only games played</span>` : ""; })()}</div>` : ""}
       ${seasonLine ? `<p class="pm-season small"><span class="muted">Season:</span> ${esc(seasonLine)}</p>` : ""}
       ${newsBox}
       ${gameSection()}
