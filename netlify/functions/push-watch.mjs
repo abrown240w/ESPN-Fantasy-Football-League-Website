@@ -238,7 +238,9 @@ async function transactionAlerts(lid, season, st, teams, out) {
   const all = [...byId.values()];
   const first = !st.seenTrades;
   const seenTrades = new Set(st.seenTrades || []), seenWaivers = new Set(st.seenWaivers || []), seenMoves = new Set(st.seenMoves || []);
-  const faMoves = all.filter((t) => t.type === "FREEAGENT" && t.status === "EXECUTED" && !seenMoves.has(t.id));
+  // Pickups and drops outside waivers: free-agent moves, and roster moves made by the League Manager.
+  const addDrop = (t) => (t.items || []).some((i) => i.type === "ADD" || i.type === "DROP");
+  const faMoves = all.filter((t) => (t.type === "FREEAGENT" || t.type === "ROSTER") && t.status === "EXECUTED" && addDrop(t) && !seenMoves.has(t.id));
   for (const t of faMoves) seenMoves.add(t.id);
   const proposalOf = (t) => { let id = t.relatedTransactionId || t.id; for (let i = 0; i < 5; i++) { const r = byId.get(id); if (!r || r.type !== "TRADE_ACCEPT") return id; id = r.relatedTransactionId; } return id; };
 
@@ -251,7 +253,7 @@ async function transactionAlerts(lid, season, st, teams, out) {
     if (seenTrades.has(pid)) continue;
     seenTrades.add(pid);
     const src = (t.items || []).length ? t : byId.get(pid) || t;
-    trades.push({ items: (src.items || []).filter((i) => i.type === "TRADE"), processed: t.status === "EXECUTED" });
+    trades.push({ id: pid, items: (src.items || []).filter((i) => i.type === "TRADE"), processed: t.status === "EXECUTED" });
   }
   // Waivers: report a run once it has finished (nothing new for 5 minutes).
   // Only claims ESPN actually ran: won (EXECUTED) or missed (FAILED_*). Canceled claims aren't reported.
@@ -282,6 +284,16 @@ async function transactionAlerts(lid, season, st, teams, out) {
   }
   for (const tr of trades) {
     const sides = [...new Set(tr.items.flatMap((i) => [i.fromTeamId, i.toTeamId]))].map(String);
+    // League-wide, with the "Adds, drops & trades" alert: who got whom. The teams in it get their own alert below.
+    if (sides.length >= 2) {
+      const gets = sides.map((s) => `${teamName(s)} gets ${tr.items.filter((i) => String(i.toTeamId) === s).map((i) => nm(i.playerId)).join(", ") || "nothing"}`);
+      out.push({
+        league: true, actor: "", skip: sides, kinds: ["adds"], tag: `lgtrade-${tr.id}`,
+        title: tr.processed ? "🤝 Trade processed" : "🤝 Trade accepted",
+        body: `${gets.join(" · ")}${tr.processed ? "" : ". In league review."}`,
+        url: `/?league=${lid}&tab=transactions`,
+      });
+    }
     for (const team of sides) {
       if (!teams.has(team)) continue;
       const get = tr.items.filter((i) => String(i.toTeamId) === team).map((i) => nm(i.playerId));
@@ -462,7 +474,7 @@ async function deliverAll(batch) {
       (h.sent ||= []).push(rec);
       for (const sub of list) {
         if (!n.kinds.some((k) => sub.prefs?.[k] !== false)) { if (String(sub.teamId) === n.teamId) rec.skipped++; continue; }
-        if (n.league ? String(sub.teamId) === n.actor : String(sub.teamId) !== n.teamId) continue;
+        if (n.league ? String(sub.teamId) === n.actor || n.skip?.includes(String(sub.teamId)) : String(sub.teamId) !== n.teamId) continue;
         const body = n.publicBody !== undefined && !sub.owner ? n.publicBody : n.body;
         if (!body) continue;
         const key = n.dup ? `${sub.subscription.endpoint}|${n.dup}` : `${sub.key}|${sends.size}`;

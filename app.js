@@ -3141,10 +3141,24 @@ function playKind(type, text) {
   if (/pass|reception/i.test(t)) return "pass";
   return "rush";
 }
-// The play to draw for a game: the latest one, or the last real one if play is stopped.
+// A touchdown that counted (not one wiped out by a penalty).
+const isTdPlay = (lp, text) => !!lp && (/touchdown/i.test(lp.type || "") || /TOUCHDOWN/.test(text || "")) && !/NULLIFIED|REVERSED/i.test(text || "");
+const TD_HOLD_MS = 15000;
+// The play to draw for a game: the latest one, or the last real one if play is stopped. A touchdown stays
+// up for 15 seconds after the next play (the extra point, the kickoff) comes in, so it isn't missed.
 function shownPlay(g) {
-  const mem = (state.lastRealPlay ||= {});
+  const mem = (state.lastRealPlay ||= {}), holds = (state.tdHold ||= {});
   const lp = g.field?.lastPlay;
+  const hold = holds[g.id];
+  if (lp && isTdPlay(lp, g.lastPlay)) {
+    if (!hold || hold.text !== g.lastPlay) holds[g.id] = { lp, text: g.lastPlay, at: Date.now(), gone: 0 };
+    return { lp, text: g.lastPlay, earlier: false, td: holds[g.id] };
+  }
+  if (hold) {
+    if (!hold.gone) hold.gone = Date.now();
+    if (Date.now() - hold.gone < TD_HOLD_MS) return { lp: hold.lp, text: hold.text, earlier: true, td: hold };
+    delete holds[g.id];
+  }
   if (lp && lp.start != null && playKind(lp.type, g.lastPlay) !== "stoppage") {
     mem[g.id] = { lp, text: g.lastPlay };
     return { lp, text: g.lastPlay, earlier: false };
@@ -3214,13 +3228,21 @@ function fieldGraphic(g) {
   // flat (running up the left end zone, down the right one, tops toward the outside) and mapped onto the
   // tilted field at that spot.
   // Sized to fit (about 100 of the end zone's 120 units long, 60% of its width) and clipped to it.
+  // A touchdown: which end zone it was scored in (0 = home goal line, drawn on the right), and how long ago
+  // it first showed, so the animation carries on where it was when the graphic redraws.
+  const tdShown = shown?.td && isTdPlay(shown.lp, shown.text) ? shown.td : null;
+  const tdEz = tdShown ? (shown.lp.end <= 50 ? "h" : "a") : null;
+  const tdAgo = tdShown ? Date.now() - tdShown.at : 0;
   const ezText = (cx, abbr, flip, x0) => {
     const [mx, my] = P(cx, 90), s = flip ? -1 : 1;
     const [ax, ay] = P(cx, 90 - s), [bx, by] = P(cx + s, 90); // one unit along the text, one unit "down" the letters
     const m = [ax - mx, ay - my, bx - mx, by - my, mx, my].map((v) => +v.toFixed(3)).join(" ");
-    const fs = Math.min(EZ * 0.6, 100 / (0.72 * Math.max(2, String(abbr).length))).toFixed(1);
-    const id = `ez-${esc(g.id)}-${flip ? "h" : "a"}`;
-    return `<clipPath id="${id}">${quad(x0, x0 + EZ, "")}</clipPath><g clip-path="url(#${id})"><text class="ez" style="font-size:${fs}px" transform="matrix(${m})">${esc(abbr)}</text></g>`;
+    const side = flip ? "h" : "a", word = tdEz === side ? "TOUCHDOWN" : abbr;
+    const fs = Math.min(EZ * 0.6, 100 / (0.72 * Math.max(2, String(word).length))).toFixed(1);
+    const id = `ez-${esc(g.id)}-${side}`;
+    // The scoring team's color, flashing, under the word (the end zone belongs to the team scored on).
+    const glow = tdEz === side ? quad(x0, x0 + EZ, `class="td-ez" fill="${esc((flip ? away : home).color || "#16a34a")}"`) : "";
+    return `<clipPath id="${id}">${quad(x0, x0 + EZ, "")}</clipPath><g clip-path="url(#${id})">${glow}<g transform="matrix(${m})"><text class="ez ${tdEz === side ? "td-word" : ""}" style="font-size:${fs}px">${esc(word)}</text></g></g>`;
   };
   parts.push(ezText(EZ / 2, away.abbr, false, 0), ezText(W - EZ / 2, home.abbr, true, W - EZ));
   // A break since the last play, as a strip just above the field: a team timeout in that team's color
@@ -3267,7 +3289,17 @@ function fieldGraphic(g) {
     const xs = X(startA), xe = td && (endA <= 0 || endA >= 100) ? P(x(endA) + (endA >= 100 ? -5 : 5) * S, 96)[0] : X(endA), Y = P(0, 96)[1], mid = (xs + xe) / 2;
     const gained = Math.round((lp.end - lp.start) * offDir);
     const ydsTxt = (n) => `${n > 0 ? "+" : ""}${n} yds`;
-    const tag = (txt, y, cls = "lp-yds") => parts.push(`<text x="${Math.min(W - EZ - 30, Math.max(EZ + 30, mid))}" y="${y}" class="${cls}">${esc(txt)}</text>`);
+    // Who scored: the last name before "for N yards, TOUCHDOWN" ("J.Taylor right end", "... to S.Diggs"),
+    // or the one in front of "12 yd pass from" in ESPN's scoring-summary wording.
+    const scorer = !td ? "" : (/\b([A-Z][a-z]{0,2}\.\s?(?:St\.\s?)?[A-Z][\w'-]+) \d+ (?:yd|yard)s? (?:pass|run|reception)/.exec(text)?.[1]
+      || [...(text.split(/TOUCHDOWN/)[0] || "").matchAll(/\b([A-Z][a-z]{0,2}\.\s?(?:St\.\s?)?[A-Z][\w'-]+)/g)].pop()?.[1] || "").replace(/\.(?=[A-Z])/, ". ");
+    const tdTag = (rest) => `TOUCHDOWN${scorer ? ` · ${scorer}` : ""}${rest ? ` · ${rest}` : ""}`;
+    // Centered over the play, but slid inward so a long label ("TOUCHDOWN · S. Diggs · 34 yds") stays on screen.
+    const tag = (txt, y, cls = "lp-yds") => {
+      const half = Math.min(W / 2 - 6, (String(txt).length * (narrow ? 22 : 24) * 0.6) / 2);
+      const cx = Math.min(W - Math.max(EZ + 30, half + 6), Math.max(Math.max(EZ + 30, half + 6), mid));
+      parts.push(`<text x="${cx.toFixed(1)}" y="${y}" class="${cls}">${esc(txt)}</text>`);
+    };
     const far = Math.abs(xe - xs) >= 4;
     if (kind === "penalty") {
       // Yellow flag at the spot of the foul; dashed line to where the ball was placed.
@@ -3290,7 +3322,8 @@ function fieldGraphic(g) {
       if (Math.abs(xe - xt) >= 4) parts.push(`<path d="M${xt} ${Y + 6} L${xe} ${Y + 6}" stroke="#ef5350" stroke-width="4" marker-end="url(#arrowr-${esc(g.id)})"/>`);
       parts.push(`<path d="M${xt - 9} ${Y - 9} L${xt + 9} ${Y + 9} M${xt + 9} ${Y - 9} L${xt - 9} ${Y + 9}" stroke="#ef5350" stroke-width="5" stroke-linecap="round"/>`);
       const ret = Math.round(Math.abs(lp.end - (flip ?? lp.start)));
-      tag(`${isInt ? "Interception" : "Fumble lost"}${ret >= 2 ? ` · ${ret} yd return` : ""}${/touchdown/i.test(lp.type + text) ? " · TD" : ""}`, Y - 16, "lp-yds lp-to");
+      if (td) tag(tdTag(`${isInt ? "INT" : "fumble"} return${ret >= 2 ? ` ${ret} yds` : ""}`), Y - 16, "lp-yds lp-td");
+      else tag(`${isInt ? "Interception" : "Fumble lost"}${ret >= 2 ? ` · ${ret} yd return` : ""}`, Y - 16, "lp-yds lp-to");
     } else if (kind === "kick") {
       // Kicks: a high arc to where the ball came down, then (if returned) an arrow back the other way.
       const kd = /(?:kicks|punts) (\d+) yards?/i.exec(text)?.[1], fgd = /(\d+) yard field goal/i.exec(text)?.[1];
@@ -3309,7 +3342,8 @@ function fieldGraphic(g) {
         : /field goal/i.test(lp.type) ? `FG${fgd ? ` ${fgd} yds` : ""} ${good ? "✓" : "✗"}`
         : /extra point/i.test(lp.type) ? `XP ${good ? "✓" : "✗"}`
         : `Kickoff${kd ? ` ${kd} yds` : ""}${/touchback/i.test(text) ? " · touchback" : ret >= 1 ? ` · ${ret} yd return` : ""}`;
-      tag(`${what}${hasFlag(text) ? ` · 🚩 ${flagName(text)}` : ""}`, Math.max(16, Y - lift - 8));
+      if (td && !isXp && !isFg) tag(tdTag(`${/punt/i.test(lp.type) ? "punt" : "kick"} return${ret >= 1 ? ` ${ret} yds` : ""}`), Math.max(16, Y - lift - 8), "lp-yds lp-td");
+      else tag(`${what}${hasFlag(text) ? ` · 🚩 ${flagName(text)}` : ""}`, Math.max(16, Y - lift - 8));
     } else if (far) {
       const aerial = kind === "pass" || kind === "incomplete";
       const lift = aerial ? Math.min(38, 14 + Math.abs(xe - xs) / 8) : 0;
@@ -3321,8 +3355,15 @@ function fieldGraphic(g) {
         parts.push(`<path d="M${xe - 9} ${Y - 9} L${xe + 9} ${Y + 9} M${xe + 9} ${Y - 9} L${xe - 9} ${Y + 9}" stroke="#fff" stroke-width="5" stroke-linecap="round"/>`);
         tag("Incomplete", tagY);
       } else {
-        parts.push(`<path d="${path}" fill="none" stroke="${color}" stroke-width="4" marker-end="url(#${color === "#fff" ? "arrow" : "arrowr"}-${esc(g.id)})"/>`);
-        tag(kind === "sack" ? `Sack · ${ydsTxt(gained)}` : kind === "safety" ? "Safety" : `${ydsTxt(gained)}${/touchdown/i.test(lp.type) ? " · TD" : ""}`, tagY, kind === "sack" || kind === "safety" ? "lp-yds lp-to" : "lp-yds");
+        if (td && color === "#fff") {
+          // Touchdown: a gold arrow with a streak of light running along it.
+          parts.push(`<path d="${path}" fill="none" stroke="#ffc928" stroke-width="5" marker-end="url(#arrowg-${esc(g.id)})"/>`,
+            `<path d="${path}" fill="none" stroke="#fffbe6" stroke-width="3" stroke-linecap="round" pathLength="100" class="td-streak"/>`);
+          tag(tdTag(`${Math.abs(gained)} yds`), tagY, "lp-yds lp-td");
+        } else {
+          parts.push(`<path d="${path}" fill="none" stroke="${color}" stroke-width="4" marker-end="url(#${color === "#fff" ? "arrow" : "arrowr"}-${esc(g.id)})"/>`);
+          tag(kind === "sack" ? `Sack · ${ydsTxt(gained)}` : kind === "safety" ? "Safety" : ydsTxt(gained), tagY, kind === "sack" || kind === "safety" ? "lp-yds lp-to" : "lp-yds");
+        }
       }
     } else if (["rush", "pass", "sack"].includes(kind)) {
       // Too short for an arrow (no gain, or a yard either way): a ball at the spot, stopped by a bar.
@@ -3365,8 +3406,8 @@ function fieldGraphic(g) {
   const label = `${poss ? `${poss.abbr} ball ` : ""}${g.downDistance || ""}`.trim();
   return `<div class="field-wrap">
     ${band ? `<div class="fw-band" style="background:${esc(band.color)}">${esc(band.text)}</div>` : ""}
-    <svg class="field ${narrow ? "narrow" : ""}" viewBox="0 0 ${W} ${VH}" role="img" aria-label="${esc(label || "Field position")}">
-      <defs>${[["arrow", "#fff"], ["arrowy", "#fdd835"], ["arrowr", "#ef5350"]].map(([id, fill]) => `<marker id="${id}-${esc(g.id)}" viewBox="-1 -1 12 12" refX="6" refY="5" markerWidth="5.5" markerHeight="5.5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="${fill}" stroke="rgba(0,0,0,.6)" stroke-width="1.2" stroke-linejoin="round"/></marker>`).join("")}</defs>
+    <svg class="field ${narrow ? "narrow" : ""} ${tdShown ? "is-td" : ""}" ${tdShown ? `style="--td-ago:${-tdAgo}ms"` : ""} viewBox="0 0 ${W} ${VH}" role="img" aria-label="${esc(tdShown ? "Touchdown" : label || "Field position")}">
+      <defs>${[["arrow", "#fff"], ["arrowy", "#fdd835"], ["arrowr", "#ef5350"], ["arrowg", "#ffc928"]].map(([id, fill]) => `<marker id="${id}-${esc(g.id)}" viewBox="-1 -1 12 12" refX="6" refY="5" markerWidth="5.5" markerHeight="5.5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="${fill}" stroke="rgba(0,0,0,.6)" stroke-width="1.2" stroke-linejoin="round"/></marker>`).join("")}</defs>
       ${parts.slice(0, playFrom).join("")}<g class="play">${parts.slice(playFrom).map(underlay).join("")}</g>
     </svg>
     <div class="field-caption">${poss ? `<strong>${esc(poss.abbr)}</strong> ball ${arrowWord} · ` : ""}${esc(g.downDistance || f.possText || "")}${f.driveDesc ? ` <span class="muted">· Drive: ${esc(f.driveDesc)}</span>` : ""}</div>
@@ -3408,7 +3449,7 @@ async function refreshLive() {
     // Same week as the last load: compare for score bumps and scoring alerts. New week: start fresh.
     const old = state.live && !state.live.error && state.live.sp === data.sp ? state.live : null;
     if (!old) state.livePrev = {};
-    else if (SHOW_BANNERS && isCurrentSp(data.sp)) liveAlerts(old, data);
+    else if (isCurrentSp(data.sp)) { noteTouchdowns(old, data); if (SHOW_BANNERS) liveAlerts(old, data); }
     const prev = state.livePrev;
     const same = state.live && !state.live.error && JSON.stringify({ ...state.live, updated: 0 }) === JSON.stringify({ ...data, updated: 0 });
     state.liveBumps = {};
@@ -3430,6 +3471,44 @@ async function refreshLive() {
     if (document.visibilityState === "visible" && (state.tab === "live" || anyLive)) refreshLive();
     else state.liveStale = true;
   }, anyLive ? LIVE_POLL_MS : IDLE_POLL_MS);
+}
+
+// ---------- Touchdown flash (Matchup, Live and Multiview) ----------
+// When a player's touchdown count goes up between two live refreshes, his row flashes green with
+// TOUCHDOWN sweeping across it. Rows get redrawn often, so the effect is laid back on after every redraw
+// for as long as it runs, picking up where it was (a negative animation delay).
+const TD_FLASH_MS = 3600;
+function noteTouchdowns(old, data) {
+  const before = new Map(old.players.map((p) => [String(p.id), p]));
+  const n = (p, id) => Number(p.stats?.[id] || 0);
+  for (const p of data.players) {
+    const o = before.get(String(p.id));
+    if (o && TD_STATS.some((id) => n(p, id) > n(o, id))) (state.tdFlash ||= {})[String(p.id)] = Date.now();
+  }
+  paintTouchdowns();
+}
+function paintTouchdowns() {
+  const F = state.tdFlash;
+  if (!F) return;
+  const now = Date.now();
+  for (const [id, at] of Object.entries(F)) {
+    const left = TD_FLASH_MS - (now - at);
+    if (left <= 0) { delete F[id]; continue; }
+    document.querySelectorAll(`.view:not([hidden]) .mx-side .pl-link[data-pid="${CSS.escape(id)}"]`).forEach((a) => {
+      const row = a.closest(".mx-side");
+      if (!row || row.querySelector(".td-fx")) return;
+      row.classList.add("td-flash");
+      row.style.setProperty("--td-delay", `${-(now - at)}ms`);
+      row.insertAdjacentHTML("beforeend", `<span class="td-fx" aria-hidden="true"><b>TOUCHDOWN</b></span>`);
+      setTimeout(() => { row.classList.remove("td-flash"); row.querySelector(".td-fx")?.remove(); }, left);
+    });
+  }
+}
+// Lay the flash back on whenever the Matchup or Live screen redraws while one is running.
+{
+  let raf = 0;
+  const watch = new MutationObserver(() => { if (!state.tdFlash || !Object.keys(state.tdFlash).length || raf) return; raf = requestAnimationFrame(() => { raf = 0; paintTouchdowns(); }); });
+  for (const v of ["view-matchups", "view-live"]) { const el = document.getElementById(v); if (el) watch.observe(el, { childList: true, subtree: true }); }
 }
 
 // ---------- Scoring alerts ----------
@@ -4800,7 +4879,7 @@ const NOTIFY_KINDS = [
   ["lineup", "Start/bench", "Sundays at 10:30 AM Central, if your bench is projected to outscore a starter"],
   ["trade", "Trades", "A trade involving your team is accepted"],
   ["waiver", "Waiver report", "One summary after each waiver run: who you got (and missed)"],
-  ["adds", "Adds & drops", "Another team in your league picks up or drops a player (waiver runs come as one summary)"],
+  ["adds", "Adds, drops & trades", "Another team in your league picks up, drops or trades players (waiver runs come as one summary)"],
   ["recap", "Weekly recap", "Tuesdays at 7:30 AM Central: how your week went, with a link to the recap"],
 ];
 const pushPost = (action, body) => fetch(`/api/push/${action}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
