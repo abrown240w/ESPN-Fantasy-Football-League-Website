@@ -293,6 +293,32 @@ function parsePlayer(entry, sp, teamId, rosterInfo = {}, nfl = null) {
   };
 }
 
+// Projected final score while the week is being played, starter by starter: what he scored once his game is
+// over; while it's on, his points so far plus his projection for the share of the game left (a D/ST, which
+// starts high and comes down, blends toward its projection instead); before kickoff his projection (0 if he's
+// ruled out). ESPN's own live projected total only updates now and then, so it isn't used.
+function gameLeft(detail) {
+  const s = String(detail || "");
+  if (/half/i.test(s)) return 0.5;
+  const end = /end of (\d)/i.exec(s);
+  if (end) return Math.max(0, (4 - Number(end[1])) / 4);
+  const m = /(\d+):(\d+)\s*-\s*(\d)(?:st|nd|rd|th)/i.exec(s);
+  if (m) return Math.max(0, ((4 - Number(m[3])) * 15 + Number(m[1]) + Number(m[2]) / 60) / 60);
+  if (/OT/i.test(s)) return 0.03;
+  return 0.5;
+}
+function liveProjFor(starters) {
+  return sum(starters, (p) => {
+    const g = gameStatusOf(p);
+    if (!g) return p.played ? p.actual : p.proj; // no scoreboard yet
+    if (g.state === "post" || g.state === "bye") return p.actual;
+    if (g.state === "in") {
+      const left = gameLeft(g.detail);
+      return p.posId === 16 ? p.actual * (1 - left) + p.proj * left : p.actual + p.proj * left;
+    }
+    return WONT_PLAY.test(p.injury || "") ? 0 : p.proj;
+  });
+}
 // Best lineup from a roster by `score` (this week's points by default; trade value in the Trade Analyzer).
 function optimalLineup(players, slotCounts, score = (p) => p.actual) {
   const slots = [];
@@ -317,12 +343,12 @@ function buildSide(side, sp, rosterByTeam, slotCounts, rosterInfo, nfl) {
   const bench = players.filter((p) => !p.starter).sort((a, b) => b.actual - a.actual || b.proj - a.proj);
   const score = side.totalPointsLive ?? side.totalPoints ?? sum(starters, (p) => p.actual);
   const proj = sum(starters, (p) => p.proj);
-  const liveProj = side.totalProjectedPointsLive ?? sum(starters, (p) => (p.played ? p.actual : p.proj));
   const hasRoster = players.length > 0;
   const opt = hasRoster ? optimalLineup(players, slotCounts) : { points: score, lineup: [] };
   const wp = side.winProbability;
   return {
-    teamId: side.teamId, players, starters, bench, score, proj, liveProj,
+    teamId: side.teamId, players, starters, bench, score, proj,
+    get liveProj() { return liveProjFor(starters); }, // worked out when it's shown, from the latest game clocks
     espnWp: typeof wp === "number" ? (wp > 1 ? wp / 100 : wp) : null,
     optimal: Math.max(opt.points, score),
     benchLeft: Math.max(0, opt.points - score),
@@ -812,11 +838,12 @@ const muOrder = () => {
 };
 function renderMatchupsPhone(el, label) {
   const w = state.week, st = w.status, cur = state.openMatchup;
-  const val = (sd) => (st === "upcoming" ? f1(sd.proj) : f2(sd.score));
+  const pre = (m) => st === "upcoming" || (!m.home.score && !m.away.score);
+  const val = (sd, m) => (pre(m) ? f1(sd.proj) : f2(sd.score));
   const games = w.matchups.filter((m) => m.away);
   const chip = (m) => (m.id === cur
     ? `<button type="button" class="mb-chip on" data-mb="${m.id}">${logoImg(team(m.home.teamId), 22)}<span class="vs">vs</span>${logoImg(team(m.away.teamId), 22)}</button>`
-    : `<button type="button" class="mb-chip" data-mb="${m.id}">${logoImg(team(m.home.teamId), 20)}<b>${val(m.home)}</b><span class="vs">vs</span><b>${val(m.away)}</b>${logoImg(team(m.away.teamId), 20)}</button>`);
+    : `<button type="button" class="mb-chip ${pre(m) ? "proj" : ""}" data-mb="${m.id}" ${pre(m) ? `title="Projected"` : ""}>${logoImg(team(m.home.teamId), 20)}<b>${val(m.home, m)}</b><span class="vs">vs</span><b>${val(m.away, m)}</b>${logoImg(team(m.away.teamId), 20)}</button>`);
   const bar = `<div class="mu-bar" id="mu-bar">${muOrder().map((id) => (id === "league" ? `<button type="button" class="mb-chip lg ${cur === "league" ? "on" : ""}" data-mb="league">${ic("calendar")} League scores</button>` : chip(games.find((m) => m.id === id)))).join("")}</div>`;
   const sel = games.find((m) => m.id === cur);
   el.innerHTML = `${bar}<div class="mu-detail" id="mu-body">${sel ? matchupDetail(sel, true) : leagueSummary()}</div>
@@ -1013,11 +1040,12 @@ function stepMatchup(dir) {
 function matchupTile(m) {
   const st = state.week.status;
   if (!m.away) return `<button type="button" class="mini-tile bye" disabled><div class="mt-row"><span class="mt-team">${logoImg(team(m.home.teamId), 18)}${esc(team(m.home.teamId).abbrev)}</span><span class="mt-score">Bye</span></div></button>`;
-  const val = (sd) => (st === "upcoming" ? f1(sd.proj) : f2(sd.score));
-  const lead = st === "upcoming" ? null : m.home.score > m.away.score ? "home" : m.away.score > m.home.score ? "away" : null;
+  const pre = st === "upcoming" || (!m.home.score && !m.away.score); // nobody's played yet: projections
+  const val = (sd) => (pre ? f1(sd.proj) : f2(sd.score));
+  const lead = pre ? null : m.home.score > m.away.score ? "home" : m.away.score > m.home.score ? "away" : null;
   const row = (sd, key) => `<div class="mt-row ${lead === key ? "lead" : lead ? "trail" : ""}"><span class="mt-team">${logoImg(team(sd.teamId), 18)}<span>${esc(team(sd.teamId).abbrev)}</span></span><span class="mt-score">${val(sd)}</span></div>`;
   const foot = st === "final" ? "Final" : `<span class="mt-wp"><i style="width:${m.wp * 100}%"></i></span>${pct(m.wp)}–${pct(1 - m.wp)}`;
-  return `<button type="button" class="mini-tile ${state.openMatchup === m.id ? "selected" : ""}" data-mu="${m.id}">${row(m.home, "home")}${row(m.away, "away")}<div class="mt-foot">${foot}</div></button>`;
+  return `<button type="button" class="mini-tile ${state.openMatchup === m.id ? "selected" : ""} ${pre ? "proj" : ""}" data-mu="${m.id}">${row(m.home, "home")}${row(m.away, "away")}<div class="mt-foot">${foot}</div></button>`;
 }
 // ---------- Sticky condensed score bar (phones) ----------
 // While you scroll down an open matchup or live game, a slim score bar sticks under the top bar until
@@ -2277,10 +2305,14 @@ function logoImg(t, size = 28) {
   const initials = (clean(t.abbrev).slice(0, 3) ||
     (t.name || "").split(/\s+/).map((w) => clean(w)[0] || "").join("").slice(0, 3) || "?").toUpperCase();
   if (!t.logo) return `<span class="logo logo-fb" style="--s:${size}px">${esc(initials)}</span>`;
-  return `<img class="logo" style="--s:${size}px" src="${esc(t.logo)}" width="${size}" height="${size}" alt="" loading="lazy" referrerpolicy="no-referrer" data-fb="${esc(initials)}">`;
+  return `<img class="logo" style="--s:${size}px;background-image:${logoPlaceholder(initials)}" src="${esc(t.logo)}" width="${size}" height="${size}" alt="" loading="lazy" referrerpolicy="no-referrer" data-fb="${esc(initials)}">`;
 }
 const teamName = (id, size = 22) => `<span class="tname" data-tpop="${esc(id)}">${logoImg(team(id), size)}<span>${esc(team(id).name)}</span></span>`;
 
+// Until a team logo has loaded (uploaded ones are large), its initials show in its place, drawn as the img's
+// background; the background is dropped once the picture is in (logos with transparent edges stay clean).
+const logoPlaceholder = (initials) => `url("data:image/svg+xml,${encodeURIComponent(`<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'><circle cx='20' cy='20' r='20' fill='#e3e8f0'/><text x='20' y='25.5' font-family='Arial,sans-serif' font-weight='700' font-size='${initials.length > 2 ? 12 : 15}' text-anchor='middle' fill='#41506b'>${initials}</text></svg>`)}")`;
+document.addEventListener("load", (e) => { if (e.target?.classList?.contains("logo") && e.target.tagName === "IMG") e.target.style.backgroundImage = "none"; }, true);
 // Swap a logo that fails to load for the team's initials.
 // Player photo from ESPN's image service, resized (about 10 KB each); team logo for D/ST.
 // Players without a photo (and everyone in the demo) get their initials instead.
@@ -3126,7 +3158,7 @@ function renderSeason() {
   const show = (k) => (!desk || sub === (k === "awards" ? "standings" : k) ? "" : "hidden");
   const SUBS = [["standings", "Standings & Awards"], ["pos", "Position Rankings"], ["luck", "Luck & Weekly Scoring"]];
   el.innerHTML = `${desk ? `<div class="seg st-subs" role="tablist">${SUBS.map(([k, l]) => `<button type="button" role="tab" data-stsub="${k}" class="${sub === k ? "active" : ""}">${l}</button>`).join("")}</div>` : ""}
-    <section class="st-sec" ${show("standings")}><div class="section-head"><h2>Standings & power rankings</h2><span class="muted small">Through week ${season.weeks[season.weeks.length - 1]}</span></div>
+    <section class="st-sec" ${show("standings")}><div class="section-head"><h2>Standings & power rankings</h2><span class="muted small">Through week ${season.weeks[season.weeks.length - 1]}<button type="button" class="linkish st-more" id="st-more">${state.standings.all ? "Fewer columns" : "All columns"}</button></span></div>
     ${desk ? `<div class="st-top"><div class="st-main"><div id="st-table"></div></div><aside class="st-rail" id="st-rail"></aside></div>` : `<div id="st-table"></div>`}</section>
     <section class="st-sec" ${show("pos")}><div class="section-head"><h2>Position rankings</h2><span class="muted small">Each team's current roster, by points per game this season</span></div><div id="pr-table"></div></section>
     <section class="st-sec st-luck" ${show("luck")}><div><div class="section-head"><h2>Luck meter</h2><span class="muted small">Actual wins minus expected wins (based on weekly scores vs. the whole league)</span></div>
@@ -3141,19 +3173,19 @@ function renderSeason() {
     { key: "name", label: "Team", render: (r) => `<div class="team-cell" data-tpop="${r.id}">${logoImg(r, 34)}<div><strong>${esc(r.name)}</strong><div class="small muted">${esc(r.owner)}</div></div></div>` },
     { key: "wins", label: "Record", sort: (r) => r.winPct * 1000 + r.pf / 1e4, render: (r) => recordStr(r) },
     { key: "pf", label: "PF", num: true, render: (r) => f1(r.pf) },
-    { key: "pa", label: "PA", num: true, render: (r) => f1(r.pa) },
-    { key: "avg", label: "Avg", num: true, render: (r) => f1(r.avg) },
+    { key: "pa", label: "PA", num: true, cls: "st-x", render: (r) => f1(r.pa) },
+    { key: "avg", label: "Avg", num: true, cls: "st-x", render: (r) => f1(r.avg) },
     { key: "recent", label: "Last 3", num: true, cls: "hide-sm", title: "Average score over the last 3 games", render: (r) => f1(r.recent) },
-    { key: "apPct", label: "All-play", num: true, title: "Record if every team played every other team each week", render: (r) => `${r.apW}-${r.apL}` },
-    { key: "luck", label: "Luck", num: true, title: "Wins above/below expectation", render: (r) => `<span class="${clsSign(r.luck)}">${signed(r.luck)}</span>` },
+    { key: "apPct", label: "All-play", num: true, cls: "st-x", title: "Record if every team played every other team each week", render: (r) => `${r.apW}-${r.apL}` },
+    { key: "luck", label: "Luck", num: true, cls: "st-x", title: "Wins above/below expectation", render: (r) => `<span class="${clsSign(r.luck)}">${signed(r.luck)}</span>` },
     { key: "streak", label: "Streak", cls: "hide-sm", sort: (r) => (r.streak[0] === "W" ? 1 : -1) * parseInt(r.streak.slice(1) || 0) },
-    { key: "powerRank", label: "Power", num: true, title: "Power ranking: blends all-play record, actual record and recent scoring", sort: (r) => r.powerRank, render: (r) => `<strong>${r.powerRank}</strong>` },
+    { key: "powerRank", label: "Power", num: true, cls: "st-x", title: "Power ranking: blends all-play record, actual record and recent scoring", sort: (r) => r.powerRank, render: (r) => `<strong>${r.powerRank}</strong>` },
     ...(odds ? [
       { key: "po", label: "Playoffs", num: true, title: `Chance to make the playoffs (top ${odds.spots}), from 5,000 simulations of the rest of the season`, sort: (r) => odds.teams[r.id]?.playoffs ?? 0, render: (r) => oddsCell(odds.teams[r.id]?.playoffs ?? 0) },
       ...(odds.byes ? [{ key: "bye", label: "Bye", num: true, cls: "hide-sm", title: `Chance to finish top ${odds.byes} and earn a first-round bye`, sort: (r) => odds.teams[r.id]?.bye ?? 0, render: (r) => oddsCell(odds.teams[r.id]?.bye ?? 0) }] : []),
       { key: "seed", label: "Proj. seed", num: true, cls: "hide-sm", dir: 1, title: "Average finishing position across the simulations", sort: (r) => odds.teams[r.id]?.seed ?? 99, render: (r) => f1(odds.teams[r.id]?.seed ?? 0) },
     ] : []),
-    { key: "rosterValue", label: "Roster value", num: true, title: "Total FantasyCalc trade value of the team's current roster", render: (r) => (r.rosterValue == null ? `<span class="muted">–</span>` : fmtVal(r.rosterValue)) },
+    { key: "rosterValue", label: "Roster value", num: true, cls: "st-x", title: "Total FantasyCalc trade value of the team's current roster", render: (r) => (r.rosterValue == null ? `<span class="muted">–</span>` : fmtVal(r.rosterValue)) },
   ];
   // Roster value needs this week's rosters and FantasyCalc values; both load in the background.
   const values = ensureValues(), rosterWeek = ensureCurrentRosters();
@@ -3162,6 +3194,12 @@ function renderSeason() {
     for (const r of season.rows) r.rosterValue = rosters[r.id] ? sum(rosters[r.id], (p) => p.value) : null;
   }
   const draw = () => $("st-table").replaceChildren(sortableTable(cols, season.rows, state.standings.sort, draw, { rowClass: (r) => myRow(r.id) }));
+  $("st-table").classList.toggle("st-all", !!state.standings.all);
+  $("st-more")?.addEventListener("click", (e) => {
+    state.standings.all = !state.standings.all;
+    $("st-table").classList.toggle("st-all", state.standings.all);
+    e.target.textContent = state.standings.all ? "Fewer columns" : "All columns";
+  });
 
   draw();
   // Computers: a column beside the standings with the playoff race (and the award leaders, below).
@@ -4732,7 +4770,7 @@ function renderRoster() {
     return `<div class="er-row ${gsState(p)} ${picked && String(picked.id) === String(p.id) ? "picked" : ""}">
       <div class="er-l">${pill(p)}${headshot(p, 40)}<div class="er-info">
         <div class="er-name">${plink(p.id, shortName(p.name))} ${p.posId === 16 ? "" : proIc(p.proId)}<span class="er-pos">${esc(p.pos)}</span>${injBadge(p)}${unread(p) ? newsDot(p) : ""}${trade}</div>
-        <div class="er-sub">${p.own != null ? `${Math.round(p.own)}% Rost` : ""}${p.start != null ? ` <span class="er-bar">|</span> ${Math.round(p.start)}% Start` : ""}${upg}</div>
+        <div class="er-sub ${upg ? "has-upg" : ""}"><span class="er-own">${p.own != null ? `${Math.round(p.own)}% Rost` : ""}${p.start != null ? ` <span class="er-bar">|</span> ${Math.round(p.start)}% Start` : ""}</span>${upg}</div>
         <div class="er-game">${erGameLine(p)}</div>
         <div class="er-stats" ${p.short ? `title="${esc(p.line)}"` : ""}>${p.short ? esc(p.short) : "&nbsp;"}</div>
       </div></div>
@@ -8489,11 +8527,14 @@ function bindUi() {
     else if (state.live?.games?.some((g) => g.state === "in")) { state.liveStale = false; refreshLive(); }
   });
   // Keep live weeks fresh: every 20 seconds while NFL games are on (the Matchup and Roster scores), otherwise every 2 minutes.
-  let lastWeekRefresh = 0;
+  let lastWeekRefresh = Date.now(); // the week was just loaded
   setInterval(() => {
-    if (document.visibilityState !== "visible" || state.week?.status !== "live" || state.demo) return;
+    const st = state.week?.status;
+    if (document.visibilityState !== "visible" || (st !== "live" && st !== "upcoming") || state.demo) return;
     const fast = state.gameStatus?.anyLive && state.gameStatus.sp === state.week.sp && (state.tab === "matchups" || state.tab === "roster");
-    if (Date.now() - lastWeekRefresh < (fast ? 20000 : 120000)) return;
+    // Live: every 20 seconds while games are on (2 minutes otherwise). Before kickoff: every 15 minutes, so
+    // ESPN's updated projections (injury news, inactives) come through on a page left open.
+    if (Date.now() - lastWeekRefresh < (st === "upcoming" ? 15 * 60e3 : fast ? 20000 : 120000)) return;
     lastWeekRefresh = Date.now();
     refreshWeekQuietly();
   }, 5000);

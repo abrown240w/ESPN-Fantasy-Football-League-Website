@@ -2829,3 +2829,52 @@ button.mx-tds:hover, .mx-tds.pts-active { border-color: var(--accent); }
 .lf-panel .mf-pts.neg { color: #b91c1c; background: rgba(220,38,38,.1); }
 .lf-panel .mf-what { font-size: .8rem; color: var(--ink-2); padding-left: 24px; }
 .lf-panel .mf-text { font-size: .74rem; line-height: 1.35; margin-top: 2px; overflow-wrap: anywhere; }
+
+/* ---------- Polish pass ---------- */
+/* Logos: the initials placeholder fills the circle */
+img.logo { background-size: cover; background-position: center; }
+
+/* Roster rows on phones: % rostered / started off the row (one line shorter); the upgrade button stays */
+@media (max-width: 640px) {
+  .er-sub .er-own { display: none; }
+  .er-sub:not(.has-upg) { display: none; }
+}
+
+/* Strips that scroll sideways fade at the right edge, so it's clear there's more */
+@media (max-width: 999px) {
+  .er-chips, .subnav.seg, .mu-bar { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); }
+}
+.section-head > .muted.small { display: inline-flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+
+/* Standings on phones: rank, team, record, PF and playoff odds; "All columns" for the rest */
+.st-more { display: none; }
+@media (max-width: 640px) {
+  .st-more { display: inline; font-weight: 700; }
+  #st-table:not(.st-all) .st-x { display: none; }
+  #st-table.st-all td.hide-sm, #st-table.st-all th.hide-sm { display: table-cell; }
+}
+
+/* Matchup chips before kickoff: projections, muted */
+.mb-chip.proj b { color: var(--muted); font-weight: 600; font-style: italic; }
+
+/* One button family: the Player stats / Scoring feed toggles match the other secondary buttons */
+.bx-toggle { background: var(--surface); border: 1px solid var(--btn-line); color: var(--accent-ink); border-radius: 10px; font-weight: 600; }
+.bx-toggle:hover { border-color: var(--btn); }
+.bx-toggle.open { background: var(--btn); border-color: var(--btn); color: #fff; }
+
+.mini-tile.proj .mt-score { color: var(--muted); font-weight: 600; font-style: italic; }
+@media (max-width: 640px) { .er-row { min-height: 60px; } }
+@media (max-width: 640px) {
+  #st-table:not(.st-all) table.data { width: 100%; }
+  #st-table:not(.st-all) table.data th, #st-table:not(.st-all) table.data td { padding-left: 5px; padding-right: 5px; }
+  #st-table:not(.st-all) .team-cell { gap: 7px; }
+  #st-table:not(.st-all) .team-cell img.logo, #st-table:not(.st-all) .team-cell .logo { width: 26px; height: 26px; --s: 26px; }
+  #st-table:not(.st-all) .team-cell strong { white-space: normal; font-size: .84rem; line-height: 1.2; display: block; }
+  #st-table:not(.st-all) .team-cell .small { font-size: .7rem; }
+}
+@media (max-width: 640px) {
+  #st-table:not(.st-all) td:nth-child(2) { max-width: 158px; }
+  #st-table:not(.st-all) .team-cell > div { min-width: 0; }
+  #st-table:not(.st-all) .team-cell .small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+}
+@media (max-width: 640px) { #st-table:not(.st-all) .team-cell > div { flex: 1 1 auto; max-width: 114px; overflow-wrap: anywhere; } }
