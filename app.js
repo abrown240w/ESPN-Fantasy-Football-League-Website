@@ -185,9 +185,11 @@ function buildBase(raw) {
   const settings = raw.settings || {};
   const schedule = raw.schedule || [];
   const regWeeks = settings.scheduleSettings?.matchupPeriodCount || 0;
-  const weeks = Math.max(regWeeks, ...schedule.map((m) => m.matchupPeriodId || 0));
-  const current = Math.min(Math.max(raw.status?.currentMatchupPeriod || 1, 1), weeks || 1);
   const periods = settings.scheduleSettings?.matchupPeriods || {};
+  // Every week in the league's settings, the fantasy playoffs included: ESPN's schedule only lists the playoff
+  // games once the bracket is set, but their weeks are known all season (for setting lineups ahead of time).
+  const weeks = Math.max(regWeeks, ...schedule.map((m) => m.matchupPeriodId || 0), ...Object.keys(periods).map(Number).filter(Number.isFinite));
+  const current = Math.min(Math.max(raw.status?.currentMatchupPeriod || 1, 1), weeks || 1);
   // League format for FantasyCalc values: nearest supported size and PPR, superflex if 2 QBs can start.
   const nearest = (n, opts) => opts.reduce((a, b) => (Math.abs(b - n) < Math.abs(a - n) ? b : a));
   const slots = settings.rosterSettings?.lineupSlotCounts || {};
@@ -307,6 +309,12 @@ function gameLeft(detail) {
   if (/OT/i.test(s)) return 0.03;
   return 0.5;
 }
+// The projection shown under a player's score: while his game is on, his projected finish (points so far plus
+// his projection for the time left), highlighted; before kickoff and once it's over, his original projection.
+function projHtml(p) {
+  if (gameStatusOf(p)?.state !== "in" || p.proj == null) return f1(p.proj);
+  return `<span class="proj-live" title="Projected finish, updating as he plays (pre-game projection ${f1(p.proj)})">${f1(liveProjFor([p]))}</span>`;
+}
 function liveProjFor(starters) {
   return sum(starters, (p) => {
     const g = gameStatusOf(p);
@@ -391,7 +399,9 @@ function buildWeek(raw, week, nfl = null) {
     home: buildSide(m.home, sp, rosterByTeam, base.slotCounts, rosterInfo, nfl),
     away: buildSide(m.away, sp, rosterByTeam, base.slotCounts, rosterInfo, nfl),
   }));
-  const sides = matchups.flatMap((m) => [m.home, m.away]).filter(Boolean);
+  let sides = matchups.flatMap((m) => [m.home, m.away]).filter(Boolean);
+  // A playoff week before the bracket is set: no games yet, but each team's roster (and lineup) for it.
+  if (!matchups.length) sides = Object.keys(base.teams).map((id) => buildSide({ teamId: Number(id) }, sp, rosterByTeam, base.slotCounts, rosterInfo, nfl)).filter(Boolean);
   // A later week: nobody's game has started yet, whatever ESPN says about this week's locks.
   if (week > base.current) for (const s of sides) for (const p of s.players) p.locked = false;
   const anyPlayed = sides.some((s) => s.playedCount > 0 || s.score > 0);
@@ -730,7 +740,12 @@ window.visualViewport?.addEventListener("resize", repinTabs);
 // ---------- Matchups ----------
 function renderMatchups() {
   const w = state.week, el = $("view-matchups");
-  if (!w.matchups.length) { el.innerHTML = `<p class="muted">No matchups scheduled for week ${w.week}.</p>`; return; }
+  if (!w.matchups.length) {
+    el.innerHTML = w.week > state.base.regWeeks
+      ? `<div class="section-head"><h2>Week ${w.week} · playoffs</h2></div><p class="muted">The playoff matchups are set once the regular season ends. Until then you can set lineups for this week on the Roster tab, and see the projected bracket on League › Playoffs.</p>`
+      : `<p class="muted">No matchups scheduled for week ${w.week}.</p>`;
+    return;
+  }
   const label = w.status === "final" ? "Final scores" : w.status === "live" ? "Live scores · win chance from ESPN" : "Projected · win chance from ESPN";
   // Every matchup as a small tile up top (phones: a grid; desktop: a column on the left); the selected
   // one fills the rest of the screen. Starts on your own matchup.
@@ -1538,12 +1553,17 @@ function matchupDetail(m, withHead = true) {
         <div class="mx-game">${gameLineHtml(p)}${oprk}</div>
         <div class="mx-stats" ${p.short ? `title="${esc(p.line)}"` : ""}>${p.short ? esc(p.short) : "&nbsp;"}</div>
       </div>
-      <div class="mx-pts"><div class="mx-score">${pts}</div><div class="mx-proj">${f1(p.proj)}</div></div>
+      <div class="mx-pts"><div class="mx-score">${pts}</div><div class="mx-proj">${projHtml(p)}</div></div>
     </div>`;
   };
   const row = ([h, slot, a], bench) => `<div class="mx-row ${bench ? "bench" : ""}">${side(h, false)}<div class="mx-slot">${slot || ""}</div>${side(a, true)}</div>`;
-  const bn = Math.max(home.bench.length, away.bench.length);
-  const benchRows = Array.from({ length: bn }, (_, i) => [home.bench[i], home.bench[i]?.slot || away.bench[i]?.slot, away.bench[i]]);
+  // Bench and IR paired separately (bench with bench, IR with IR), each labeled for what it is.
+  const pairUp = (pick, label) => {
+    const h = home.bench.filter(pick), a = away.bench.filter(pick);
+    return Array.from({ length: Math.max(h.length, a.length) }, (_, i) => [h[i], label, a[i]]);
+  };
+  const benchRows = pairUp((p) => p.slotId !== IR, "BE"), irRows = pairUp((p) => p.slotId === IR, "IR");
+  const bn = benchRows.length;
 
   // Header: each team on its own side, scores, then each side's win probability.
   const wpH = m.wp, wpA = 1 - m.wp;
@@ -1561,6 +1581,7 @@ function matchupDetail(m, withHead = true) {
     ${stickBar(`<span class="sb-team">${logoImg(H, 18)}${esc(H.abbrev)}</span><strong>${st === "upcoming" ? f1(home.proj) : f2(home.score)}</strong><span class="sb-mid">${st === "final" ? "Final" : `${pct(wpH)}–${pct(wpA)}`}</span><strong>${st === "upcoming" ? f1(away.proj) : f2(away.score)}</strong><span class="sb-team">${esc(A.abbrev)}${logoImg(A, 18)}</span>`)}` : ""}
     <div class="mx-rows">${rows.map((r) => row(r, false)).join("")}</div>
     ${bn ? `<div class="mx-bench-head">Bench</div><div class="mx-rows">${benchRows.map((r) => row(r, true)).join("")}</div>` : ""}
+    ${irRows.length ? `<div class="mx-bench-head">IR</div><div class="mx-rows">${irRows.map((r) => row(r, true)).join("")}</div>` : ""}
   </div>`;
 }
 
@@ -1706,8 +1727,8 @@ function paintWatchCount() {
 const playersNav = (cur, mine) => {
   const c = watchCounts(), inj = !DESK.matches;
   return `<div class="pl-nav"><div class="seg pl-seg">${[["avail", "Available"], ["all", `<span class="nm-full">All players</span><span class="nm-short">All</span>`]].map(([k, l]) => `<button type="button" data-plm="${k}" class="${cur === k && !state.players.watch ? "active" : ""}">${l}</button>`).join("")}</div>
-  ${c || inj ? `<div class="pl-tools">${c ? `<button type="button" data-watchf class="pl-tool ${state.players.watch ? "active" : ""}" title="Your watch list: available / total">${ic("eye")} <b>${c.avail}/${c.total}</b></button>` : ""}${inj ? `<button type="button" data-injr class="pl-tool" title="Injury Report" aria-label="Injury Report">${ic("first-aid-kit")}</button>` : ""}${inj && cur && state.tab === "players" ? `<button type="button" data-plsched class="pl-tool ${state.players.view === "sched" ? "active" : ""}" aria-pressed="${state.players.view === "sched"}" title="Week-by-week schedule and points">${ic("calendar")} Schedule</button>` : ""}</div>` : ""}
-  ${mine ? `<button type="button" data-plmine class="pl-tool pl-mine-btn ${mine.on ? "active" : ""}" aria-pressed="${mine.on}" ${mine.off ? "disabled" : ""} title="Include your own team's players">${ic("user")} My team</button>` : ""}</div>`;
+  ${c || inj ? `<div class="pl-tools">${c ? `<button type="button" data-watchf class="pl-tool ${state.players.watch ? "active" : ""}" title="Your watch list: available / total">${ic("eye")} <b>${c.avail}/${c.total}</b></button>` : ""}${inj ? `<button type="button" data-injr class="pl-tool" title="Injury Report" aria-label="Injury Report">${ic("first-aid-kit")}</button>` : ""}${inj && cur && state.tab === "players" ? `<button type="button" data-plsched class="pl-tool ${state.players.view === "sched" ? "active" : ""}" aria-pressed="${state.players.view === "sched"}" title="Week-by-week schedule and points" aria-label="Schedule view">${ic("calendar")}</button>` : ""}</div>` : ""}
+  ${mine ? `<button type="button" data-plmine class="pl-tool pl-mine-btn ${mine.on ? "active" : ""}" aria-pressed="${mine.on}" ${mine.off ? "disabled" : ""} title="Include your own team's players" aria-label="My team">${ic("user")}<span class="pt-lbl"> My team</span></button>` : ""}</div>`;
 };
 document.addEventListener("click", (e) => {
   const m = e.target.closest(".pl-nav [data-plm]"), inj = e.target.closest(".pl-nav [data-injr]");
@@ -2231,7 +2252,7 @@ function playerRow(p, { label, sp, action = "", owner = true, unread = false, co
       ${cols ? "" : `<div class="pr-details">${details.length ? details.map((d) => `<span class="pd">${d}</span>`).join("") : "&nbsp;"}</div>`}
     </div></div>
     ${cols ? rosterCols(p) : ""}
-    <div class="mx-pts"><div class="mx-score">${pts}</div><div class="mx-proj">${f1(p.proj)}</div></div>
+    <div class="mx-pts"><div class="mx-score">${pts}</div><div class="mx-proj">${projHtml(p)}</div></div>
     ${action}
   </div>`;
 }
@@ -3158,7 +3179,7 @@ function renderSeason() {
   const show = (k) => (!desk || sub === (k === "awards" ? "standings" : k) ? "" : "hidden");
   const SUBS = [["standings", "Standings & Awards"], ["pos", "Position Rankings"], ["luck", "Luck & Weekly Scoring"]];
   el.innerHTML = `${desk ? `<div class="seg st-subs" role="tablist">${SUBS.map(([k, l]) => `<button type="button" role="tab" data-stsub="${k}" class="${sub === k ? "active" : ""}">${l}</button>`).join("")}</div>` : ""}
-    <section class="st-sec" ${show("standings")}><div class="section-head"><h2>Standings & power rankings</h2><span class="muted small">Through week ${season.weeks[season.weeks.length - 1]}<button type="button" class="linkish st-more" id="st-more">${state.standings.all ? "Fewer columns" : "All columns"}</button></span></div>
+    <section class="st-sec" ${show("standings")}><div class="section-head"><h2>Standings & power rankings</h2><span class="muted small">Through week ${season.weeks[season.weeks.length - 1]}</span></div>
     ${desk ? `<div class="st-top"><div class="st-main"><div id="st-table"></div></div><aside class="st-rail" id="st-rail"></aside></div>` : `<div id="st-table"></div>`}</section>
     <section class="st-sec" ${show("pos")}><div class="section-head"><h2>Position rankings</h2><span class="muted small">Each team's current roster, by points per game this season</span></div><div id="pr-table"></div></section>
     <section class="st-sec st-luck" ${show("luck")}><div><div class="section-head"><h2>Luck meter</h2><span class="muted small">Actual wins minus expected wins (based on weekly scores vs. the whole league)</span></div>
@@ -3194,12 +3215,6 @@ function renderSeason() {
     for (const r of season.rows) r.rosterValue = rosters[r.id] ? sum(rosters[r.id], (p) => p.value) : null;
   }
   const draw = () => $("st-table").replaceChildren(sortableTable(cols, season.rows, state.standings.sort, draw, { rowClass: (r) => myRow(r.id) }));
-  $("st-table").classList.toggle("st-all", !!state.standings.all);
-  $("st-more")?.addEventListener("click", (e) => {
-    state.standings.all = !state.standings.all;
-    $("st-table").classList.toggle("st-all", state.standings.all);
-    e.target.textContent = state.standings.all ? "Fewer columns" : "All columns";
-  });
 
   draw();
   // Computers: a column beside the standings with the playoff race (and the award leaders, below).
@@ -3930,7 +3945,7 @@ function renderLive() {
         <div class="mx-game lv-owner">${role(p)}</div>
         <div class="mx-stats" ${line && g.state !== "pre" ? `title="${esc(statLine(p.posId, p.stats))}"` : ""}>${line && g.state !== "pre" ? esc(line) : "&nbsp;"}</div>
       </div>
-      <div class="mx-pts"><div class="mx-score">${pts}</div>${bump ? `<div class="lp-delta ${bump > 0 ? "pos" : "neg"}">${signed(bump)}</div>` : ""}<div class="mx-proj">${f1(p.proj)}</div></div>
+      <div class="mx-pts"><div class="mx-score">${pts}</div>${bump ? `<div class="lp-delta ${bump > 0 ? "pos" : "neg"}">${signed(bump)}</div>` : ""}<div class="mx-proj">${projHtml(p)}</div></div>
     </div>`;
   };
   const teamList = (proId, g) => {
@@ -4469,7 +4484,7 @@ function erDeskCells(p) {
   const u = usageOf(p.id), v = valueOf(p.id);
   const last = (k) => (u ? `last ${pctTxt(u.last[k])}` : "");
   return [
-    c(p.played ? ptsLink(p.id, state.week.sp, f2(p.actual)) : dash, f1(p.proj)),
+    c(p.played ? ptsLink(p.id, state.week.sp, f2(p.actual)) : dash, projHtml(p)),
     c(p.pprRank ? `${esc(p.pos)}${Math.round(p.pprRank)}` : dash, "", "erc-g"),
     c(p.posRank ? `${esc(p.pos)}${p.posRank}` : dash),
     c(p.seasonAvg != null ? f1(p.seasonAvg) : dash),
@@ -4618,7 +4633,7 @@ function erCols(p, v = erView()) {
       c(valueOf(p.id) ? fmtVal(valueOf(p.id)) : dash)];
   }
   // Matchup stats: points (or a dash) over the projection.
-  return [c(p.played ? ptsLink(p.id, state.week.sp, f2(p.actual)) : dash, f1(p.proj))];
+  return [c(p.played ? ptsLink(p.id, state.week.sp, f2(p.actual)) : dash, projHtml(p))];
 }
 function erHeads(v = erView()) {
   const h = (l, tip = "") => `<div class="erc" ${tip ? `title="${tip}"` : ""}>${l}</div>`;
@@ -5610,7 +5625,8 @@ function waiverSection() {
 // The team you can make moves for right now: signed in as owner, current week (null otherwise).
 function actTeam() {
   const own = ensureOwner();
-  if (!own?.signedIn || !state.week || state.week.week !== state.base.current) return null;
+  // Any week from this one on: a pickup or drop takes effect right away whichever week is on screen.
+  if (!own?.signedIn || !state.week || state.week.week < state.base.current) return null;
   const t = state.demo ? myTeamId() || own.teams?.[0] : own.teams?.[0];
   return t != null ? String(t) : null;
 }
@@ -6378,11 +6394,12 @@ function usageCalc(pl, sp) {
     const car = sum(list, (w) => pl.w[w][4] || 0), teamCar = sum(list, (w) => teamOf(w, pl.w[w][3])[2] || 0);
     const rz = (i) => sum(list, (w) => rzOf(w)[i]), rzTeam = sum(list, (w) => teamRz(w, pl.w[w][3]));
     const rzN = rz(0) + rz(1);
-    return { pct: sum(list, (w) => pl.w[w][1]) / list.length, share: teamTgt ? (tgt / teamTgt) * 100 : null, tgt: tgt / list.length,
+    const snapWks = list.filter((w) => pl.w[w][1] != null);
+    return { pct: snapWks.length ? sum(snapWks, (w) => pl.w[w][1]) / snapWks.length : null, share: teamTgt ? (tgt / teamTgt) * 100 : null, tgt: tgt / list.length,
       rush: teamCar ? (car / teamCar) * 100 : null, car: car / list.length, games: list.length,
       rz: rzTeam ? (rzN / rzTeam) * 100 : null, rzN, rzTeam, rzTgt: rz(0), rzCar: rz(1), rz10: rz(2), rzTd: rz(3), rzPass: rz(4) };
   };
-  const played = wks.filter((w) => pl.w[w][0] > 0 || pl.w[w][2] > 0);
+  const played = wks.filter((w) => pl.w[w][0] > 0 || pl.w[w][2] > 0 || (pl.w[w][4] || 0) > 0);
   return { pos: pl.pos, team, last, avg: avgOf(played), prior: avgOf(played.filter((w) => w < lastWk)) };
 }
 const pctTxt = (n) => (n == null ? "–" : `${Math.round(n)}%`);

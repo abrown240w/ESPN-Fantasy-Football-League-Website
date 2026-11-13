@@ -10,6 +10,7 @@ import { gunzipSync } from "node:zlib";
 
 const RELEASES = "https://github.com/nflverse/nflverse-data/releases/download";
 const SKILL = new Set(["QB", "RB", "FB", "WR", "TE"]);
+const POS_FIX = { HB: "RB" }; // some teams' files list running backs as "HB" (the Bengals in 2026)
 const TEAM_FIX = { LA: "LAR", WAS: "WSH" }; // nflverse → ESPN abbreviations
 
 function defaultSeason() {
@@ -80,8 +81,9 @@ export default async (req) => {
   // Snap counts (regular season, offense).
   const snapRows = [];
   if (snapsCsv) {
-    for (const [type, wk, name, pfr, pos, team, snaps, pct] of rows(snapsCsv, ["game_type", "week", "player", "pfr_player_id", "position", "team", "offense_snaps", "offense_pct"])) {
+    for (const [type, wk, name, pfr, rawPos, team, snaps, pct] of rows(snapsCsv, ["game_type", "week", "player", "pfr_player_id", "position", "team", "offense_snaps", "offense_pct"])) {
       if (type !== "REG") continue;
+      const pos = POS_FIX[rawPos] || rawPos;
       const t = fixTeam(team), s = Number(snaps) || 0, p = Number(pct) || 0;
       // Team snaps = player snaps / player share; use the player with the biggest share for accuracy.
       const tw = teamWeek(t, wk);
@@ -92,8 +94,9 @@ export default async (req) => {
   // Targets and carries (every player counts toward the team's totals; skill players are kept).
   const tgtRows = [];
   if (statsCsv) {
-    for (const [type, wk, gsis, name, pos, team, targets, carries] of rows(statsCsv, ["season_type", "week", "player_id", "player_display_name", "position", "team", "targets", "carries"])) {
+    for (const [type, wk, gsis, name, rawPos, team, targets, carries] of rows(statsCsv, ["season_type", "week", "player_id", "player_display_name", "position", "team", "targets", "carries"])) {
       if (type !== "REG") continue;
+      const pos = POS_FIX[rawPos] || rawPos;
       const t = fixTeam(team), n = Number(targets) || 0, c = Number(carries) || 0;
       const tw = teamWeek(t, wk);
       tw[1] += n;

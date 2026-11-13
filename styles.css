@@ -2850,8 +2850,7 @@ img.logo { background-size: cover; background-position: center; }
 .st-more { display: none; }
 @media (max-width: 640px) {
   .st-more { display: inline; font-weight: 700; }
-  #st-table:not(.st-all) .st-x { display: none; }
-  #st-table.st-all td.hide-sm, #st-table.st-all th.hide-sm { display: table-cell; }
+  #st-table td.hide-sm, #st-table th.hide-sm { display: table-cell; }
 }
 
 /* Matchup chips before kickoff: projections, muted */
@@ -2865,16 +2864,37 @@ img.logo { background-size: cover; background-position: center; }
 .mini-tile.proj .mt-score { color: var(--muted); font-weight: 600; font-style: italic; }
 @media (max-width: 640px) { .er-row { min-height: 60px; } }
 @media (max-width: 640px) {
-  #st-table:not(.st-all) table.data { width: 100%; }
-  #st-table:not(.st-all) table.data th, #st-table:not(.st-all) table.data td { padding-left: 5px; padding-right: 5px; }
-  #st-table:not(.st-all) .team-cell { gap: 7px; }
-  #st-table:not(.st-all) .team-cell img.logo, #st-table:not(.st-all) .team-cell .logo { width: 26px; height: 26px; --s: 26px; }
-  #st-table:not(.st-all) .team-cell strong { white-space: normal; font-size: .84rem; line-height: 1.2; display: block; }
-  #st-table:not(.st-all) .team-cell .small { font-size: .7rem; }
+  #st-table table.data th, #st-table table.data td { padding-left: 5px; padding-right: 5px; }
+  #st-table .team-cell { gap: 7px; }
+  #st-table .team-cell img.logo, #st-table .team-cell .logo { width: 26px; height: 26px; --s: 26px; }
+  #st-table .team-cell strong { white-space: normal; font-size: .84rem; line-height: 1.2; display: block; }
+  #st-table .team-cell .small { font-size: .7rem; }
 }
 @media (max-width: 640px) {
-  #st-table:not(.st-all) td:nth-child(2) { max-width: 158px; }
-  #st-table:not(.st-all) .team-cell > div { min-width: 0; }
-  #st-table:not(.st-all) .team-cell .small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #st-table td:nth-child(2) { max-width: 158px; }
+  #st-table .team-cell > div { min-width: 0; }
+  #st-table .team-cell .small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 }
-@media (max-width: 640px) { #st-table:not(.st-all) .team-cell > div { flex: 1 1 auto; max-width: 114px; overflow-wrap: anywhere; } }
+@media (max-width: 640px) { #st-table .team-cell > div { flex: 1 1 auto; max-width: 114px; overflow-wrap: anywhere; } }
+.proj-live { color: var(--accent-ink); font-weight: 700; }
+/* Players tab top row on phones: Available | All never gets squeezed under the other buttons */
+.pl-nav .pl-seg { flex: none; }
+.pl-nav .pl-tools { min-width: 0; }
+@media (max-width: 400px) { .pl-nav .pl-mine-btn .pt-lbl { display: none; } .pl-nav .pl-tool { padding: 0 9px; } }
+
+/* Standings on phones: the whole table, scrolling sideways, with rank and team pinned on the left */
+@media (max-width: 640px) {
+  #st-table .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  #st-table th:nth-child(1), #st-table td:nth-child(1) { position: sticky; left: 0; z-index: 2; box-sizing: border-box; width: 36px; min-width: 36px; max-width: 36px; background: var(--surface); }
+  #st-table th:nth-child(2), #st-table td:nth-child(2) { position: sticky; left: 35px; z-index: 2; background: var(--surface); box-shadow: inset -1px 0 0 var(--grid); }
+  #st-table tbody tr:nth-child(even) > td:nth-child(-n+2) { background: var(--zebra); }
+  #st-table tr.my-row > td:nth-child(-n+2) { background: #fff7e0; }
+}
+/* Dark mode: pinned cells are solid (the scrolling columns slide underneath), your row stays highlighted */
+@media (max-width: 640px) and (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) #st-table tr.my-row > td:nth-child(-n+2) { background: color-mix(in srgb, #e8b100 18%, var(--surface)); }
+}
+@media (max-width: 640px) {
+  :root[data-theme="dark"] #st-table tr.my-row > td:nth-child(-n+2) { background: color-mix(in srgb, #e8b100 18%, var(--surface)); }
+  #st-table th { white-space: nowrap; }
+}
