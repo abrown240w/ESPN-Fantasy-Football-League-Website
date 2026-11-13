@@ -1569,7 +1569,7 @@ function matchupDetail(m, withHead = true) {
   const wpH = m.wp, wpA = 1 - m.wp;
   const headSide = (s, t, right) => `<div class="mx-team ${right ? "right" : ""}">
       ${logoImg(t, 44)}
-      <div class="mx-team-id"><strong>${esc(t.name)}</strong><span class="muted small">${esc(t.owner)} · ${recordStr(t)}${streakHtml(t.id)}</span></div>
+      <div class="mx-team-id"><strong>${esc(t.name)}${poSeed(t.id)}</strong><span class="muted small">${esc(t.owner)} · ${recordStr(t)}${streakHtml(t.id)}</span></div>
       <div class="mx-total">${st === "upcoming" ? f1(s.proj) : f2(s.score)}<small>${st === "upcoming" ? "projected" : `proj ${f1(st === "live" ? s.liveProj : s.proj)}`}</small></div>
     </div>`;
   const wpBar = (v, color, right) => `<div class="mx-wp ${right ? "right" : ""}"><span class="mx-wp-pct">${pct(v)}</span><div class="mx-wp-track"><div style="width:${v * 100}%;background:${color}"></div></div></div>`;
@@ -1579,6 +1579,7 @@ function matchupDetail(m, withHead = true) {
     <div class="mx-wps">${wpBar(wpH, "var(--home)", false)}<span class="mx-mid"><button type="button" class="mx-tds" data-tdpop data-mu="${m.id}" data-lg="${esc(curLeague())}" title="Who scored the touchdowns (passing TDs count)"><b>${sum(home.starters, (p) => p.tds || 0)}</b><span>TD</span><b>${sum(away.starters, (p) => p.tds || 0)}</b></button><button type="button" class="mx-feedbtn" data-feedpop data-mu="${m.id}" data-lg="${esc(curLeague())}" aria-label="Scoring feed" title="Scoring feed">${ic("list-details")}</button></span>${wpBar(wpA, "var(--away)", true)}</div>
     ${st === "live" ? onFieldLine(m) : ""}</div>
     ${stickBar(`<span class="sb-team">${logoImg(H, 18)}${esc(H.abbrev)}</span><strong>${st === "upcoming" ? f1(home.proj) : f2(home.score)}</strong><span class="sb-mid">${st === "final" ? "Final" : `${pct(wpH)}–${pct(wpA)}`}</span><strong>${st === "upcoming" ? f1(away.proj) : f2(away.score)}</strong><span class="sb-team">${esc(A.abbrev)}${logoImg(A, 18)}</span>`)}` : ""}
+    ${m.playoff && m.tier && m.tier !== "WINNERS_BRACKET" ? `<div class="po-consol">${m.tier === "LOSERS_CONSOLATION_LADDER" ? "Consolation" : "Placement game"}</div>` : ""}
     <div class="mx-rows">${rows.map((r) => row(r, false)).join("")}</div>
     ${bn ? `<div class="mx-bench-head">Bench</div><div class="mx-rows">${benchRows.map((r) => row(r, true)).join("")}</div>` : ""}
     ${irRows.length ? `<div class="mx-bench-head">IR</div><div class="mx-rows">${irRows.map((r) => row(r, true)).join("")}</div>` : ""}
@@ -1911,12 +1912,31 @@ function strengthModel(cutoff = Infinity) {
 // Simulates the rest of the regular season 5,000 times. Each team's weekly score is drawn around its
 // season average (pulled a little toward the league average early on) with the league's typical
 // week-to-week spread. Standings are ordered by wins, then points for. Seeded, so numbers stay steady.
+// This week's matchups while they're being played: each team's projected finish from the live scores (points
+// so far plus the time left on its starters' games), and a spread that shrinks as those games finish. The
+// playoff odds, the projected bracket and the final-standings outlook use these for this week's games, so they
+// move as the week plays out. `stamp` changes whenever the live numbers do (it's part of their cache keys).
+function liveWeekGames(M) {
+  const b = state.base, w = state.weekCache?.[b.current];
+  if (!w || w.status !== "live") return { games: {}, stamp: "" };
+  const leftShare = (s) => {
+    const tot = sum(s.starters, (p) => p.proj || 0) || 1;
+    return sum(s.starters, (p) => { const g = gameStatusOf(p); return g?.state === "post" || g?.state === "bye" ? 0 : g?.state === "in" ? (p.proj || 0) * gameLeft(g.detail) : p.proj || 0; }) / tot;
+  };
+  const games = {};
+  for (const m of w.matchups) {
+    if (!m.away || m.winner !== "UNDECIDED") continue;
+    games[m.id] = { h: m.home.liveProj, a: m.away.liveProj, sh: M.spread(b.current) * Math.sqrt(leftShare(m.home)), sa: M.spread(b.current) * Math.sqrt(leftShare(m.away)) };
+  }
+  return { games, stamp: Object.values(games).map((g) => `${g.h.toFixed(1)}/${g.a.toFixed(1)}`).join(",") };
+}
 function playoffOdds() {
   const b = state.base, spots = b.raw.settings?.scheduleSettings?.playoffTeamCount || 0;
   if (!spots) return null;
   const reg = b.schedule.filter((m) => m.matchupPeriodId <= b.regWeeks && m.away);
   const isDone = (m) => m.winner && m.winner !== "UNDECIDED";
-  const key = `${b.season}:${reg.filter(isDone).length}`, M = strengthModel();
+  const M = strengthModel(), LW = liveWeekGames(M);
+  const key = `${b.season}:${reg.filter(isDone).length}:${LW.stamp}`;
   if (state.odds?.key === key && state.odds.M === M) return state.odds;
   const ids = Object.keys(b.teams);
   const left = reg.filter((m) => !isDone(m));
@@ -1931,8 +1951,9 @@ function playoffOdds() {
     for (const id of ids) { const t = b.teams[id]; w[id] = t.wins + 0.5 * t.ties; pf[id] = t.pf; }
     const off = Object.fromEntries(ids.map((id) => [id, M.tau * normal()])); // this season's "really better/worse than expected"
     for (const m of left) {
-      const wk = m.matchupPeriodId;
-      const h = M.exp(m.home.teamId, wk) + off[m.home.teamId] + M.noise(wk) * normal(), a = M.exp(m.away.teamId, wk) + off[m.away.teamId] + M.noise(wk) * normal();
+      const wk = m.matchupPeriodId, L = LW.games[m.id];
+      const h = L ? L.h + L.sh * normal() : M.exp(m.home.teamId, wk) + off[m.home.teamId] + M.noise(wk) * normal();
+      const a = L ? L.a + L.sa * normal() : M.exp(m.away.teamId, wk) + off[m.away.teamId] + M.noise(wk) * normal();
       pf[m.home.teamId] += h; pf[m.away.teamId] += a;
       if (h > a) w[m.home.teamId]++; else w[m.away.teamId]++;
     }
@@ -3012,6 +3033,16 @@ function renderPlayoffs() {
   const el = $("view-playoffs");
   const B = playoffBracket();
   if (!B) { el.innerHTML = `<div class="section-head"><h2>Playoffs</h2></div><p class="muted">This league's playoff settings aren't available.</p>`; return; }
+  const P = bracketParts(B);
+  el.innerHTML = `<div class="section-head"><h2>Championship bracket</h2>${B.real ? "" : `<span class="badge">PROJECTED</span>`}</div>
+    ${B.real ? "" : `<p class="muted small bk-note">Seeds by expected finish, the favorite advancing in each game. Favorites come from each team's scoring so far and its current roster, and this week's live scores while games are on. ESPN's real bracket replaces this once the regular season ends.</p>`}
+    ${P.champ}${P.bubble}
+    ${B.consolation.length ? `<div class="section-head"><h2>Consolation bracket</h2><span class="muted small">Teams that missed the playoffs, playing for final place</span></div>${P.ladder(B.consolation)}` : ""}
+    ${B.placement.length ? `<div class="section-head"><h2>Placement games</h2><span class="muted small">Teams knocked out of the playoffs, playing for 3rd, 5th and on</span></div>${P.ladder(B.placement)}` : ""}
+    ${finishHtml()}`;
+}
+// The bracket's pieces: the championship bracket, the bubble line, and a renderer for the ladders.
+function bracketParts(B) {
   const n = B.champ.length;
   const label = (r) => (r === n - 1 ? "Championship" : r === n - 2 ? "Semifinals" : r === n - 3 ? "Quarterfinals" : `Round ${r + 1}`);
   const line = (id, g, side) => {
@@ -3025,16 +3056,11 @@ function renderPlayoffs() {
   const box = (g) => `<div class="bk-game ${g.bye ? "is-bye" : ""} ${g.projected && !g.bye ? "proj" : ""}">${line(g.a, g, "a")}${g.bye ? "" : line(g.c, g, "c")}${g.live ? `<span class="badge live bk-live">LIVE</span>` : ""}</div>`;
   const cols = B.champ.map((rd, r) => `<div class="bk-col"><div class="bk-h">${label(r)}<span class="muted small"> · Wk ${rd.wk}</span></div><div class="bk-games">${rd.games.map(box).join("")}</div></div>`).join("");
   const done = B.champ.at(-1).games[0]?.final;
-  const champ = B.champion ? `<div class="bk-col bk-champ"><div class="bk-h">${done ? "Champion" : "Projected champion"}</div><div class="bk-games"><div class="bk-trophy">${ic("trophy")}${logoImg(team(B.champion), 40)}<strong>${esc(team(B.champion).name)}</strong><span class="muted small">${esc(team(B.champion).owner)}</span></div></div></div>` : "";
+  const champ = B.champion ? `<div class="bk-col bk-champ"><div class="bk-h">${done ? "Champion" : "Projected champion"}</div><div class="bk-games"><div class="bk-trophy">${done || poPreview ? confetti() : ""}${ic("trophy")}${logoImg(team(B.champion), 40)}<strong>${esc(team(B.champion).name)}</strong><span class="muted small">${esc(team(B.champion).owner)}</span></div></div></div>` : "";
   // Ladders: one column per week, games stacked.
   const ladderCols = (rounds) => `<div class="bk-wrap"><div class="bk bk-ladder">${rounds.map((rd) => `<div class="bk-col"><div class="bk-h">Week ${rd.wk}</div><div class="bk-games top">${rd.games.map(box).join("")}</div></div>`).join("")}</div></div>`;
   const bubble = B.bubble.length ? `<p class="small bk-bubble"><span class="muted">On the bubble:</span> ${B.bubble.map((id) => `<span data-tpop="${id}">${esc(team(id).name)} <span class="muted">${oddsPct(B.chance[id] || 0)}</span></span>`).join(" · ")}</p>` : "";
-  el.innerHTML = `<div class="section-head"><h2>Championship bracket</h2>${B.real ? "" : `<span class="badge">PROJECTED</span>`}</div>
-    ${B.real ? "" : `<p class="muted small bk-note">Seeds by expected finish, the favorite advancing in each game. Favorites come from each team's scoring so far and its current roster. ESPN's real bracket replaces this once the regular season ends.</p>`}
-    <div class="bk-wrap"><div class="bk">${cols}${champ}</div></div>${bubble}
-    ${B.consolation.length ? `<div class="section-head"><h2>Consolation bracket</h2><span class="muted small">Teams that missed the playoffs, playing for final place</span></div>${ladderCols(B.consolation)}` : ""}
-    ${B.placement.length ? `<div class="section-head"><h2>Placement games</h2><span class="muted small">Teams knocked out of the playoffs, playing for 3rd, 5th and on</span></div>${ladderCols(B.placement)}` : ""}
-    ${finishHtml()}`;
+  return { champ: `<div class="bk-wrap"><div class="bk">${cols}${champ}</div></div>`, bubble, ladder: ladderCols };
 }
 
 // ---------- Final standings outlook (Playoffs tab) ----------
@@ -3048,7 +3074,7 @@ function simulateFinish(cutoff, runs = 2000) {
   const ids = Object.keys(b.teams), N = ids.length;
   const known = (m) => m.matchupPeriodId <= cutoff && m.winner && m.winner !== "UNDECIDED";
   // Strength: results up to the cutoff blended with today's rosters (strengthModel).
-  const M = strengthModel(cutoff);
+  const M = strengthModel(cutoff), LWf = liveWeekGames(M);
   let off = {}; // per simulated season: each team's shared strength error
   let seed = 98765 + cutoff;
   const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
@@ -3073,7 +3099,9 @@ function simulateFinish(cutoff, runs = 2000) {
     for (const m of reg) {
       const h = String(m.home.teamId), a = String(m.away.teamId);
       if (known(m)) { pf[h] += m.home.totalPoints || 0; pf[a] += m.away.totalPoints || 0; if (m.winner === "HOME") w[h]++; else if (m.winner === "AWAY") w[a]++; else { w[h] += 0.5; w[a] += 0.5; } continue; }
-      const wk = m.matchupPeriodId, hs = M.exp(h, wk) + off[h] + M.noise(wk) * normal(), as = M.exp(a, wk) + off[a] + M.noise(wk) * normal();
+      const wk = m.matchupPeriodId, L = cutoff === Infinity || cutoff >= state.base.current - 1 ? LWf.games[m.id] : null;
+      const hs = L ? L.h + L.sh * normal() : M.exp(h, wk) + off[h] + M.noise(wk) * normal();
+      const as = L ? L.a + L.sa * normal() : M.exp(a, wk) + off[a] + M.noise(wk) * normal();
       pf[h] += hs; pf[a] += as; w[hs >= as ? h : a]++;
     }
     const order = [...ids].sort((x, y) => w[y] - w[x] || pf[y] - pf[x]);
@@ -3136,10 +3164,10 @@ function finishOutlook() {
   const done = [...new Set(b.schedule.filter((m) => m.winner && m.winner !== "UNDECIDED").map((m) => m.matchupPeriodId))].sort((x, y) => x - y);
   const last = done.at(-1) || 0;
   const key = `${b.season}:${last}:${b.schedule.filter((m) => m.winner && m.winner !== "UNDECIDED").length}`;
-  const M = strengthModel(last);
-  if (state.finishOut?.key === key && state.finishOut.M === M) return state.finishOut;
+  const M = strengthModel(last), live = liveWeekGames(M).stamp;
+  if (state.finishOut?.key === key && state.finishOut.M === M && state.finishOut.live === live) return state.finishOut;
   const now = simulateFinish(last), before = last > 0 ? simulateFinish(done.at(-2) || 0) : null;
-  state.finishOut = { key, M, now, before, last };
+  state.finishOut = { key, M, live, now, before, last };
   return state.finishOut;
 }
 function finishHtml() {
@@ -3191,7 +3219,7 @@ function renderSeason() {
   const odds = playoffOdds();
   const cols = [
     { key: "rank", label: "#", num: true },
-    { key: "name", label: "Team", render: (r) => `<div class="team-cell" data-tpop="${r.id}">${logoImg(r, 34)}<div><strong>${esc(r.name)}</strong><div class="small muted">${esc(r.owner)}</div></div></div>` },
+    { key: "name", label: "Team", render: (r) => `<div class="team-cell" data-tpop="${r.id}">${logoImg(r, 34)}<div><strong>${esc(r.name)}${poSeed(r.id)}</strong><div class="small muted">${esc(r.owner)}</div></div></div>` },
     { key: "wins", label: "Record", sort: (r) => r.winPct * 1000 + r.pf / 1e4, render: (r) => recordStr(r) },
     { key: "pf", label: "PF", num: true, render: (r) => f1(r.pf) },
     { key: "pa", label: "PA", num: true, cls: "st-x", render: (r) => f1(r.pa) },
@@ -3214,7 +3242,7 @@ function renderSeason() {
     const rosters = rostersWithValues();
     for (const r of season.rows) r.rosterValue = rosters[r.id] ? sum(rosters[r.id], (p) => p.value) : null;
   }
-  const draw = () => $("st-table").replaceChildren(sortableTable(cols, season.rows, state.standings.sort, draw, { rowClass: (r) => myRow(r.id) }));
+  const draw = () => $("st-table").replaceChildren(sortableTable(cols, season.rows, state.standings.sort, draw, { rowClass: (r) => `${myRow(r.id)} ${poOut(r.id) ? "po-out" : ""}` }));
 
   draw();
   // Computers: a column beside the standings with the playoff race (and the award leaders, below).
@@ -4679,6 +4707,73 @@ document.addEventListener("click", (e) => {
   if (b) { chooseMyTeam(b.dataset.mypick); return; }
   if (e.target.closest("[data-pickteam]")) openPickTeam();
 });
+// ---------- Postseason look ----------
+// Once every regular-season game has a result (or with ?playoffs=1 in the address, to preview it), the site
+// switches to a navy and gold "postseason" look: header, active tabs, the bracket button, seed badges next to
+// playoff teams, eliminated teams muted, consolation games labeled, and confetti for the champion.
+const poPreview = params.get("playoffs") === "1";
+const poMode = () => poPreview || (!!state.base && regSeasonDone());
+function applyPoMode() {
+  const on = poMode();
+  document.documentElement.classList.toggle("po-mode", on);
+  const tag = $("po-tag");
+  if (on && !tag) $("week-nav")?.insertAdjacentHTML("afterbegin", `<span class="po-tag" id="po-tag" title="Postseason">${ic("trophy")}<span>Playoffs</span></span>`);
+  if (!on && tag) tag.remove();
+}
+// The bracket for this render (worked out once, not once per team).
+function poBracket() {
+  if (state.poBFor !== state.odds || state.poBBase !== state.base) { state.poB = playoffBracket(); state.poBFor = state.odds; state.poBBase = state.base; }
+  return state.poB;
+}
+// "#2" next to a playoff team's name in the postseason look.
+function poSeed(id) {
+  if (!poMode()) return "";
+  const B = poBracket(), s = B?.seedOf?.[String(id)];
+  return s && s <= B.spots ? `<span class="po-seed" title="Playoff seed">#${s}</span>` : "";
+}
+const poOut = (id) => { if (!poMode()) return false; const B = poBracket(), s = B?.seedOf?.[String(id)]; return !!s && s > B.spots; };
+// A burst of confetti (gold, navy, white) over the champion's card.
+const confetti = () => `<span class="confetti" aria-hidden="true">${Array.from({ length: 28 }, (_, i) => `<i style="--x:${(i * 37) % 100}%;--d:${(i % 7) * 0.12}s;--r:${(i * 53) % 360}deg;--c:${["#d4a72c", "#f3cf63", "#16305e", "#ffffff"][i % 4]}"></i>`).join("")}</span>`;
+// Every regular-season game has a result.
+const regSeasonDone = () => { const b = state.base; const reg = b.schedule.filter((m) => m.matchupPeriodId <= b.regWeeks && m.away); return reg.length > 0 && reg.every((m) => m.winner && m.winner !== "UNDECIDED"); };
+// The roster's bracket button: the bracket, and every team's seeding odds. While this week's games are on it
+// redraws with each live refresh, so the seeds and odds move as the scores do.
+function bracketModalHtml() {
+  const B = playoffBracket();
+  if (!B) return `<div class="pm-head"><h2 id="pl-modal-title">Playoff Bracket</h2></div><p class="muted">This league's playoff settings aren't available.</p>`;
+  const done = regSeasonDone(), P = bracketParts(B), odds = done ? null : playoffOdds();
+  const live = state.weekCache?.[state.base.current]?.status === "live";
+  const rows = odds ? Object.keys(state.base.teams).sort((x, y) => odds.teams[x].seed - odds.teams[y].seed).map((id) => {
+    const o = odds.teams[id], t = team(id);
+    return `<tr class="${myRow(id)}"><td><div class="team-cell" data-tpop="${id}">${logoImg(t, 22)}<strong>${esc(t.name)}</strong></div></td><td class="num">${recordStr(t)}</td><td class="num">${f1(o.seed)}</td><td class="num">${oddsCell(o.playoffs)}</td>${odds.byes ? `<td class="num">${oddsCell(o.bye)}</td>` : ""}</tr>`;
+  }).join("") : "";
+  return `<div class="pm-head bk-modal-head"><h2 id="pl-modal-title">${ic("trophy")} ${done ? "Playoff Bracket" : "Estimated Playoff Bracket"}</h2>
+      <div class="muted small">${done ? "Seeds are set. Later rounds show each game's favorite until they're played." : `Seeds by projected finish${live ? ` · <span class="badge live">LIVE</span> moving with this week's scores` : ""}`}</div></div>
+    ${P.champ}${P.bubble}
+    ${odds ? `<h3 class="pm-sub">Seeding odds</h3><div class="table-wrap"><table class="data bk-odds"><thead><tr><th>Team</th><th class="num">Record</th><th class="num" title="Average seed across the simulations">Avg seed</th><th class="num">Playoffs</th>${odds.byes ? `<th class="num">Bye</th>` : ""}</tr></thead><tbody>${rows}</tbody></table></div>
+      <p class="muted small">From 5,000 simulations of the rest of the regular season${live ? ", with this week's games played out from the live scores" : ""}.</p>` : ""}
+    <button type="button" class="linkish bk-full" data-gotab="playoffs">Consolation games and final standings on League › Playoffs ›</button>`;
+}
+function openBracket() {
+  showModal(bracketModalHtml());
+  state.bracketOpen = true;
+  const card = $("pl-modal").querySelector(".modal-card");
+  card.classList.add("pm-full");
+  wireBracketModal();
+}
+function wireBracketModal() {
+  $("pl-modal-body").querySelector("[data-gotab]")?.addEventListener("click", () => { document.querySelector("#pl-modal .modal-close").click(); state.tab = "playoffs"; switchTab("playoffs"); });
+}
+// Keep an open bracket current: redraw it (keeping its scroll) when the week's scores refresh.
+function refreshBracketModal() {
+  if (!state.bracketOpen || $("pl-modal").hidden) return;
+  const card = $("pl-modal").querySelector(".modal-card"), y = card.scrollTop;
+  const wrap = $("pl-modal-body").querySelector(".bk-wrap"), x = wrap?.scrollLeft || 0;
+  $("pl-modal-body").innerHTML = bracketModalHtml();
+  card.scrollTop = y;
+  const w2 = $("pl-modal-body").querySelector(".bk-wrap"); if (w2) w2.scrollLeft = x;
+  wireBracketModal();
+}
 function chipPopup(kind, teamId, side) {
   const t = team(teamId);
   const head = (icon, title, sub = "") => `<div class="pm-head">${logoImg(t, 40)}<div><h2 id="pl-modal-title">${icon} ${title}</h2><div class="muted small">${esc(t.name)}${sub ? ` · ${sub}` : ""}</div></div></div>`;
@@ -4820,6 +4915,14 @@ function renderRoster() {
   const tally = state.awardTally && state.awardTally !== "loading" ? state.awardTally[sel] : null;
   const nAwards = tally ? sum(Object.values(tally), (wks) => wks.length) : null;
   const chips = [
+    (() => {
+      // Estimated Playoff Bracket until the regular season is over, then the Playoff Bracket.
+      const done = regSeasonDone(), odds = done ? null : playoffOdds(), o = odds?.teams?.[sel];
+      const B = done ? playoffBracket() : null, sd = B?.seedOf?.[String(sel)];
+      // Short label (the popup has the full "Estimated Playoff Bracket" / "Playoff Bracket" title).
+      const sub = done ? (sd && sd <= (B.spots || 0) ? `${ordinal(sd)} seed` : "Out") : o ? `Est. · ${oddsPct(o.playoffs)} in` : "Estimated";
+      return chip("bracket", ic("trophy"), "Bracket", sub);
+    })(),
     chip("news", ic("news"), "News", anyNews ? `<i class="er-dot"></i> New` : "Latest"),
     waiverPlace(sel) ? chip("waivers", ic("list-numbers"), "Waivers", waiverPlace(sel)) : "",
     canEdit && !lm ? chip("claims", ic("clipboard-list"), "Claims", P ? `${claims} pending` : "…") : "",
@@ -4852,6 +4955,7 @@ function renderRoster() {
   el.querySelectorAll("[data-chip]").forEach((b) => b.addEventListener("click", () => {
     state.modalReturn = b;
     if (b.dataset.chip === "alerts") return openNotifications();
+    if (b.dataset.chip === "bracket") return openBracket();
     if (b.dataset.chip === "owner") return openOwnerSignIn();
     chipPopup(b.dataset.chip, sel, side);
   }));
@@ -7578,6 +7682,7 @@ async function openPtsPop(id, sp, anchor, season) {
 // Open the shared popup with arbitrary content (e.g. the Roster tab's upgrade list).
 function showModal(html) {
   const m = $("pl-modal");
+  state.bracketOpen = false; // a new popup replaces the bracket (openBracket sets it back)
   setDock(false);
   dropChatPop();
   m.querySelector(".modal-card").classList.remove("pm-full", "chat-card");
@@ -8060,8 +8165,10 @@ function render() {
   updateOwnerLink();
   if (!state.live && !state.liveBoot && state.tab !== "live") { state.liveBoot = true; refreshLive().finally(() => { state.liveBoot = false; }); }
   updateEspnLink();
+  applyPoMode();
   showView(state.tab);
   keepState($(`view-${state.tab}`), () => renderTab());
+  refreshBracketModal();
 }
 function renderTab() {
   ({ roster: renderRoster, matchups: renderMatchups, live: renderLive, players: renderPlayers, usage: renderUsage, injuries: renderInjuries, managers: renderManagers, schedule: renderSchedule, playoffs: renderPlayoffs, season: renderSeason, history: renderHistory, trade: renderTradeAnalyzer, transactions: renderTransactions })[state.tab]();

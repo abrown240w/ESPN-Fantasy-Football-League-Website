@@ -2898,3 +2898,44 @@ img.logo { background-size: cover; background-position: center; }
   :root[data-theme="dark"] #st-table tr.my-row > td:nth-child(-n+2) { background: color-mix(in srgb, #e8b100 18%, var(--surface)); }
   #st-table th { white-space: nowrap; }
 }
+
+/* Roster: bracket popup */
+.bk-modal-head h2 .ic { color: #c9a227; vertical-align: -3px; }
+.bk-odds td, .bk-odds th { padding-top: 6px; padding-bottom: 6px; }
+.bk-odds .team-cell strong { font-size: .86rem; }
+.bk-full { display: block; margin: 10px 0 4px; font-weight: 700; }
+
+
+/* ---------- Postseason look (html.po-mode: the regular season is over, or ?playoffs=1 to preview) ---------- */
+html.po-mode { --brand: #102347; --brand-2: #0b1a36; --gold: #d4a72c; --gold-hi: #f3cf63; --gold-ink: #1d1600; }
+html.po-mode .topbar { background: linear-gradient(100deg, #0b1a36 0%, #16305e 100%); box-shadow: inset 0 -3px 0 var(--gold); }
+html.po-mode .topbar .league-select, html.po-mode .topbar #league-name { color: var(--gold-hi); border-color: var(--gold-hi); }
+html.po-mode .topbar .tabs button.active { color: var(--gold-hi); border-bottom-color: var(--gold-hi); }
+html.po-mode #tabs button.active { color: #a77d0f; }
+html.po-mode[data-theme="dark"] #tabs button.active { color: var(--gold-hi); }
+@media (prefers-color-scheme: dark) { html.po-mode:not([data-theme="light"]) #tabs button.active { color: var(--gold-hi); } }
+html.po-mode .subnav.seg button.active, html.po-mode .st-subs button.active { background: var(--gold); border-color: var(--gold); color: var(--gold-ink); }
+.po-tag { display: inline-flex; align-items: center; gap: 4px; flex: none; background: var(--gold); color: var(--gold-ink); font-weight: 800; font-size: .7rem; letter-spacing: .07em; text-transform: uppercase; border-radius: 999px; padding: 4px 10px; }
+.po-tag .ic { width: 1.05em; height: 1.05em; }
+@media (max-width: 640px) { .po-tag > span { display: none; } .po-tag { padding: 6px 7px; } }
+html.po-mode .er-chip[data-chip="bracket"] { background: linear-gradient(135deg, #f6dc8a, #d4a72c); border-color: #c9a227; box-shadow: 0 2px 8px rgba(212,167,44,.35); }
+html.po-mode .er-chip[data-chip="bracket"] .er-chip-t, html.po-mode .er-chip[data-chip="bracket"] .er-chip-s { color: var(--gold-ink); }
+.po-seed { display: inline-block; margin-left: 6px; font-size: .68rem; font-weight: 800; color: var(--gold-ink); background: var(--gold); border-radius: 6px; padding: 1px 5px; vertical-align: 2px; letter-spacing: .02em; }
+html.po-mode tr.po-out > td { opacity: .5; }
+.po-consol { margin: 8px 12px 0; font-size: .72rem; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+html.po-mode .bk-champ .bk-trophy { border-color: var(--gold); box-shadow: 0 0 0 2px rgba(212,167,44,.35), 0 6px 18px rgba(212,167,44,.25); }
+html.po-mode .bk-champ .bk-trophy .ic { color: var(--gold); }
+/* Confetti over the champion's card: falls once */
+.bk-trophy { position: relative; overflow: hidden; }
+.confetti { position: absolute; inset: 0; pointer-events: none; }
+.confetti i { position: absolute; top: -10px; left: var(--x); width: 6px; height: 10px; background: var(--c); border-radius: 1px; transform: rotate(var(--r)); opacity: 0; animation: confetti-fall 2.6s ease-in var(--d) 1 forwards; }
+@keyframes confetti-fall { 0% { opacity: 1; transform: translateY(0) rotate(var(--r)); } 100% { opacity: 0; transform: translateY(140px) rotate(calc(var(--r) + 540deg)); } }
+@media (prefers-reduced-motion: reduce) { .confetti { display: none; } }
+@media (max-width: 1599px) { .po-tag > span { display: none; } .po-tag { padding: 6px 7px; } }
+/* Postseason, dark mode: the bracket button as deep gold with a gold outline (a solid bright block glares on dark) */
+html.po-mode[data-theme="dark"] .er-chip[data-chip="bracket"] { background: linear-gradient(135deg, #3b2d07, #5c450e); border-color: var(--gold); box-shadow: 0 0 0 1px rgba(212,167,44,.25); }
+html.po-mode[data-theme="dark"] .er-chip[data-chip="bracket"] .er-chip-t, html.po-mode[data-theme="dark"] .er-chip[data-chip="bracket"] .er-chip-s { color: var(--gold-hi); }
+@media (prefers-color-scheme: dark) {
+  html.po-mode:not([data-theme="light"]) .er-chip[data-chip="bracket"] { background: linear-gradient(135deg, #3b2d07, #5c450e); border-color: var(--gold); box-shadow: 0 0 0 1px rgba(212,167,44,.25); }
+  html.po-mode:not([data-theme="light"]) .er-chip[data-chip="bracket"] .er-chip-t, html.po-mode:not([data-theme="light"]) .er-chip[data-chip="bracket"] .er-chip-s { color: var(--gold-hi); }
+}
