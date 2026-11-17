@@ -466,6 +466,15 @@ table.data.roster-table td.r-sub { display: none; }
 .mx-side.right.is-poss { box-shadow: inset -4px 0 0 #c98a00; }
 .mx-side.is-rz { background: #fde4e4; box-shadow: inset 4px 0 0 #d32f2f; }
 .mx-side.right.is-rz { box-shadow: inset -4px 0 0 #d32f2f; }
+/* Just scored: the team that scored (extra point / kickoff coming), no longer driving */
+.mx-side.is-scored, .pr-row.is-scored { background: #e3f6ea; box-shadow: inset 4px 0 0 #16a34a; }
+.mx-side.right.is-scored { box-shadow: inset -4px 0 0 #16a34a; }
+.er-row.is-scored { background: #e3f6ea !important; }
+.pt-table tr.is-scored td, .pt-table tr.is-scored td.pt-player { background: #e3f6ea; }
+.pt-table tr.is-scored td.pt-player { box-shadow: inset 4px 0 0 #16a34a, inset -1px 0 0 var(--grid); }
+.gs-scored { font-size: .95rem; filter: drop-shadow(0 0 3px rgba(22,163,74,.9)); }
+:root[data-theme="dark"] :is(.mx-side, .pr-row, .er-row).is-scored, :root[data-theme="dark"] .pt-table tr.is-scored td, :root[data-theme="dark"] .pt-table tr.is-scored td.pt-player { background: rgba(22,163,74,.24) !important; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) :is(.mx-side, .pr-row, .er-row).is-scored, :root:not([data-theme="light"]) .pt-table tr.is-scored td, :root:not([data-theme="light"]) .pt-table tr.is-scored td.pt-player { background: rgba(22,163,74,.24) !important; } }
 .mx-row.bench .mx-name .pl-link { color: var(--ink-2); }
 .mx-bench-head { margin-top: 14px; padding: 6px 10px; background: var(--surface-2); font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
 .mx .nm-short { display: none; }
@@ -1710,9 +1719,10 @@ main .mb-chip, main .lg-card { --ink: #0b0b0b; --ink-2: #52514e; --muted: #6f6d6
 @media (min-width: 1000px) {
   html { font-size: 106%; }
   /* Player card and chat: a panel docked on the right; the page stays usable beside it. */
-  #pl-modal.dock { inset: var(--top-h, 0px) 0 0 auto; width: 480px; background: transparent; padding: 0; display: block; pointer-events: none; z-index: 60; }
+  #pl-modal.dock { inset: var(--top-h, 0px) 0 0 auto; width: var(--dock-w, 480px); background: transparent; padding: 0; display: block; pointer-events: none; z-index: 60; transition: width .28s cubic-bezier(.2,.8,.3,1); }
   #pl-modal.dock .modal-card { pointer-events: auto; width: 100%; height: 100%; max-height: none; border-radius: 14px 0 0 0; box-shadow: -10px 0 30px rgba(0,0,0,.28); }
-  body.has-dock main.wrap { max-width: none; margin-right: 480px; margin-left: 0; }
+  body.has-dock main.wrap { max-width: none; margin-right: var(--dock-w, 480px); margin-left: 0; transition: margin-right .28s cubic-bezier(.2,.8,.3,1); }
+  @media (prefers-reduced-motion: reduce) { #pl-modal.dock, body.has-dock main.wrap { transition: none; } }
   /* Players: filters in a sticky sidebar, the full table beside it */
   /* Roster: table and rail */
   .er-rail .er-head { margin: 0; }
@@ -1799,7 +1809,7 @@ main .mb-chip, main .lg-card { --ink: #0b0b0b; --ink-2: #52514e; --muted: #6f6d6
 /* The comparison popup */
 #cmp-modal { z-index: 120; }
 .cmp-card { width: min(900px, 100%); }
-body.has-dock #cmp-modal { right: 480px; }
+body.has-dock #cmp-modal { right: var(--dock-w, 480px); }
 .cmp-bottom { font-size: .9rem; margin-top: 4px; color: var(--ink-2); }
 .cmp-vs { display: grid; gap: 10px; grid-template-columns: 1fr; }
 @media (min-width: 700px) { .cmp-vs.cols-2 { grid-template-columns: 1fr 1fr; } .cmp-vs.cols-3 { grid-template-columns: repeat(3, 1fr); } }
@@ -2213,7 +2223,7 @@ main .card, main .pr-list, main .table-wrap { box-shadow: 0 1px 3px rgba(16,24,4
 table.data th, table.data td { border-bottom: 0; }
 table.data thead th { box-shadow: inset 0 -1px 0 var(--grid); }
 :where(table.data tbody tr:nth-child(even)) > td { background: var(--zebra); }
-.pt-table tbody tr:nth-child(even):not(.my-row):not(.is-poss):not(.is-rz):not(.gs-cell-live):not(.gs-cell-poss) td.pt-player { background: var(--zebra); }
+.pt-table tbody tr:nth-child(even):not(.my-row):not(.is-poss):not(.is-rz):not(.is-scored):not(.gs-cell-live):not(.gs-cell-poss) td.pt-player { background: var(--zebra); }
 .pt-table .pt-player { box-shadow: none; }
 .er-row { border-bottom: 0; }
 .er-row.er-hd { box-shadow: inset 0 -1px 0 var(--grid); }

@@ -599,12 +599,13 @@ function ensureGameStatus() {
         if (state.week?.sp !== w.sp) return;
         const byPro = {};
         for (const g of d.games) {
+          const sc = justScored(g);
           for (const [me, them] of [[g.home, g.away], [g.away, g.home]]) {
             const poss = g.state === "in" && g.possession === me.proId;
             const oppPoss = g.state === "in" && !!g.possession && g.possession === them.proId;
             byPro[me.proId] = {
-              id: g.id, state: g.state, detail: g.detail, date: g.date, poss, redZone: poss && !!g.redZone,
-              oppPoss, oppRedZone: oppPoss && !!g.redZone,
+              id: g.id, state: g.state, detail: g.detail, date: g.date, poss, redZone: poss && !sc && !!g.redZone,
+              scored: poss && sc, oppPoss, oppScored: oppPoss && sc, oppRedZone: oppPoss && !sc && !!g.redZone,
               home: me === g.home, oppAbbr: them.abbr, score: me.score, oppScore: them.score,
             };
           }
@@ -638,13 +639,24 @@ function gameLineHtml(p) {
   if (p.opp?.bye) return "BYE";
   return p.opp?.team ? `${p.opp.home ? "" : "@"}${esc(p.opp.team)}` : "";
 }
-// Row state for the matchup breakdown: red zone > offense on the field > in progress > final.
+// The last play was a score (touchdown or field goal): ESPN keeps the scoring team "in possession" (and in the
+// red zone) through the extra point and the kickoff, so that team is marked as having just scored, not driving.
+// A safety leaves the ball with the team scored on, so it doesn't count.
+function justScored(g) {
+  if (g.state !== "in" || !g.possession) return false;
+  const lp = g.field?.lastPlay;
+  if (!lp || /safety|kickoff/i.test(lp.type || "")) return false;
+  return !!lp.scoring || /touchdown|field goal good/i.test(lp.type || "");
+}
+// Row state for the matchup breakdown: just scored > red zone > offense on the field > in progress > final.
 function gsState(p) {
   const g = gameStatusOf(p);
   if (!g) return "";
   if (g.state === "in") {
     // A D/ST is "on the field" when the other team has the ball (red: backed up in its own red zone).
     const def = p.posId === 16, on = def ? g.oppPoss : g.poss, rz = def ? g.oppRedZone : g.redZone;
+    if (!def && g.scored) return "is-live is-scored";
+    if (def && g.oppScored) return "is-live";
     return on ? (rz ? "is-live is-rz" : "is-live is-poss") : "is-live";
   }
   return g.state === "post" ? "is-final" : "";
@@ -659,7 +671,9 @@ function gameStatusOf(p) {
 function gsIcon(p) {
   const g = gameStatusOf(p);
   if (!g) return "";
-  if (g.state === "in") return g.poss
+  if (g.state === "in") return g.scored
+    ? ` <span class="gs gs-scored" title="Just scored · ${esc(g.detail)}" aria-label="Just scored">🏈</span>`
+    : g.poss
     ? ` <span class="gs gs-poss" title="Offense on the field · ${esc(g.detail)}" aria-label="Offense on the field">🏈</span>`
     : ` <span class="gs gs-live" title="Game in progress · ${esc(g.detail)}" aria-label="Game in progress"></span>`;
   if (g.state === "post") return ` <span class="gs gs-final" title="Game final" aria-label="Game final">✓</span>`;
@@ -669,7 +683,7 @@ function gsIcon(p) {
 function gsText(p) {
   const g = gameStatusOf(p);
   if (!g) return "";
-  if (g.state === "in") return `<span class="gs-text live">${g.poss ? "On field · " : ""}${esc(g.detail)}</span>`;
+  if (g.state === "in") return `<span class="gs-text live">${g.scored ? "Scored · " : g.poss ? "On field · " : ""}${esc(g.detail)}</span>`;
   if (g.state === "post") return `<span class="gs-text">Final</span>`;
   if (g.state === "pre" && g.date) return `<span class="gs-text">${new Date(g.date).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" })}</span>`;
   return "";
@@ -3964,8 +3978,9 @@ function renderLive() {
     const bump = state.liveBumps[p.id];
     const pts = g.state === "pre" ? "–" : ptsLink(p.id, L.sp, f2(p.pts ?? 0));
     // Offense: their team has the ball. D/ST: the other team has the ball.
-    const onField = g.state === "in" && !!g.possession && (p.posId === 16 ? g.possession !== p.proId : g.possession === p.proId);
-    const cls = g.state === "in" ? `is-live ${onField ? (g.redZone ? "is-rz" : "is-poss") : ""}` : g.state === "post" ? "is-final" : "";
+    const sc = justScored(g), def = p.posId === 16;
+    const onField = g.state === "in" && !!g.possession && (def ? g.possession !== p.proId : g.possession === p.proId);
+    const cls = g.state === "in" ? `is-live ${!onField ? "" : sc ? (def ? "" : "is-scored") : g.redZone ? "is-rz" : "is-poss"}` : g.state === "post" ? "is-final" : "";
     const line = compactLine(p.posId, p.stats);
     return `<div class="mx-side ${right ? "right" : ""} ${cls} ${bump ? "bump" : ""}">
       <div class="mx-info">
@@ -7594,7 +7609,27 @@ function setDock(on) {
   $("pl-modal").classList.toggle("dock", d);
   document.body.classList.toggle("has-dock", d);
   if (d) document.body.classList.remove("modal-open");
+  else document.documentElement.style.removeProperty("--dock-w");
 }
+// Computers: the docked card widens (smoothly, the page easing over beside it) to fit the Usage tab's
+// week-by-week table, and goes back to its normal width on the other tabs. It always leaves at least 560px of
+// page beside it; if the table is still wider than that, it scrolls to the latest weeks.
+const DOCK_W = 480;
+function fitDock() {
+  const m = $("pl-modal"), root = document.documentElement;
+  if (!m.classList.contains("dock") || m.hidden) { root.style.removeProperty("--dock-w"); return; }
+  const wrap = m.querySelector(".pm-usage .table-wrap"), card = m.querySelector(".modal-card");
+  if (!wrap) { root.style.removeProperty("--dock-w"); return; }
+  const cur = card.getBoundingClientRect().width;
+  const extra = cur - wrap.clientWidth; // the card's padding and scrollbar around the table
+  const want = Math.ceil(wrap.scrollWidth + extra + 2);
+  const max = Math.max(DOCK_W, Math.min(1180, window.innerWidth - 560));
+  const w = Math.min(Math.max(DOCK_W, want), max);
+  if (Math.abs(w - cur) > 1) root.style.setProperty("--dock-w", `${w}px`);
+  // Too wide even so: start on the latest weeks (the player column stays pinned).
+  if (want > max + 1) requestAnimationFrame(() => { wrap.scrollLeft = wrap.scrollWidth; });
+}
+window.addEventListener("resize", () => { if ($("pl-modal")?.classList.contains("dock")) fitDock(); });
 // Docked player card: ↑ / ↓ step through the players on the page, in order.
 document.addEventListener("keydown", (e) => {
   if (!$("pl-modal")?.classList.contains("dock") || $("pl-modal").hidden || !state.pmFor || !["ArrowUp", "ArrowDown"].includes(e.key)) return;
@@ -8052,7 +8087,7 @@ function renderPlayerModal(d, focusSp, ctx) {
   if (ue) {
     // Starts on his NFL team each time a card opens; the menu can look at any team.
     if (S.pmUsageFor !== String(p.id)) { S.pmUsageFor = String(p.id); state.players.utTeam = PRO[p.proId] || ""; state.players.utMode = "snap"; }
-    const draw = () => { if (body.querySelector(".pm-usage") === ue) renderUsage(ue, draw); };
+    const draw = () => { if (body.querySelector(".pm-usage") === ue) { renderUsage(ue, draw); fitDock(); } };
     draw();
   }
   body.querySelectorAll("[data-card]").forEach((b) => b.addEventListener("click", (e) => { if (!e.target.closest("[data-cardx]")) openPlayer(b.dataset.card); }));
@@ -8062,6 +8097,7 @@ function renderPlayerModal(d, focusSp, ctx) {
   body.querySelector("#gl-season")?.addEventListener("change", (e) => { S.glSeason = e.target.value; S.glSeasonFor = String(p.id); renderPlayerModal(d, focusSp, ctx); });
   body.querySelectorAll("[data-txmore]").forEach((b) => b.addEventListener("click", () => { const box = body.querySelector(".tx-more"); box.hidden = !box.hidden; b.textContent = box.hidden ? b.dataset.txmore : "Show less ▴"; }));
   if (tab === "log" && focusSp && bySp[focusSp]) body.querySelector(`.pm-pane tr.gl-row[data-sp="${focusSp}"]`)?.scrollIntoView({ block: "center" });
+  if (!ue) fitDock();
 }
 
 // ---------- Depth charts (player popup) ----------
