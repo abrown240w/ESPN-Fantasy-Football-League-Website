@@ -108,10 +108,12 @@ export default async (req) => {
     const moves = [], pendingTrades = [];
     for (const t of all) {
       const date = t.processDate || t.proposedDate;
-      if ((t.type === "WAIVER" || t.type === "FREEAGENT") && t.status === "EXECUTED") {
+      // A plain drop (no pickup) is a "ROSTER" move on ESPN, the same type as lineup changes, so only those with a DROP.
+      const plainDrop = t.type === "ROSTER" && (t.items || []).some((i) => i.type === "DROP");
+      if ((t.type === "WAIVER" || t.type === "FREEAGENT" || plainDrop) && t.status === "EXECUTED") {
         const items = t.items || [];
         moves.push({
-          id: t.id, kind: t.type === "WAIVER" ? "waiver" : "freeagent", date, week: t.scoringPeriodId, teamId: t.teamId,
+          id: t.id, kind: t.type === "WAIVER" ? "waiver" : plainDrop ? "drop" : "freeagent", date, week: t.scoringPeriodId, teamId: t.teamId,
           bid: usesBudget ? t.bidAmount || 0 : null,
           adds: items.filter((i) => i.type === "ADD").map((i) => i.playerId),
           drops: items.filter((i) => i.type === "DROP").map((i) => i.playerId),

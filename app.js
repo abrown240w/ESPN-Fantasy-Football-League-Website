@@ -7342,7 +7342,7 @@ function renderTransactions() {
   const f = state.txFilter;
   const involves = (m, teamId) => m.teamId === teamId || (m.sides || []).some((s) => s.teamId === teamId);
   const moves = a.moves.filter((m) => (f.kind === "all" || m.kind === f.kind) && (f.team === "ALL" || involves(m, +f.team)));
-  const kindLabel = { waiver: "Waiver", freeagent: "Free agent", trade: "Trade" };
+  const kindLabel = { waiver: "Waiver", freeagent: "Free agent", trade: "Trade", drop: "Drop" };
   const desk = DESK.matches;
   const row = (m) => {
     const when = `<div class="tx-when">${fmtDate(m.date)}</div>`;
@@ -7370,7 +7370,7 @@ function renderTransactions() {
   const mainHtml = `<div class="section-head"><h2>Transactions</h2><span class="muted small">Waiver claims, free-agent moves and completed trades, newest first</span></div>
     <div class="filters">
       <select id="tx-team" aria-label="Team"><option value="ALL">All teams</option>${teamOpts}</select>
-      <div class="seg" id="tx-kind">${[["all", "All"], ["waiver", "Waivers"], ["freeagent", "Free agents"], ["trade", "Trades"]].map(([k, l]) => `<button data-k="${k}" class="${f.kind === k ? "active" : ""}">${l}</button>`).join("")}</div>
+      <div class="seg" id="tx-kind">${[["all", "All"], ["waiver", "Waivers"], ["freeagent", "Free agents"], ["drop", "Drops"], ["trade", "Trades"]].map(([k, l]) => `<button data-k="${k}" class="${f.kind === k ? "active" : ""}">${l}</button>`).join("")}</div>
     </div>
     ${groups.length ? groups.map((g) => `<h3 class="tx-week">${weekLabel(g.week)}</h3><div class="tx-list${desk ? " card" : ""}">${g.items.map(row).join("")}</div>`).join("") : `<p class="muted">No transactions match.</p>`}`;
   // Computers: the transaction feed on the left, waivers and pending trades in a column on the right.

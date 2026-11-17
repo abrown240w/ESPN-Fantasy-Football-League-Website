@@ -1712,6 +1712,8 @@ main .mb-chip, main .lg-card { --ink: #0b0b0b; --ink-2: #52514e; --muted: #6f6d6
 .txh-row .tx-kind { flex: none; }
 .txh-text { flex: 1; min-width: 0; }
 .tx-kind.drop { background: #fde4e4; color: #a12626; }
+:root[data-theme="dark"] .tx-kind.drop { background: rgba(211,47,47,.24); color: #ff9e9e; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .tx-kind.drop { background: rgba(211,47,47,.24); color: #ff9e9e; } }
 .txh-btn { margin-top: 4px; }
 .ct-leagues { padding: 8px 6px 0 0; }
 

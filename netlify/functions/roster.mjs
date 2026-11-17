@@ -393,7 +393,8 @@ export default async (req, context) => {
       ...(drop != null ? [{ playerId: drop, type: "DROP", fromTeamId: teamId }] : []),
     ];
     const payload = {
-      isLeagueManager: false, teamId, type: waiver ? "WAIVER" : "FREEAGENT", memberId: `{${swidRaw()}}`, scoringPeriodId: sp,
+      // A plain drop is its own kind of move on ESPN ("ROSTER"); FREEAGENT has to include exactly one pickup.
+      isLeagueManager: false, teamId, type: waiver ? "WAIVER" : add != null ? "FREEAGENT" : "ROSTER", memberId: `{${swidRaw()}}`, scoringPeriodId: sp,
       executionType: "EXECUTE", items, ...(waiver ? { bidAmount: bid } : {}),
     };
     return espnWrite(leagueId, season, payload, { event: waiver ? "claim" : "transaction", ip, leagueId, season, teamId, sp, add, drop, bid: waiver ? bid : undefined, at: new Date().toISOString() });
